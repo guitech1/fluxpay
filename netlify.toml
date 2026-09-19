@@ -16,11 +16,13 @@
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  # Node 22 expoe WebSocket nativo — evita crash do @supabase/supabase-js no boot
+  # da funcao ("Node.js detected but native WebSocket not found" -> 502).
+  NODE_VERSION = "22"
   # O Next.js do monorepo precisa saber que a raiz do projeto e o diretorio atual.
   NPM_FLAGS = "--include-workspace-root"
   # Runtime das functions (nao so do build): mantem a API no mesmo Node do backend.
-  AWS_LAMBDA_JS_RUNTIME = "nodejs20.x"
+  AWS_LAMBDA_JS_RUNTIME = "nodejs22.x"
 
 [functions]
   node_bundler = "esbuild"
