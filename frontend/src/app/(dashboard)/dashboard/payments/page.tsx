@@ -68,7 +68,7 @@ export default async function PaymentsPage({
       />
 
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : payments.length === 0 ? (
         <EmptyState>
           Nenhuma transação encontrada. Crie uma cobrança PIX com{" "}
