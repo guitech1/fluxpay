@@ -6,9 +6,10 @@ import { supabaseAdmin } from "../config/supabase.js";
 import { env } from "../config/env.js";
 import { verifyWebhookSignature } from "../utils/crypto.js";
 import {
-  getPaymentByProviderTxid,
+  getPaymentByProviderReference,
   markPixPaymentSucceeded,
 } from "../services/payments.js";
+import { decideWebhookAction } from "../services/provider-events.js";
 
 const router = Router();
 
@@ -35,7 +36,7 @@ router.post("/endpoints", apiKeyAuth, requireSecretKey, async (req, res, next) =
   }
 });
 
-router.get("/endpoints", apiKeyAuth, async (req, res, next) => {
+router.get("/endpoints", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("webhook_endpoints")
@@ -128,21 +129,28 @@ router.post("/nexuspag", async (req, res, next) => {
     const eventType =
       payload.event || (req.headers["x-webhook-event"] as string | undefined) || "unknown";
     const txid = payload.txid;
+    const externalId = payload.external_id || null;
 
-    if (!txid) {
-      // 200 de proposito: sem txid nao ha o que fazer, e retentar nao ajuda.
-      res.status(200).json({ received: true, warning: "sem txid no payload" });
+    if (!txid && !externalId) {
+      // 200 de proposito: sem txid nem external_id nao ha como casar o evento
+      // com cobranca nenhuma, e retentar nao mudaria isso.
+      res.status(200).json({ received: true, warning: "sem txid nem external_id no payload" });
       return;
     }
 
-    // So existe um evento por transacao PIX, mas incluir o tipo no id mantem
-    // a dedupe correta caso a NexusPag passe a enviar outros eventos.
-    const providerEventId = `${eventType}:${txid}`;
-    const payment = await getPaymentByProviderTxid(txid);
+    // Id de deduplicacao: continua sendo "<evento>:<referencia>", com o txid
+    // como referencia preferencial. A UNIQUE(provider, provider_event_id) de
+    // provider_events segue sendo o que impede creditar o ledger duas vezes
+    // quando a NexusPag reenvia (ate 8 tentativas em ~7 dias).
+    const providerEventId = `${eventType}:${txid || externalId}`;
 
-    // Deduplicacao: a UNIQUE(provider, provider_event_id) e quem garante que
-    // um retry da NexusPag nao credite o ledger duas vezes. O insert acontece
-    // ANTES do processamento justamente por isso.
+    // Busca por txid E por external_id. O external_id e gravado ANTES da
+    // chamada ao adquirente (ver services/payments.ts), entao ele casa mesmo
+    // no intervalo em que o txid ainda nao foi persistido.
+    const payment = await getPaymentByProviderReference({ txid, externalId });
+
+    // O insert acontece ANTES do processamento, de proposito: e ele que
+    // arbitra duplicidade.
     const { data: eventRow, error: dedupeError } = await supabaseAdmin
       .from("provider_events")
       .insert({
@@ -158,43 +166,102 @@ router.post("/nexuspag", async (req, res, next) => {
       .select("id")
       .single();
 
+    let alreadyProcessed = false;
+
     if (dedupeError) {
-      if (dedupeError.code === "23505") {
-        // unique_violation -> evento repetido, ja tratado antes.
+      if (dedupeError.code !== "23505") {
+        // Falha de escrita nossa: 5xx para a NexusPag reenviar, senao o evento
+        // seria processado sem rastro de auditoria.
+        console.error("Falha ao gravar provider_events:", dedupeError);
+        res.status(500).json({ error: { type: "api_error", message: "Falha ao registrar evento." } });
+        return;
+      }
+
+      // unique_violation: o evento ja chegou antes. Ainda assim precisamos
+      // saber se ele foi APLICADO — a primeira entrega pode ter ficado
+      // pendente por nao achar a cobranca. Se ficou, esta entrega e uma
+      // segunda chance de confirmar, em vez de um "duplicado" silencioso.
+      const { data: previous } = await supabaseAdmin
+        .from("provider_events")
+        .select("id, processed_at")
+        .eq("provider", "nexuspag")
+        .eq("provider_event_id", providerEventId)
+        .maybeSingle();
+
+      alreadyProcessed = Boolean(previous?.processed_at);
+
+      if (alreadyProcessed) {
         res.status(200).json({ received: true, duplicate: true });
         return;
       }
-      // Falha de escrita nossa: 5xx para a NexusPag reenviar, senao o evento
-      // seria processado sem rastro de auditoria.
-      console.error("Falha ao gravar provider_events:", dedupeError);
-      res.status(500).json({ error: { type: "api_error", message: "Falha ao registrar evento." } });
-      return;
     }
 
+    const eventId = eventRow?.id ?? null;
+
     const markProcessed = async (error?: string) => {
-      if (!eventRow?.id) return;
+      if (!eventId) {
+        // Reentrega de um evento que continua pendente: atualiza pela chave
+        // logica, ja que nao temos o id devolvido pelo insert.
+        await supabaseAdmin
+          .from("provider_events")
+          .update({
+            processed_at: new Date().toISOString(),
+            processing_error: error ?? null,
+            payment_id: payment?.id ?? null,
+            organization_id: payment?.organization_id ?? null,
+            environment: payment?.environment ?? null,
+          })
+          .eq("provider", "nexuspag")
+          .eq("provider_event_id", providerEventId);
+        return;
+      }
+
       await supabaseAdmin
         .from("provider_events")
         .update({ processed_at: new Date().toISOString(), processing_error: error ?? null })
-        .eq("id", eventRow.id);
+        .eq("id", eventId);
     };
 
-    if (!payment) {
-      await markProcessed("payment nao encontrado para este txid");
-      res.status(200).json({ received: true, warning: "payment nao encontrado para este txid" });
-      return;
-    }
+    const decision = decideWebhookAction({
+      eventType,
+      status: payload.status,
+      payment: payment ? { id: payment.id, status: payment.status } : null,
+      alreadyProcessed,
+    });
 
-    // Unico caminho de sucesso previsto pela doc: payment.confirmed + status "paid".
-    if (eventType === "payment.confirmed" && payload.status === "paid") {
-      await markPixPaymentSucceeded(payment);
-      await markProcessed();
-      res.status(200).json({ received: true });
-      return;
-    }
+    switch (decision.action) {
+      case "duplicate":
+        res.status(200).json({ received: true, duplicate: true });
+        return;
 
-    await markProcessed(`evento ignorado (event=${eventType}, status=${payload.status})`);
-    res.status(200).json({ received: true, ignored: true });
+      case "confirm":
+        await markPixPaymentSucceeded(payment!);
+        await markProcessed();
+        res.status(200).json({ received: true });
+        return;
+
+      case "retry_later":
+        // NAO marca como processado: a linha fica pendente e a reconciliacao
+        // automatica (reprocessUnmatchedProviderEvents, chamada pela funcao
+        // agendada a cada 10 min) tenta de novo sozinha. Antes daqui esse caso
+        // era marcado como processado e so saia do limbo com alguem clicando
+        // em "reprocessar" no ADM.
+        await supabaseAdmin
+          .from("provider_events")
+          .update({ processing_error: decision.reason })
+          .eq("provider", "nexuspag")
+          .eq("provider_event_id", providerEventId);
+
+        // 200: a entrega chegou e foi registrada. Retentar do lado do
+        // adquirente nao ajudaria — quem resolve daqui em diante somos nos.
+        res.status(200).json({ received: true, pending_reconciliation: true });
+        return;
+
+      case "ignore":
+        await markProcessed(decision.reason);
+        res.status(200).json({ received: true, ignored: true });
+        return;
+    }
   } catch (err) {
     next(err);
   }

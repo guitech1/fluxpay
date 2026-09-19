@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, Copy, Check, Key } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
-import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils";
 import { Table, Mono, EmptyState } from "./ui";
 import type { ApiKey, Environment } from "@/lib/types";
@@ -56,21 +55,24 @@ export function ApiKeysManager({
     }
   }
 
+  /*
+   * A revogação passa pelo backend (/dashboard-api/api-keys/:id/revoke).
+   * Antes era um UPDATE direto pelo Supabase client com `.eq("id", ...)`: a
+   * RLS confere se a pessoa pertence à empresa, mas não sabe em qual ambiente
+   * o painel está — uma chave de produção podia ser revogada a partir da
+   * visão de testes, bastando o id. O servidor valida organização +
+   * ambiente + id antes de escrever.
+   */
   async function revoke(key: ApiKey) {
     if (!window.confirm(`Revogar "${key.name}"? Integrações que usam essa chave param na hora.`)) {
       return;
     }
-    const supabase = createClient();
-    const { error: dbError } = await supabase
-      .from("api_keys")
-      .update({ revoked_at: new Date().toISOString() })
-      .eq("id", key.id);
-
-    if (dbError) {
-      window.alert(`Não foi possível revogar: ${dbError.message}`);
-      return;
+    try {
+      await dashboardFetch(`/api-keys/${key.id}/revoke`, { method: "POST" });
+      router.refresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Não foi possível revogar a chave.");
     }
-    router.refresh();
   }
 
   async function copy(value: string) {
@@ -178,8 +180,13 @@ export function ApiKeysManager({
                 onChange={(e) => setKeyType(e.target.value as "secret" | "publishable")}
               >
                 <option value="secret">Secreta (sk_) — servidor</option>
-                <option value="publishable">Publicável (pk_) — front-end</option>
+                <option value="publishable">Publicável (pk_) — sem endpoint ainda</option>
               </select>
+              <p className="text-xs text-flux-muted mt-1.5 leading-relaxed">
+                Todos os endpoints da API exigem chave secreta, inclusive os de leitura
+                (cobranças, clientes e saldo são dados privados da empresa). Nenhuma rota aceita
+                chave publicável hoje — crie uma só se você já sabe para quê.
+              </p>
             </div>
 
             {error && (

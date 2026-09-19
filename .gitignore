@@ -3,13 +3,16 @@ node_modules/
 .pnp
 .pnp.js
 
-# Variaveis de ambiente — NUNCA commitar chaves reais
-.env
-.env.local
-.env.*.local
-backend/.env
-frontend/.env
-frontend/.env.local
+# Variaveis de ambiente — NUNCA commitar chaves reais.
+# O padrao amplo `.env*` cobre .env.production, .env.staging e qualquer outro
+# sufixo que apareca depois; a excecao mantem os exemplos (sem valores reais)
+# versionados, que e como o DEPLOY.md documenta a configuracao.
+.env*
+!.env.example
+backend/.env*
+!backend/.env.example
+frontend/.env*
+!frontend/.env.example
 
 # Build
 dist/

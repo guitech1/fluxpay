@@ -10,6 +10,14 @@ import {
   cancelPayment,
   simulateSandboxPayment,
 } from "../services/payments.js";
+import {
+  createCustomer,
+  getCustomer,
+  updateCustomer,
+  deleteCustomer,
+} from "../services/customers.js";
+import { AppError } from "../middleware/error.js";
+import { inScopeOrNull } from "../utils/scope.js";
 
 const router = Router();
 
@@ -152,7 +160,12 @@ router.post("/payments/:id/refund", requireRole("owner", "admin", "developer"), 
     });
     const body = schema.parse(req.body);
 
-    const refund = await createRefund(req.dashboardAuth!.organizationId, req.params.id, body);
+    const refund = await createRefund(
+      req.dashboardAuth!.organizationId,
+      req.params.id,
+      req.dashboardAuth!.environment,
+      body
+    );
     res.status(201).json({ data: refund });
   } catch (err) {
     next(err);
@@ -161,7 +174,11 @@ router.post("/payments/:id/refund", requireRole("owner", "admin", "developer"), 
 
 router.post("/payments/:id/cancel", requireRole("owner", "admin", "developer"), async (req, res, next) => {
   try {
-    const payment = await cancelPayment(req.dashboardAuth!.organizationId, req.params.id);
+    const payment = await cancelPayment(
+      req.dashboardAuth!.organizationId,
+      req.params.id,
+      req.dashboardAuth!.environment
+    );
     res.json({ data: payment });
   } catch (err) {
     next(err);
@@ -178,6 +195,13 @@ router.post(
   requireRole("owner", "admin", "developer"),
   async (req, res, next) => {
     try {
+      // Trava explicita de ambiente: simulateSandboxPayment ja forca "test" na
+      // consulta, mas recusar aqui deixa claro que a rota nao existe para quem
+      // esta operando em producao.
+      if (req.dashboardAuth!.environment !== "test") {
+        throw new AppError(404, "not_found", "Recurso nao encontrado.");
+      }
+
       const payment = await simulateSandboxPayment(
         req.dashboardAuth!.organizationId,
         req.params.id
@@ -243,6 +267,241 @@ router.post("/members/invite", requireRole("owner", "admin"), async (req, res, n
     }
 
     res.status(201).json({ data: member });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// API KEYS — consulta por id e revogacao
+//
+// Antes, o painel revogava a chave direto pelo Supabase client
+// (`update({revoked_at}).eq("id", ...)`). A RLS confere se a pessoa pertence a
+// organizacao, mas NAO sabe qual ambiente o painel esta mostrando: uma chave
+// de producao podia ser revogada a partir da visao de testes, bastando o id.
+// Agora a validacao e organizacao + ambiente + id, no servidor. A permissao
+// de UPDATE(revoked_at) da migration 010 continua existindo — nao foi mexida
+// no banco — mas deixou de ser o caminho usado pela interface.
+//
+// key_hash NUNCA sai daqui. As colunas sao listadas uma a uma por isso.
+// ============================================================
+const API_KEY_COLUMNS =
+  "id, organization_id, name, key_type, environment, key_prefix, last_used_at, expires_at, revoked_at, created_at";
+
+async function findApiKeyInScope(organizationId: string, environment: string, id: string) {
+  const { data } = await supabaseAdmin
+    .from("api_keys")
+    .select(API_KEY_COLUMNS)
+    .eq("id", id)
+    .eq("organization_id", organizationId)
+    .eq("environment", environment)
+    .maybeSingle();
+
+  // 404 e nao 403: confirmar que o id existe "mas e do outro ambiente" ja e
+  // informacao demais.
+  const key = inScopeOrNull(data as { organization_id: string; environment: string } | null, organizationId, environment);
+  if (!key) throw new AppError(404, "not_found", "Chave nao encontrada neste ambiente.");
+  return key;
+}
+
+router.get("/api-keys/:id", async (req, res, next) => {
+  try {
+    const key = await findApiKeyInScope(
+      req.dashboardAuth!.organizationId,
+      req.dashboardAuth!.environment,
+      req.params.id
+    );
+    res.json({ data: key });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/api-keys/:id/revoke", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const organizationId = req.dashboardAuth!.organizationId;
+    const environment = req.dashboardAuth!.environment;
+
+    await findApiKeyInScope(organizationId, environment, req.params.id);
+
+    const { data, error } = await supabaseAdmin
+      .from("api_keys")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .eq("organization_id", organizationId)
+      .eq("environment", environment)
+      .is("revoked_at", null)
+      .select(API_KEY_COLUMNS)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    // Sem linha afetada = ja estava revogada. Revogar duas vezes nao e erro.
+    if (!data) {
+      const current = await findApiKeyInScope(organizationId, environment, req.params.id);
+      res.json({ data: current, already_revoked: true });
+      return;
+    }
+
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// WEBHOOK ENDPOINTS — edicao e remocao com escopo de ambiente
+//
+// Mesmo raciocinio das chaves: o painel editava/apagava direto pelo Supabase
+// client com `.eq("id", ...)`. O segredo HMAC nunca e lido nem devolvido.
+// ============================================================
+const WEBHOOK_COLUMNS = "id, organization_id, environment, url, events, description, enabled, created_at";
+
+async function findEndpointInScope(organizationId: string, environment: string, id: string) {
+  const { data } = await supabaseAdmin
+    .from("webhook_endpoints")
+    .select(WEBHOOK_COLUMNS)
+    .eq("id", id)
+    .eq("organization_id", organizationId)
+    .eq("environment", environment)
+    .maybeSingle();
+
+  const endpoint = inScopeOrNull(data as { organization_id: string; environment: string } | null, organizationId, environment);
+  if (!endpoint) throw new AppError(404, "not_found", "Endpoint nao encontrado neste ambiente.");
+  return endpoint;
+}
+
+router.patch("/webhooks/endpoints/:id", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const schema = z
+      .object({
+        url: z.string().url().optional(),
+        events: z.array(z.string()).min(1).optional(),
+        description: z.string().max(255).nullable().optional(),
+        enabled: z.boolean().optional(),
+      })
+      .refine((v) => Object.keys(v).length > 0, { message: "Informe ao menos um campo." });
+
+    const body = schema.parse(req.body);
+    const organizationId = req.dashboardAuth!.organizationId;
+    const environment = req.dashboardAuth!.environment;
+
+    await findEndpointInScope(organizationId, environment, req.params.id);
+
+    const { data, error } = await supabaseAdmin
+      .from("webhook_endpoints")
+      .update(body)
+      .eq("id", req.params.id)
+      .eq("organization_id", organizationId)
+      .eq("environment", environment)
+      .select(WEBHOOK_COLUMNS)
+      .single();
+
+    if (error) throw error;
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/webhooks/endpoints/:id", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const organizationId = req.dashboardAuth!.organizationId;
+    const environment = req.dashboardAuth!.environment;
+
+    await findEndpointInScope(organizationId, environment, req.params.id);
+
+    const { error } = await supabaseAdmin
+      .from("webhook_endpoints")
+      .delete()
+      .eq("id", req.params.id)
+      .eq("organization_id", organizationId)
+      .eq("environment", environment);
+
+    if (error) throw error;
+    res.json({ data: { id: req.params.id, deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// CLIENTES — CRUD com escopo de ambiente garantido no servidor
+//
+// A RLS permite ao painel escrever em `customers` (nao e tabela de ledger),
+// mas ela nao conhece o ambiente selecionado. Passando pelo backend, o
+// organization_id e o environment vem da sessao ja conferida, nunca do corpo
+// da requisicao.
+// ============================================================
+const customerSchema = z.object({
+  email: z.string().email().optional().or(z.literal("")),
+  name: z.string().max(255).optional(),
+  phone: z.string().max(50).optional(),
+  document: z.string().max(50).optional(),
+  external_id: z.string().max(255).optional(),
+});
+
+/** Campo vazio vindo de formulario vira null, nao string vazia. */
+function normalizeCustomer(body: z.infer<typeof customerSchema>) {
+  return {
+    email: body.email?.trim() || undefined,
+    name: body.name?.trim() || undefined,
+    phone: body.phone?.trim() || undefined,
+    document: body.document?.trim() || undefined,
+    external_id: body.external_id?.trim() || undefined,
+  };
+}
+
+router.post("/customers", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const body = customerSchema.parse(req.body);
+    const customer = await createCustomer(
+      req.dashboardAuth!.organizationId,
+      req.dashboardAuth!.environment,
+      normalizeCustomer(body)
+    );
+    res.status(201).json({ data: customer });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/customers/:id", async (req, res, next) => {
+  try {
+    const customer = await getCustomer(
+      req.dashboardAuth!.organizationId,
+      req.params.id,
+      req.dashboardAuth!.environment
+    );
+    res.json({ data: customer });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch("/customers/:id", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const body = customerSchema.parse(req.body);
+    const customer = await updateCustomer(
+      req.dashboardAuth!.organizationId,
+      req.params.id,
+      req.dashboardAuth!.environment,
+      normalizeCustomer(body)
+    );
+    res.json({ data: customer });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/customers/:id", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    await deleteCustomer(
+      req.dashboardAuth!.organizationId,
+      req.params.id,
+      req.dashboardAuth!.environment
+    );
+    res.json({ data: { id: req.params.id, deleted: true } });
   } catch (err) {
     next(err);
   }

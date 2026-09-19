@@ -28,7 +28,7 @@ router.post("/", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   }
 });
 
-router.get("/", apiKeyAuth, async (req, res, next) => {
+router.get("/", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
     const result = await listCustomers(req.auth!.organizationId, req.auth!.environment, {
@@ -40,9 +40,13 @@ router.get("/", apiKeyAuth, async (req, res, next) => {
   }
 });
 
-router.get("/:id", apiKeyAuth, async (req, res, next) => {
+router.get("/:id", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
-    const customer = await getCustomer(req.auth!.organizationId, req.params.id);
+    const customer = await getCustomer(
+      req.auth!.organizationId,
+      req.params.id,
+      req.auth!.environment
+    );
     res.json({ data: customer });
   } catch (err) {
     next(err);

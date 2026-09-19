@@ -12,7 +12,7 @@ import {
 } from "../middleware/maintenance.js";
 import { retryDeliveryById } from "../services/webhooks.js";
 import {
-  getPaymentByProviderTxid,
+  getPaymentByProviderReference,
   markPixPaymentSucceeded,
 } from "../services/payments.js";
 
@@ -36,6 +36,25 @@ const router = Router();
 router.use(platformAdminAuth);
 
 const reasonSchema = z.string().trim().min(10).max(500);
+
+/**
+ * Limpa o termo de busca antes de interpola-lo num filtro `.or(...)`.
+ *
+ * O `or` do PostgREST e uma EXPRESSAO em texto: virgula separa condicoes,
+ * parenteses agrupam, ponto separa coluna/operador/valor. Interpolar o termo
+ * cru permitia reescrever a consulta a partir da caixa de busca — por exemplo
+ * fechando a lista com uma virgula e acrescentando uma condicao sobre outra
+ * coluna. Nao da para apagar dado (e service_role com colunas explicitas e
+ * so SELECT), mas altera o resultado e vaza erro do banco na tela.
+ *
+ * Removemos os metacaracteres do filtro e o curinga `*` do ilike, e limitamos
+ * o tamanho. Sobra exatamente o que uma busca precisa: texto.
+ */
+function sanitizeSearch(value: string | undefined): string | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[,()"'\\*:]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  return cleaned || null;
+}
 
 // ============================================================
 // SESSAO / IDENTIDADE
@@ -86,7 +105,7 @@ router.get("/overview", async (req, res, next) => {
 // ============================================================
 router.get("/organizations", async (req, res, next) => {
   try {
-    const search = (req.query.search as string | undefined)?.trim();
+    const search = sanitizeSearch(req.query.search as string | undefined);
     const status = req.query.status as string | undefined;
 
     let query = supabaseAdmin
@@ -292,7 +311,7 @@ router.post(
 // ============================================================
 router.get("/users", async (req, res, next) => {
   try {
-    const search = (req.query.search as string | undefined)?.trim();
+    const search = sanitizeSearch(req.query.search as string | undefined);
 
     let query = supabaseAdmin
       .from("users")
@@ -326,7 +345,7 @@ router.get("/payments", async (req, res, next) => {
   try {
     const environment = req.platformAdmin!.environment;
     const status = req.query.status as string | undefined;
-    const search = (req.query.search as string | undefined)?.trim();
+    const search = sanitizeSearch(req.query.search as string | undefined);
 
     let query = supabaseAdmin
       .from("payments")
@@ -516,7 +535,12 @@ router.post(
         return;
       }
 
-      const payload = (event.payload || {}) as { txid?: string; status?: string; event?: string };
+      const payload = (event.payload || {}) as {
+        txid?: string;
+        external_id?: string;
+        status?: string;
+        event?: string;
+      };
       const eventName = payload.event || event.event_type;
 
       if (eventName !== "payment.confirmed" || payload.status !== "paid" || !payload.txid) {
@@ -529,7 +553,13 @@ router.post(
         return;
       }
 
-      const payment = await getPaymentByProviderTxid(payload.txid);
+      // Mesma busca do webhook e da reconciliacao automatica: txid OU
+      // external_id. Manter as tres consistentes evita que o ADM diga
+      // "nenhum pagamento com esse txid" para um caso que o job ja resolveria.
+      const payment = await getPaymentByProviderReference({
+        txid: payload.txid,
+        externalId: payload.external_id,
+      });
 
       if (!payment) {
         res.status(409).json({

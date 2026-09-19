@@ -51,6 +51,23 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
   const [simulating, setSimulating] = useState(false);
   const successUrl = useRef<string | null>(null);
 
+  /**
+   * Le o status publico da sessao e guarda o success_url.
+   *
+   * Antes, o success_url so era capturado dentro do polling: quem recarregava
+   * a pagina depois de pagar, ou confirmava pelo botao de simulacao, ficava
+   * preso na tela de "pagamento confirmado" sem nunca voltar para a loja.
+   */
+  const captureSuccessUrl = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/v1/checkout/sessions/${id}/status`);
+      const json = await res.json();
+      if (res.ok) successUrl.current = json.data.success_url ?? null;
+    } catch {
+      // Sem success_url a tela apenas nao redireciona — nada quebra.
+    }
+  }, [id]);
+
   const loadSession = useCallback(async () => {
     try {
       const res = await fetch(`${API}/v1/checkout/sessions/${id}`);
@@ -58,14 +75,19 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
       if (!res.ok) throw new Error(json?.error?.message || "Sessão não encontrada.");
 
       setSession(json.data);
-      if (json.data.status === "complete") setStatus("paid");
-      else if (json.data.status === "expired") setStatus("expired");
-      else setStatus("ready");
+      if (json.data.status === "complete") {
+        await captureSuccessUrl();
+        setStatus("paid");
+      } else if (json.data.status === "expired") {
+        setStatus("expired");
+      } else {
+        setStatus("ready");
+      }
     } catch (err) {
       setStatus("error");
       setMessage(err instanceof Error ? err.message : "Não foi possível carregar o pagamento.");
     }
-  }, [id]);
+  }, [id, captureSuccessUrl]);
 
   useEffect(() => {
     loadSession();
@@ -134,6 +156,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error?.message || "Não foi possível simular.");
+      await captureSuccessUrl();
       setStatus("paid");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Falha ao simular o pagamento.");

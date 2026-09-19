@@ -78,6 +78,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // --- /docs: documentacao e conteudo de cliente ------------------------
+  // Tres lugares do codigo (app/page.tsx, dashboard/api/page.tsx e
+  // components/dashboard/ApiDocs.tsx) ja afirmavam que "/docs foi fechada no
+  // middleware" — mas a regra nunca existiu, e a pagina publica continuava
+  // servindo a listagem de endpoints. Esta e a regra que faltava. A
+  // documentacao viva fica em /dashboard/api, dentro do painel.
+  if (pathname === "/docs" || pathname.startsWith("/docs/")) {
+    const url = request.nextUrl.clone();
+    url.search = "";
+    if (user) {
+      url.pathname = "/dashboard/api";
+    } else {
+      url.pathname = "/login";
+      url.searchParams.set("next", "/dashboard/api");
+    }
+    return NextResponse.redirect(url);
+  }
+
   // --- Modo manutencao (paginas do painel) -----------------------------
   // O ADM (/admin) NUNCA e bloqueado: e de la que a manutencao se desliga.
   const isDashboardPage =

@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { dashboardFetch } from "@/lib/dashboard-api";
 import { Plus, Loader2, Trash2, Pencil, Users } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils";
 import { Table, Mono, EmptyState } from "./ui";
-import type { Customer, Environment } from "@/lib/types";
+import type { Customer } from "@/lib/types";
 
 /**
  * Clientes sao a unica entidade do dominio que o painel escreve direto pelo
@@ -16,13 +16,9 @@ import type { Customer, Environment } from "@/lib/types";
  */
 export function CustomersManager({
   customers,
-  organizationId,
-  environment,
   canWrite,
 }: {
   customers: Customer[];
-  organizationId: string;
-  environment: Environment;
   canWrite: boolean;
 }) {
   const router = useRouter();
@@ -52,46 +48,44 @@ export function CustomersManager({
   async function save() {
     setBusy(true);
     setError(null);
-    const supabase = createClient();
-
+    // Escrita via backend (/dashboard-api/customers), não direto pelo Supabase.
+    // A RLS confere se a pessoa é da empresa, mas não sabe qual ambiente o
+    // painel está mostrando: um id do outro ambiente era gravável só com o id.
+    // Organização e ambiente passam a vir da sessão conferida no servidor.
     const payload = {
-      name: form.name.trim() || null,
-      email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
-      document: form.document.trim() || null,
-      external_id: form.external_id.trim() || null,
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      document: form.document.trim(),
+      external_id: form.external_id.trim(),
     };
 
-    const { error: dbError } =
-      editing === "new"
-        ? await supabase
-            .from("customers")
-            .insert({ ...payload, organization_id: organizationId, environment })
-        : await supabase
-            .from("customers")
-            .update(payload)
-            .eq("id", (editing as Customer).id);
-
-    setBusy(false);
-
-    if (dbError) {
-      setError(dbError.message);
-      return;
+    try {
+      if (editing === "new") {
+        await dashboardFetch("/customers", { method: "POST", body: payload });
+      } else {
+        await dashboardFetch(`/customers/${(editing as Customer).id}`, {
+          method: "PATCH",
+          body: payload,
+        });
+      }
+      setEditing(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar o cliente.");
+    } finally {
+      setBusy(false);
     }
-
-    setEditing(null);
-    router.refresh();
   }
 
   async function remove(customer: Customer) {
     if (!window.confirm(`Remover ${customer.name || customer.email || "este cliente"}?`)) return;
-    const supabase = createClient();
-    const { error: dbError } = await supabase.from("customers").delete().eq("id", customer.id);
-    if (dbError) {
-      window.alert(`Não foi possível remover: ${dbError.message}`);
-      return;
+    try {
+      await dashboardFetch(`/customers/${customer.id}`, { method: "DELETE" });
+      router.refresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Não foi possível remover.");
     }
-    router.refresh();
   }
 
   return (

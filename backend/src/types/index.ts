@@ -164,9 +164,22 @@ export interface PaymentProvider {
     status: RefundStatus;
     rawResponse?: unknown;
   }>;
-  getPayment(providerPaymentId: string): Promise<{
+  /**
+   * Consulta uma cobranca no adquirente.
+   *
+   * `reference` aceita o id do provider, o txid OU o external_id — a doc da
+   * NexusPag diz explicitamente que GET /api/pix/{id} aceita os tres. E o que
+   * permite a reconciliacao automatica encontrar uma cobranca cujo txid nunca
+   * chegou a ser gravado localmente.
+   *
+   * `pix` e `providerPaymentId` sao opcionais: providers que nao fazem PIX
+   * simplesmente nao os preenchem.
+   */
+  getPayment(reference: string): Promise<{
     status: PaymentStatus;
+    providerPaymentId?: string;
     rawResponse?: unknown;
+    pix?: PixDetails;
   }>;
   // Verificacao de assinatura de webhook NAO fica no provider: o formato
   // t=<unix>,v1=<hmac_hex> e o mesmo do FluxPay, entao as rotas usam

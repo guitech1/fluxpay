@@ -110,6 +110,28 @@ export async function payCheckoutSessionWithPix(
     }
   }
 
+  // A cobranca PIX nao pode sobreviver a sessao que a gerou.
+  //
+  // Antes daqui, createPayment caia no padrao de 3600s enquanto a sessao
+  // expira em 30 min: entre os 30 e os 60 minutos o pagador ainda conseguia
+  // pagar um PIX de uma sessao ja "expired". O webhook confirmava o pagamento
+  // (dinheiro entrava), mas getCheckoutSessionStatus so fecha sessao que
+  // esteja "open" — a tela continuava dizendo "Cobranca expirada" e nunca
+  // redirecionava para o success_url do lojista.
+  const remainingSeconds = session.expires_at
+    ? Math.floor((new Date(session.expires_at as string).getTime() - Date.now()) / 1000)
+    : null;
+
+  // Menos de 1 minuto util nao da para pagar: melhor recusar do que gerar uma
+  // cobranca no adquirente que ja nasce vencida.
+  if (remainingSeconds !== null && remainingSeconds < 60) {
+    throw new AppError(
+      409,
+      "invalid_request",
+      "Esta cobranca esta prestes a expirar. Peca um novo link ao vendedor."
+    );
+  }
+
   const payment = await createPayment(session.organization_id, session.environment as Environment, {
     amount: session.amount,
     currency: session.currency,
@@ -117,6 +139,7 @@ export async function payCheckoutSessionWithPix(
     description: `Checkout ${session.id}`,
     payment_method: { type: "pix" },
     metadata: { checkout_session_id: session.id },
+    expires_in_seconds: remainingSeconds ?? undefined,
   });
 
   await supabaseAdmin

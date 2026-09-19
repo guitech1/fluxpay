@@ -5,8 +5,15 @@ import type { Customer } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Leitura pelo Server Component (a RLS filtra por empresa; o ambiente vai
+ * explicito). A ESCRITA nao acontece aqui nem no cliente Supabase: vai por
+ * /dashboard-api/customers, onde organizacao e ambiente vem da sessao ja
+ * conferida no servidor — a RLS sozinha nao sabe qual ambiente o painel esta
+ * mostrando, e um id do outro ambiente era gravavel so com o id.
+ */
 export default async function CustomersPage() {
-  const { supabase, organization, environment, role } = await requireDashboardContext();
+  const { supabase, environment, role } = await requireDashboardContext();
 
   const { data, error } = await supabase
     .from("customers")
@@ -21,12 +28,7 @@ export default async function CustomersPage() {
       {error ? (
         <ErrorState detail={error.message} />
       ) : (
-        <CustomersManager
-          customers={(data || []) as Customer[]}
-          organizationId={organization.id}
-          environment={environment}
-          canWrite={canWrite(role)}
-        />
+        <CustomersManager customers={(data || []) as Customer[]} canWrite={canWrite(role)} />
       )}
     </div>
   );

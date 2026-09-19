@@ -21,6 +21,13 @@ import {
  *
  * balance_transactions e somente leitura para o painel: toda escrita nasce do
  * ciclo de vida do pagamento, no backend (service_role).
+ *
+ * SAQUE: nao existe solicitacao de saque no FluxPay — nao ha rota, service,
+ * tabela de pedidos nem tela. O rotulo "Saque" abaixo e so a traducao do tipo
+ * `payout` de balance_transactions, e hoje NENHUM codigo grava esse tipo.
+ * Por isso a pagina avisa isso na cara do lojista em vez de deixar a legenda
+ * "ja liberado para saque" sugerindo o contrario. Detalhes e o que faltaria
+ * implementar: docs/SAQUES.md. Nao invente um fluxo aqui.
  */
 
 export const dynamic = "force-dynamic";
@@ -116,7 +123,7 @@ export default async function WalletPage({
         <BalanceCard
           label="Disponível"
           value={formatCurrency(primary?.available ?? 0, currency)}
-          hint="Já liberado para saque"
+          hint="Liberado no extrato (sem saque pelo painel)"
           icon={Wallet}
         />
         <BalanceCard
@@ -131,6 +138,20 @@ export default async function WalletPage({
           hint="Disponível mais o que está a liberar"
           icon={ArrowUpRight}
         />
+      </div>
+
+      {/*
+        Aviso honesto: o saldo "Disponível" já passou do prazo de liberação no
+        ledger, mas não existe solicitação de saque no produto. Ver
+        docs/SAQUES.md — nenhum fluxo fictício foi criado aqui.
+      */}
+      <div className="card bg-amber-500/5 border-amber-500/20">
+        <p className="text-sm text-amber-200/90 leading-relaxed">
+          <strong>Saque ainda não disponível.</strong> O valor em
+          &ldquo;Disponível&rdquo; já cumpriu o prazo de liberação, mas o pedido de saque ainda
+          não está implementado no FluxPay: não há, por enquanto, como solicitar a retirada pelo
+          painel nem pela API. Para receber o valor, fale com o suporte da FluxPay.
+        </p>
       </div>
 
       {balances.length > 1 && (

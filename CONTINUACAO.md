@@ -6,6 +6,238 @@
 
 ---
 
+## 0. Rodada 4 — 19/09/2026 (corridas, isolamento e reconciliacao)
+
+Fecha os tres bloqueadores: idempotencia, corrida PIX/NexusPag e isolamento
+test/live. Onde houver conflito, esta secao vale sobre as anteriores.
+
+**A mudanca estrutural: persistencia ANTES do adquirente**
+
+`services/payments.ts::createPayment` inverteu a ordem. Era
+`provider.createPayment()` -> `insert`; virou `insert` -> `provider.createPayment()`
+-> `update`. Isso resolve tres coisas de uma vez:
+
+1. *Webhook antes da persistencia deixa de ser possivel.* O webhook casa por
+   `txid`, que so existe depois da resposta do adquirente. Gravando a linha
+   antes da chamada, o pagamento local ja existe no instante em que a NexusPag
+   passa a conhecer a cobranca. E como o `external_id` tambem vai gravado
+   antes, o webhook casa por **txid OU external_id**
+   (`getPaymentByProviderReference`), cobrindo a janela em que o txid ainda
+   nao foi persistido.
+2. *Corrida de idempotencia.* Duas requisicoes simultaneas com a mesma
+   Idempotency-Key passavam as duas pelo middleware (nenhuma via a outra,
+   porque nenhuma linha existia) e criavam DUAS cobrancas no adquirente. Agora
+   a primeira gravacao vence e a segunda recebe 23505 da
+   `UNIQUE(organization_id, environment, idempotency_key)`; o conflito e
+   tratado como "ja existe" e a resposta devolve a mesma cobranca. O banco e o
+   unico lugar onde duas requisicoes simultaneas se enxergam.
+3. *Cobranca duplicada no adquirente.* O `external_id` e, pela doc, chave de
+   idempotencia da NexusPag.
+
+**Reconciliacao automatica (o ADM deixou de ser o caminho de recuperacao)**
+
+Duas rotinas novas em `services/payments.ts`, chamadas pela funcao agendada da
+Netlify a cada 10 minutos:
+
+- `reprocessUnmatchedProviderEvents()` — eventos autenticados e gravados que
+  nao acharam cobranca na chegada. Antes eles eram marcados como processados e
+  so saiam do limbo com alguem clicando em "reprocessar" no ADM. Agora a rota
+  do webhook **nao marca** esse caso como processado (`processed_at` fica
+  nulo) e o job tenta de novo sozinho.
+- `reconcileOrphanPixCharges()` — cobrancas pendentes de PIX que ficaram sem
+  `txid` porque a chamada ao adquirente falhou de forma ambigua. Consulta
+  `GET /api/pix/{id}` usando o `external_id` (a doc diz que o `{id}` aceita
+  UUID interno, txid **ou** external_id) e decide: confirma, completa os dados
+  ou encerra. Adquirente fora do ar nunca encerra cobranca de ninguem. Em
+  `test` nao ha o que consultar, entao a orfa e encerrada apos a janela.
+
+A dedupe de `provider_events` (`UNIQUE(provider, provider_event_id)`) continua
+exatamente como estava. O ADM continua com reprocessamento manual, agora para
+inspecao e caso excepcional, nao para o fluxo normal.
+
+**Isolamento test/live — revisao completa**
+
+Novo `utils/scope.ts` (`isInScope` / `inScopeOrNull`): sem nenhuma dependencia,
+usado como conferencia **depois** da leitura, alem do `.eq()` na query. Se um
+filtro se perder numa refatoracao, o recurso e recusado com 404 em vez de
+vazar.
+
+- `getPayment`, `cancelPayment`, `createRefund`, `getCustomer` ja exigiam
+  ambiente (rodada 3) e agora tambem passam pelo guard.
+- `listPayments`: o cursor `starting_after` buscava `created_at` so por `id` —
+  um id de outra empresa ou do outro ambiente servia de cursor. Passou a ser
+  escopado, e cursor fora do escopo vira 400.
+- **API Keys**: `GET /dashboard-api/api-keys/:id` e
+  `POST /dashboard-api/api-keys/:id/revoke` (novas). A revogacao era um UPDATE
+  direto pelo Supabase client com `.eq("id", ...)`: a RLS confere a empresa mas
+  nao sabe o ambiente do painel, entao uma chave de producao era revogavel a
+  partir da visao de testes. `key_hash` nunca sai dessas rotas.
+- **Webhooks**: `PATCH` e `DELETE /dashboard-api/webhooks/endpoints/:id`
+  (novas), pelo mesmo motivo. O segredo HMAC nunca e lido nem devolvido.
+- **Clientes**: `POST`, `GET`, `PATCH`, `DELETE /dashboard-api/customers[/:id]`
+  (novas) — organizacao e ambiente vem da sessao conferida no servidor, nunca
+  do corpo nem de prop do cliente.
+- `/dashboard-api/payments/:id/simulate-payment` recusa com 404 quando o
+  ambiente da sessao nao e `test`.
+- `MembersManager` e `CompanyForm` continuam escrevendo direto pelo Supabase:
+  sao recursos de ORGANIZACAO, sem ambiente, e a RLS cobre org + papel.
+
+**external_id: global ou por ambiente?**
+
+Verificado na doc (`docs/nexuspag-api.md`, "Criar Cobranca PIX" e "Consultar
+PIX"): o `external_id` e chave de idempotencia **do dono da API key**, sem
+nenhum conceito de ambiente. **Nao foi criado prefixo `test:`/`live:`** — seria
+assumir comportamento nao documentado. O que foi feito:
+
+- o valor enviado passou a ser o **UUID local da cobranca**, nunca a referencia
+  do lojista. A API key da NexusPag e uma so, da plataforma, compartilhada por
+  todas as organizacoes: mandando "pedido-1" do lojista, duas empresas
+  diferentes colidiriam e a segunda receberia de volta a cobranca da primeira
+  (a doc diz explicitamente que o mesmo external_id devolve a transacao
+  existente). O UUID e unico por cobranca, empresa e ambiente;
+- `test` nunca chega a NexusPag (`providers/index.ts` manda test para o
+  sandbox e recusa sandbox em live), entao nao ha colisao entre ambientes.
+
+**Migration 013 (NAO aplicada ao banco)**
+
+Revisada contra o estado atual. Alem da troca da unique, ganhou dois indices
+exigidos pelo codigo novo: `provider_external_id` (a busca do webhook por
+external_id nao aproveitava o indice composto `(provider, provider_external_id)`
+da migration 006) e o parcial das cobrancas PIX orfas. O indice de
+external_id **nao** e unico de proposito: linhas anteriores a esta rodada
+podem ter gravado ali a referencia do lojista, que pode repetir.
+
+**Testes**
+
+`backend/tests/` com `node:test`, rodando via `npm run test --workspace=backend`
+(usa `tsx`, sem dependencia nova). 23 testes, todos passando:
+`scope.test.ts` (acesso/cancelamento/refund/cliente de outro ambiente),
+`provider-events.test.ts` (webhook antes do pagamento, duplicado, reentrega de
+evento pendente, reconciliacao) e `idempotency.test.ts` (mesma chave em test e
+live, duas requisicoes simultaneas).
+
+Sobre honestidade do escopo dos testes: `scope.test.ts` e
+`provider-events.test.ts` importam codigo real. `idempotency.test.ts` testa o
+predicado real de escopo e, para a constraint e o tratamento do 23505, roda
+uma **especificacao executavel** contra um modelo em memoria — a garantia de
+verdade mora no Postgres e exige banco para ser exercitada.
+
+**Corrida residual conhecida, nao corrigida**
+
+Dois cliques simultaneos em `Pagar com PIX` na MESMA sessao de checkout ainda
+podem criar duas cobrancas (a sessao so registra `payment_id` depois que a
+primeira volta). Nao ha perda de dinheiro: o pagador paga uma e a outra expira
+junto com a sessao. Nao foi fechada com chave de idempotencia derivada da
+sessao porque isso faria uma tentativa que falhou no adquirente devolver para
+sempre a linha orfa, sem QR Code.
+
+---
+
+## 0. Rodada 3 — 19/09/2026 (auditoria e correcoes)
+
+Auditoria completa de checkout, webhooks, balance, customers, migrations/RLS,
+variaveis de ambiente e do frontend (dashboard, API Keys, wallet, checkout e
+ADM). Onde houver conflito, esta secao vale sobre as anteriores.
+
+**Isolamento test x live (era o achado mais grave)**
+- `getPayment` e `getCustomer` filtravam so por organizacao. Como
+  `cancelPayment` e `createRefund` sao construidos em cima de `getPayment`,
+  uma chave `sk_test_` conseguia **cancelar e reembolsar uma cobranca de
+  producao** da mesma empresa — e `createRefund` ainda escolhia o provider
+  pelo ambiente do pagamento, ou seja, chamaria a NexusPag de verdade. As duas
+  funcoes passaram a exigir `environment`, propagado pelas rotas `/v1/*` e
+  `/dashboard-api/*`.
+- **Migration 013**: a chave de idempotencia passou a ser
+  `UNIQUE(organization_id, environment, idempotency_key)`. Antes, quem testava
+  com "pedido-1042" e ia para producao com a mesma referencia recebia de volta
+  a cobranca de TESTE (QR Code falso) ou um 500 generico da unique.
+  `middleware/idempotency.ts` tambem passou a filtrar por ambiente.
+
+**URL do webhook de entrada (por que o PIX "nunca confirmava")**
+- As duas telas que mostram essa URL liam `NEXT_PUBLIC_API_URL` direto — que
+  em producao fica VAZIA de proposito. Uma caia no fallback
+  `https://api.fluxpay.com.br` (dominio que nao e o do deploy) e a outra
+  imprimia o caminho relativo `/v1/webhooks/nexuspag`. Nos dois casos o
+  adquirente nunca chamaria o FluxPay. Agora existe
+  `frontend/src/lib/public-url.ts`, que resolve a origem por
+  `NEXT_PUBLIC_API_URL` -> `NEXT_PUBLIC_SITE_URL` -> host da requisicao.
+- `config/env.ts` recusa subir com `NODE_ENV=production` se `API_BASE_URL` ou
+  `FRONTEND_URL` apontarem para localhost — era o mesmo problema pelo lado do
+  backend, e silencioso.
+
+**Chaves de API**
+- `GET /v1/payments`, `/v1/payments/:id`, `/v1/customers`, `/v1/customers/:id`,
+  `/v1/balance` e `GET /v1/webhooks/endpoints` aceitavam chave publicavel
+  (`pk_`), que por definicao vai para o navegador. Ou seja: CPF, e-mail e
+  telefone de todos os clientes, o historico e o saldo ficavam a uma chave
+  publica de distancia. Todos passaram a exigir `requireSecretKey`.
+  `pk_` continua existindo e sendo criavel, mas hoje **nenhuma rota a aceita** —
+  e a interface diz isso, em vez de prometer "so leitura".
+
+**Checkout**
+- A sessao expira em 30 min e o PIX nascia com 60. Entre os dois prazos o
+  pagador pagava um PIX de sessao ja `expired`: o dinheiro entrava e a tela
+  continuava dizendo "Cobranca expirada", sem redirecionar para o
+  `success_url`. `payCheckoutSessionWithPix` agora limita a validade do PIX ao
+  tempo restante da sessao e recusa (409) quando sobra menos de 1 minuto.
+- `success_url` so era capturado pelo polling: quem recarregava a pagina depois
+  de pagar, ou usava o botao de simulacao, nunca voltava para a loja. A pagina
+  passou a ler `/status` tambem no carregamento e apos a simulacao.
+
+**ADM**
+- O termo de busca era interpolado cru dentro do filtro `.or(...)` do PostgREST
+  em `/admin-api/organizations`, `/users` e `/payments` — uma virgula reescrevia
+  a expressao da consulta. Adicionado `sanitizeSearch()`.
+- A protecao do `/admin` **nao foi tocada**: `requirePlatformAdmin` no layout e
+  `platformAdminAuth` em todas as rotas `/admin-api/*` continuam como estavam.
+
+**/docs**
+- Tres comentarios no codigo afirmavam que a rota publica `/docs` era fechada
+  no middleware. **Nao era** — a regra nunca existiu e a pagina servia a
+  listagem de endpoints com a marca antiga. A regra foi escrita, e a pagina
+  virou redirect (segunda camada, mesmo padrao de `/dashboard/api-keys`).
+
+**Saldo**
+- `services/balance.ts` (`GET /v1/balance`) somava todas as moedas num total e
+  rotulava "BRL" fixo, enquanto o painel usa o RPC que agrupa por moeda — API e
+  tela podiam divergir. Reescrito para agrupar por moeda, mesmo formato de
+  resposta.
+
+**Saque — NAO implementado, e agora esta escrito**
+- Nao existe solicitacao de saque no FluxPay: nenhuma rota, service, tabela,
+  tela ou permissao. O unico "Saque" do projeto e o rotulo do tipo `payout` no
+  extrato da Carteira — e **nenhum codigo grava esse tipo**, entao o rotulo
+  nunca aparece na pratica. O rotulo e a constraint do banco foram
+  **preservados**; nenhum fluxo ficticio foi criado. A tela da Carteira passou
+  a avisar isso explicitamente e `docs/SAQUES.md` registra o que existe, o que
+  falta e por que a API de Saques da NexusPag nao e plug-and-play (a carteira
+  principal la e a da FluxPay, nao a do lojista).
+
+**Outros**
+- `frontend/package.json`: `@types/react`/`@types/react-dom` estavam em `^18`
+  com React 19 — esse par nao compila no `next build`. Corrigido para `^19`.
+- `.gitignore`: `.env` nao cobria `.env.production`. Trocado por `.env*` com
+  excecao para os `.env.example`.
+
+**Gaps conhecidos, deixados registrados sem alteracao de codigo** (nao sao
+regressoes; sao limites atuais):
+- `provider_events.signature_valid` nunca e gravado como `false`, porque o
+  webhook devolve 401 antes de escrever. A lista "assinaturas invalidas" do ADM
+  vai ficar sempre vazia. Gravar convidaria crescimento ilimitado da tabela, ja
+  que `/v1/webhooks/nexuspag` e isento do rate limit de proposito.
+- `fluxpay_expire_stale_records()` expira PIX direto no banco, sem disparar
+  webhook de saida: o lojista nao e avisado da expiracao.
+- `SettingsPanel` do ADM faz `setState` em fase de render para espelhar a
+  configuracao salva.
+
+**Nao validado nesta rodada**: sem rede no ambiente (`npm` responde 403), entao
+nao houve `npm install`, `tsc` com dependencias, `next build`, execucao de
+migration contra o banco nem deploy. O que rodou: `tsc` global sobre o backend,
+antes e depois das mudancas, com o mesmo conjunto de diagnosticos (todos por
+`node_modules` ausente) — nenhum erro novo de logica.
+
+---
+
 ## 0. Rodada 2 — 18/09/2026 (o que mudou nesta entrega)
 
 Alterações feitas **depois** do texto original abaixo. Onde houver conflito,
@@ -470,7 +702,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_ANON_KEY=
 API_BASE_URL=
 FRONTEND_URL=
-NEXUSPAG_API_KEY=          (opcional — sem isso, ambiente "live" cai no sandbox)
+NEXUSPAG_API_KEY=          (opcional — sem isso, ambiente "live" recusa a cobrança)
 NEXUSPAG_WEBHOOK_SECRET=   (opcional — sem isso, a assinatura do webhook não pode ser validada)
 NEXUSPAG_BASE_URL=https://nexuspag.com
 ```
@@ -569,3 +801,10 @@ Ordem de conferência quando tiver rede:
 `node_modules/`, `dist/`, `.next/`, lockfiles, `.env`/`.env.local` e qualquer
 chave/segredo real. Tudo isso precisa ser reinstalado/reconfigurado
 localmente antes de rodar o projeto.
+
+
+## Rodada adicional — confirmação PIX atômica (migration 014)
+
+Foi corrigida a última lacuna encontrada na confirmação PIX: `markPixPaymentSucceeded()` agora usa a RPC `fluxpay_confirm_pix_payment`, que trava a cobrança no PostgreSQL e faz a transição para `succeeded` + crédito no `balance_transactions` dentro da mesma transação. Webhooks/retries simultâneos não podem mais creditar o mesmo pagamento duas vezes. A função também repara um pagamento já `succeeded` que tenha ficado sem lançamento de charge.
+
+A documentação de produção foi alinhada: ausência de `NEXUSPAG_API_KEY` em `live` faz a cobrança ser recusada; não existe fallback silencioso para sandbox.

@@ -77,6 +77,9 @@ interface NexusPagPixConsultResponse {
   net_amount: number;
   paid_at?: string | null;
   expires_at: string;
+  /** Presentes na consulta segundo a doc ("Consultar PIX"); uteis na reconciliacao. */
+  pix_copia_cola?: string;
+  qr_code_base64?: string;
 }
 
 /** Mapeia o status da NexusPag (pending | paid | expired | cancelled) para o payment_status interno. */
@@ -165,17 +168,28 @@ export class NexusPagProvider implements PaymentProvider {
     };
   }
 
-  /** Consulta o status atual de uma cobranca PIX na NexusPag (resposta plana, sem "transaction"). */
-  async getPayment(providerPaymentId: string): Promise<{
+  /**
+   * Consulta o status atual de uma cobranca PIX na NexusPag.
+   *
+   * A resposta aqui e PLANA — sem o wrapper "transaction" da criacao.
+   *
+   * `reference` pode ser o UUID interno, o txid OU o external_id: a doc
+   * ("Consultar PIX") diz isso nas notas do endpoint. A reconciliacao
+   * automatica usa o external_id justamente porque, numa cobranca orfa, o
+   * txid e o id interno nunca chegaram a ser gravados do nosso lado.
+   */
+  async getPayment(reference: string): Promise<{
     status: PaymentStatus;
+    providerPaymentId?: string;
     rawResponse?: unknown;
+    pix?: PixDetails;
   }> {
-    const response = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/${providerPaymentId}`, {
+    const response = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/${encodeURIComponent(reference)}`, {
       headers: { "x-api-key": getApiKey() },
     });
 
     if (response.status === 404) {
-      throw new Error(`Transacao ${providerPaymentId} nao encontrada na NexusPag.`);
+      throw new Error(`Transacao ${reference} nao encontrada na NexusPag.`);
     }
 
     const data = (await response.json().catch(() => null)) as NexusPagPixConsultResponse | null;
@@ -184,7 +198,21 @@ export class NexusPagProvider implements PaymentProvider {
       throw new Error(`Falha ao consultar PIX na NexusPag (HTTP ${response.status}).`);
     }
 
-    return { status: mapNexusPagStatus(data.status), rawResponse: data };
+    return {
+      status: mapNexusPagStatus(data.status),
+      providerPaymentId: data.id,
+      rawResponse: data,
+      pix: data.txid
+        ? {
+            txid: data.txid,
+            copyPaste: data.pix_copia_cola ?? "",
+            qrCodeBase64: data.qr_code_base64 ?? "",
+            expiresAt: data.expires_at,
+            feeAmountCents: reaisToCents(data.fee ?? 0),
+            netAmountCents: reaisToCents(data.net_amount ?? 0),
+          }
+        : undefined,
+    };
   }
 
   async refundPayment(_params: {

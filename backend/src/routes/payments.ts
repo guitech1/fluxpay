@@ -48,7 +48,7 @@ router.post("/", apiKeyAuth, requireSecretKey, idempotencyCheck, async (req, res
   }
 });
 
-router.get("/", apiKeyAuth, async (req, res, next) => {
+router.get("/", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
     const starting_after = req.query.starting_after as string | undefined;
@@ -66,9 +66,9 @@ router.get("/", apiKeyAuth, async (req, res, next) => {
   }
 });
 
-router.get("/:id", apiKeyAuth, async (req, res, next) => {
+router.get("/:id", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
-    const payment = await getPayment(req.auth!.organizationId, req.params.id);
+    const payment = await getPayment(req.auth!.organizationId, req.params.id, req.auth!.environment);
     res.json({ data: payment });
   } catch (err) {
     next(err);
@@ -77,7 +77,11 @@ router.get("/:id", apiKeyAuth, async (req, res, next) => {
 
 router.post("/:id/cancel", apiKeyAuth, requireSecretKey, async (req, res, next) => {
   try {
-    const payment = await cancelPayment(req.auth!.organizationId, req.params.id);
+    const payment = await cancelPayment(
+      req.auth!.organizationId,
+      req.params.id,
+      req.auth!.environment
+    );
     res.json({ data: payment });
   } catch (err) {
     next(err);
@@ -93,7 +97,12 @@ router.post("/:id/refund", apiKeyAuth, requireSecretKey, async (req, res, next) 
     });
     const body = schema.parse(req.body);
 
-    const refund = await createRefund(req.auth!.organizationId, req.params.id, body);
+    const refund = await createRefund(
+      req.auth!.organizationId,
+      req.params.id,
+      req.auth!.environment,
+      body
+    );
     res.status(201).json({ data: refund });
   } catch (err) {
     next(err);

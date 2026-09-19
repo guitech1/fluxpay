@@ -1,4 +1,5 @@
 import { requireDashboardContext } from "@/lib/dashboard-server";
+import { getPublicBaseUrl } from "@/lib/public-url";
 import { PageHeader } from "@/components/dashboard/ui";
 import { AccountSettings } from "@/components/dashboard/AccountSettings";
 
@@ -6,6 +7,11 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const { organization, user, role, environment } = await requireDashboardContext();
+
+  // Resolvida server-side: em producao NEXT_PUBLIC_API_URL fica vazia, e ler a
+  // variavel direto aqui produzia o caminho relativo "/v1/webhooks/nexuspag",
+  // que nao serve para cadastrar no painel da NexusPag.
+  const webhookInUrl = `${await getPublicBaseUrl()}/v1/webhooks/nexuspag`;
 
   return (
     <div className="space-y-8">
@@ -37,9 +43,7 @@ export default async function SettingsPage() {
           </div>
           <div className="sm:col-span-2">
             <dt className="text-flux-muted mb-1">URL do webhook de entrada (NexusPag)</dt>
-            <dd className="font-mono text-xs break-all">
-              {process.env.NEXT_PUBLIC_API_URL || ""}/v1/webhooks/nexuspag
-            </dd>
+            <dd className="font-mono text-xs break-all">{webhookInUrl}</dd>
           </div>
         </dl>
         <p className="text-xs text-flux-muted">

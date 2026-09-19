@@ -138,13 +138,22 @@ export class SandboxProvider implements PaymentProvider {
     };
   }
 
-  async getPayment(providerPaymentId: string): Promise<{
+  /**
+   * O sandbox nao tem onde consultar: nao existe cobranca de verdade em lugar
+   * nenhum. Devolver "succeeded" aqui faria a reconciliacao automatica
+   * confirmar sozinha qualquer cobranca de teste orfa, creditando o ledger sem
+   * ninguem ter pago. Devolvemos "pending": em teste, quem confirma e sempre
+   * uma acao explicita (o botao de simular).
+   */
+  async getPayment(reference: string): Promise<{
     status: PaymentStatus;
+    providerPaymentId?: string;
     rawResponse?: unknown;
   }> {
     return {
-      status: "succeeded",
-      rawResponse: { id: providerPaymentId, status: "succeeded", simulated: true },
+      status: "pending",
+      providerPaymentId: reference,
+      rawResponse: { id: reference, status: "pending", simulated: true },
     };
   }
 }

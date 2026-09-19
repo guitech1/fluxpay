@@ -8,7 +8,8 @@ import type { Environment } from "@/lib/types";
  *
  * Esta pagina vive dentro do painel de proposito. Endpoints, formato de
  * payload e regras de ambiente sao informacao de quem ja e cliente — a rota
- * publica /docs foi fechada no middleware, nao apenas escondida do menu.
+ * publica /docs e fechada no middleware (frontend/src/middleware.ts), nao
+ * apenas escondida do menu.
  *
  * Nada aqui inventa endpoint: cada rota abaixo existe em
  * backend/src/routes/*.ts. Os exemplos usam sempre a chave do ambiente que a
@@ -146,8 +147,15 @@ function isValid(rawBody, header, secret) {
             code={`Authorization: Bearer ${keyExample}\nContent-Type: application/json`}
           />
           <p className="text-sm text-flux-muted leading-relaxed">
-            Chaves publicáveis (<code className="font-mono text-xs text-white">pk_</code>) só leem
-            e podem ficar no navegador. Chaves secretas ficam apenas no seu servidor.
+            Todos os endpoints abaixo exigem uma chave secreta (
+            <code className="font-mono text-xs text-white">sk_</code>), inclusive os de leitura:
+            cobranças, clientes e saldo são dados privados da sua empresa e não podem trafegar
+            pelo navegador do seu cliente final. Guarde a chave secreta apenas no seu servidor.
+          </p>
+          <p className="text-sm text-flux-muted leading-relaxed">
+            Chaves publicáveis (<code className="font-mono text-xs text-white">pk_</code>) existem
+            para uso em páginas públicas, mas <strong>ainda não há endpoint que as aceite</strong>.
+            Até que exista, crie apenas chaves secretas.
           </p>
         </div>
       </section>

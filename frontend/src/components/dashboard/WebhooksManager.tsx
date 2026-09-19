@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, Copy, Check, Trash2, Webhook } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
-import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils";
 import { Table, EmptyState } from "./ui";
 import { WEBHOOK_EVENTS, type WebhookEndpoint } from "@/lib/types";
@@ -61,31 +60,33 @@ export function WebhooksManager({
     }
   }
 
+  /*
+   * Ativar/desativar e apagar passam pelo backend
+   * (/dashboard-api/webhooks/endpoints/:id), não mais direto pelo Supabase.
+   * Motivo: a RLS valida a organização, mas não o ambiente selecionado — um
+   * endpoint de produção podia ser desativado a partir da visão de testes,
+   * bastando o id. O servidor valida organização + ambiente + id.
+   */
   async function toggleEnabled(endpoint: WebhookEndpoint) {
-    const supabase = createClient();
-    const { error: dbError } = await supabase
-      .from("webhook_endpoints")
-      .update({ enabled: !endpoint.enabled })
-      .eq("id", endpoint.id);
-    if (dbError) {
-      window.alert(`Não foi possível atualizar: ${dbError.message}`);
-      return;
+    try {
+      await dashboardFetch(`/webhooks/endpoints/${endpoint.id}`, {
+        method: "PATCH",
+        body: { enabled: !endpoint.enabled },
+      });
+      router.refresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Não foi possível atualizar.");
     }
-    router.refresh();
   }
 
   async function remove(endpoint: WebhookEndpoint) {
     if (!window.confirm(`Apagar o endpoint ${endpoint.url}?`)) return;
-    const supabase = createClient();
-    const { error: dbError } = await supabase
-      .from("webhook_endpoints")
-      .delete()
-      .eq("id", endpoint.id);
-    if (dbError) {
-      window.alert(`Não foi possível apagar: ${dbError.message}`);
-      return;
+    try {
+      await dashboardFetch(`/webhooks/endpoints/${endpoint.id}`, { method: "DELETE" });
+      router.refresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Não foi possível apagar.");
     }
-    router.refresh();
   }
 
   async function copySecret(value: string) {

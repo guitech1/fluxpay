@@ -114,8 +114,7 @@ use **Deploys → Trigger deploy → Clear cache and deploy site** (as
 | `NEXUSPAG_BASE_URL` | opcional, padrão `https://nexuspag.com` | não | produção |
 | `WEBHOOK_RETRY_MAX`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` | opcionais, têm padrão no código | não | ambos |
 
-Sem `NEXUSPAG_API_KEY`, o ambiente `live` cai no provider sandbox e **não move
-dinheiro real**. Sem `NEXUSPAG_WEBHOOK_SECRET`, `/v1/webhooks/nexuspag`
+Sem `NEXUSPAG_API_KEY`, o ambiente `live` recusa a cobrança com erro de configuração e **não cai no sandbox**. Sem `NEXUSPAG_WEBHOOK_SECRET`, `/v1/webhooks/nexuspag`
 responde 503 e nenhum PIX é confirmado — isso é proposital, não é bug.
 
 ## 5. NexusPag
@@ -220,5 +219,5 @@ Local, `NEXT_PUBLIC_API_URL=http://localhost:3001`. Em produção ela fica
 | Painel redireciona para `/manutencao` | modo manutenção ligado com escopo `all` ou `dashboard` — desligue no ADM |
 | Webhook da NexusPag responde 503 | `NEXUSPAG_WEBHOOK_SECRET` não configurada — é proposital |
 | PIX fica pendente para sempre | a URL do webhook na NexusPag não é a do site, ou o segredo está diferente dos dois lados |
-| Checkout sem QR Code em produção | `NEXUSPAG_API_KEY` ausente: o ambiente `live` caiu no sandbox |
+| Checkout sem QR Code em produção | `NEXUSPAG_API_KEY` ausente: o ambiente `live` recusa a cobrança |
 | Build falha no plugin do Next | `@netlify/plugin-nextjs` com monorepo é o ponto menos testado; a alternativa é criar o site com `base = "frontend"` e hospedar a API separado (`backend/src/server.ts` existe para isso) |
