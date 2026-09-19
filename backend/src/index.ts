@@ -17,6 +17,7 @@ import dashboardRouter from "./routes/dashboard.js";
 import adminRouter from "./routes/admin.js";
 import withdrawalsDashboardRouter from "./routes/withdrawals-dashboard.js";
 import withdrawalsAdminRouter from "./routes/withdrawals-admin.js";
+import adminBalanceReleaseRouter from "./routes/admin-balance-release.js";
 
 const app = express();
 
@@ -81,6 +82,7 @@ app.use("/dashboard-api", dashboardRouter);
 app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 
 app.use("/admin-api", adminRouter);
+app.use("/admin-api", adminBalanceReleaseRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 
 app.use(notFoundHandler);
