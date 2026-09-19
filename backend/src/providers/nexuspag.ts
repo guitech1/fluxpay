@@ -6,25 +6,11 @@ import type { PaymentProvider, PaymentStatus, RefundStatus, PixDetails } from ".
  * Baseado na documentacao oficial (nexuspag-api.md):
  *   POST /api/pix/create   — cria a cobranca PIX (resposta aninhada em "transaction")
  *   GET  /api/pix/{id}     — consulta status (resposta PLANA, sem "transaction")
- *   POST <webhook_url>     — notificacao "payment.confirmed" (payload PLANO) quando o PIX e pago
+ *   POST /api/withdrawals  — saque da carteira PRINCIPAL (dona da API key)
+ *   POST <webhook_url>     — notificacao "payment.confirmed" quando o PIX e pago
  *
- * Diferencas importantes em relacao ao provider sandbox:
- * - A NexusPag trabalha em REAIS (ex.: 50.00), enquanto o core do FluxPay
- *   trabalha em CENTAVOS (ex.: 5000). A conversao acontece nas bordas deste
- *   arquivo, nunca fora dele.
- * - PIX nao tem confirmacao sincrona: a resposta do create() sempre volta
- *   "pending" com o QR Code; o pagamento so muda de status quando o webhook
- *   da NexusPag chega (ver routes/webhooks.ts, POST /v1/webhooks/nexuspag).
- * - A NexusPag so envia UM tipo de evento de webhook para PIX: "payment.confirmed".
- *   Nao existe webhook de expiracao/cancelamento — por isso o FluxPay expira
- *   cobrancas vencidas por conta propria (ver fluxpay_expire_stale_records,
- *   chamada pela funcao agendada da Netlify).
- * - Reembolso de PIX nao e coberto pela documentacao (a NexusPag trabalha
- *   com saques da carteira, nao com estorno de PIX individual).
- *   refundPayment() lanca erro explicito em vez de fingir que funciona.
- *
- * Nunca commitar a API key real: ela vem de NEXUSPAG_API_KEY (.env), e o
- * .env nunca vai para o repositorio (.gitignore).
+ * O saque da carteira principal so deve ser chamado apos aprovacao administrativa
+ * de um pedido de lojista (services/withdrawals.ts). Nunca no pedido direto.
  */
 
 const NEXUSPAG_BASE_URL = process.env.NEXUSPAG_BASE_URL || "https://nexuspag.com";
@@ -39,12 +25,10 @@ function getApiKey(): string {
   return key;
 }
 
-/** Converte centavos (inteiro, moeda interna) para reais (decimal, formato NexusPag). */
 function centsToReais(cents: number): number {
   return Math.round(cents) / 100;
 }
 
-/** Converte reais (decimal, resposta da NexusPag) para centavos (inteiro, moeda interna). */
 function reaisToCents(reais: number): number {
   return Math.round(reais * 100);
 }
@@ -59,14 +43,13 @@ interface NexusPagPixCreateResponse {
     fee: number;
     fee_percent: number;
     net_amount: number;
-    status: string; // sempre "pending" na criacao
+    status: string;
     pix_copia_cola: string;
     qr_code_base64: string;
     expires_at: string;
   };
 }
 
-/** GET /api/pix/{id} devolve o objeto PLANO — nao aninhado em "transaction". */
 interface NexusPagPixConsultResponse {
   id: string;
   txid: string;
@@ -77,12 +60,10 @@ interface NexusPagPixConsultResponse {
   net_amount: number;
   paid_at?: string | null;
   expires_at: string;
-  /** Presentes na consulta segundo a doc ("Consultar PIX"); uteis na reconciliacao. */
   pix_copia_cola?: string;
   qr_code_base64?: string;
 }
 
-/** Mapeia o status da NexusPag (pending | paid | expired | cancelled) para o payment_status interno. */
 function mapNexusPagStatus(status: string): PaymentStatus {
   switch (status) {
     case "pending":
@@ -103,7 +84,7 @@ export class NexusPagProvider implements PaymentProvider {
   name = "nexuspag";
 
   async createPayment(params: {
-    amount: number; // centavos
+    amount: number;
     currency: string;
     paymentMethodToken?: string;
     metadata?: Record<string, unknown>;
@@ -123,7 +104,6 @@ export class NexusPagProvider implements PaymentProvider {
 
     const amountReais = centsToReais(params.amount);
     if (amountReais < 1) {
-      // A NexusPag rejeita com 400 abaixo de R$1,00 — falhar cedo evita round-trip.
       throw new Error("Valor minimo para PIX na NexusPag e R$ 1,00.");
     }
 
@@ -144,7 +124,6 @@ export class NexusPagProvider implements PaymentProvider {
 
     const data = (await response.json().catch(() => null)) as NexusPagPixCreateResponse | null;
 
-    // 409 = conflito de external_id que nao pode ser resolvido automaticamente.
     if (!response.ok || !data?.success) {
       throw new Error(
         `NexusPag recusou a cobranca PIX (HTTP ${response.status}): ${JSON.stringify(data)}`
@@ -168,16 +147,6 @@ export class NexusPagProvider implements PaymentProvider {
     };
   }
 
-  /**
-   * Consulta o status atual de uma cobranca PIX na NexusPag.
-   *
-   * A resposta aqui e PLANA — sem o wrapper "transaction" da criacao.
-   *
-   * `reference` pode ser o UUID interno, o txid OU o external_id: a doc
-   * ("Consultar PIX") diz isso nas notas do endpoint. A reconciliacao
-   * automatica usa o external_id justamente porque, numa cobranca orfa, o
-   * txid e o id interno nunca chegaram a ser gravados do nosso lado.
-   */
   async getPayment(reference: string): Promise<{
     status: PaymentStatus;
     providerPaymentId?: string;
@@ -219,10 +188,6 @@ export class NexusPagProvider implements PaymentProvider {
     providerPaymentId: string;
     amount: number;
   }): Promise<{ providerRefundId: string; status: RefundStatus; rawResponse?: unknown }> {
-    // A documentacao nao cobre estorno de PIX individual — a NexusPag so
-    // expoe saque da carteira/subconta (categoria "Saques"). Falhar
-    // explicitamente evita que o FluxPay marque um reembolso como
-    // bem-sucedido sem o dinheiro ter voltado de fato.
     throw new Error(
       "Reembolso de PIX nao suportado pelo provider NexusPag nesta integracao. " +
         "Consulte a categoria 'Saques' da API da NexusPag para devolver o valor manualmente."
@@ -231,3 +196,102 @@ export class NexusPagProvider implements PaymentProvider {
 }
 
 export const nexuspagProvider = new NexusPagProvider();
+
+// ---------------------------------------------------------------------------
+// Saque — POST /api/withdrawals (carteira PRINCIPAL da conta dona da API key)
+// Usado apenas apos aprovacao administrativa (services/withdrawals.ts).
+// ---------------------------------------------------------------------------
+
+export interface NexusPagWithdrawalResult {
+  providerWithdrawalId: string;
+  status: "completed" | "processing" | "failed";
+  amountCents: number;
+  feeCents: number;
+  netAmountCents: number;
+  newBalanceCents?: number;
+  rawResponse?: unknown;
+}
+
+interface NexusPagWithdrawResponse {
+  success?: boolean;
+  withdrawal_id?: string;
+  amount?: number;
+  fee?: number;
+  net_amount?: number;
+  status?: string;
+  new_balance?: number;
+  requires_kyc?: boolean;
+  cooldown_seconds?: number;
+}
+
+export async function createNexusPagWithdrawal(params: {
+  amountCents: number;
+  pixKey: string;
+  pixKeyType: "cpf" | "cnpj" | "email" | "phone" | "random" | "qrc";
+}): Promise<NexusPagWithdrawalResult> {
+  const amountReais = centsToReais(params.amountCents);
+  if (amountReais <= 0) {
+    throw new Error("Valor de saque invalido.");
+  }
+
+  const response = await fetch(`${NEXUSPAG_BASE_URL}/api/withdrawals`, {
+    method: "POST",
+    headers: {
+      "x-api-key": getApiKey(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      amount: amountReais,
+      pix_key: params.pixKey,
+      pix_key_type: params.pixKeyType,
+    }),
+  });
+
+  const data = (await response.json().catch(() => null)) as NexusPagWithdrawResponse | null;
+
+  if (response.status === 429) {
+    const wait = data?.cooldown_seconds ?? 300;
+    const err = new Error(
+      `Cooldown de saque na NexusPag ativo. Aguarde ${wait} segundos antes de tentar novamente.`
+    ) as Error & { code?: string; status?: number };
+    err.code = "cooldown";
+    err.status = 429;
+    throw err;
+  }
+
+  if (response.status === 403) {
+    const err = new Error(
+      data?.requires_kyc
+        ? "Saques bloqueados na NexusPag: conta sem KYC verificado."
+        : "Saques desabilitados na NexusPag para esta conta."
+    ) as Error & { code?: string; status?: number };
+    err.code = data?.requires_kyc ? "requires_kyc" : "forbidden";
+    err.status = 403;
+    throw err;
+  }
+
+  if (!response.ok || !data?.withdrawal_id) {
+    const err = new Error(
+      `NexusPag recusou o saque (HTTP ${response.status}): ${JSON.stringify(data)}`
+    ) as Error & { code?: string; status?: number };
+    err.code = "provider_error";
+    err.status = response.status;
+    throw err;
+  }
+
+  const statusRaw = (data.status || "processing").toLowerCase();
+  let status: "completed" | "processing" | "failed" = "processing";
+  if (statusRaw === "completed") status = "completed";
+  else if (statusRaw === "failed") status = "failed";
+
+  return {
+    providerWithdrawalId: data.withdrawal_id,
+    status,
+    amountCents: reaisToCents(data.amount ?? amountReais),
+    feeCents: reaisToCents(data.fee ?? 0),
+    netAmountCents: reaisToCents(data.net_amount ?? data.amount ?? amountReais),
+    newBalanceCents:
+      typeof data.new_balance === "number" ? reaisToCents(data.new_balance) : undefined,
+    rawResponse: data,
+  };
+}
