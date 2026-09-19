@@ -46,6 +46,10 @@ export interface Payment {
   payment_type: string | null;
   provider: string | null;
   provider_txid: string | null;
+  // Referencia que o proprio lojista informa na criacao da cobranca
+  // (idempotency_key) — coluna real desde a migration 006. So a pagina de
+  // detalhe (payments/[id]) seleciona e exibe esse campo por enquanto.
+  provider_external_id: string | null;
   fee_amount: number | null;
   net_amount: number | null;
   paid_at: string | null;
