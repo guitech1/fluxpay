@@ -137,8 +137,19 @@ export function DetailRow({
 }
 
 /** Titulo de secao dentro de uma tela de detalhe (ex.: "Reembolsos"). */
-export function SectionTitle({ title }: { title: string }) {
+export function SectionTitle({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string;
+}) {
   return (
-    <h2 className="text-xs font-medium text-flux-muted uppercase tracking-wide mb-3">{title}</h2>
+    <div className="mb-3">
+      <h2 className="text-xs font-medium text-flux-muted uppercase tracking-wide">{title}</h2>
+      {description ? (
+        <p className="mt-1 text-sm text-flux-muted">{description}</p>
+      ) : null}
+    </div>
   );
 }
