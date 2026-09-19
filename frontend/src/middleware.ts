@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+
+/** Mesmo motivo do lib/supabase/server.ts: sem tipar, o parâmetro fica
+ * implicitamente `any` e o build de produção do Next recusa. */
+type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 /**
  * Roda antes de toda navegacao (exceto assets estaticos — ver `matcher`).
@@ -37,7 +41,7 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
