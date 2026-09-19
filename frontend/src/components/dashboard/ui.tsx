@@ -82,10 +82,10 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="card text-center py-16 text-flux-muted">{children}</div>;
 }
 
-export function ErrorState({ message }: { message: string }) {
+export function ErrorState({ detail }: { detail: string }) {
   return (
     <div className="card border-red-500/20 bg-red-500/5 text-sm text-red-300">
-      Não foi possível carregar estes dados: {message}
+      Não foi possível carregar estes dados: {detail}
     </div>
   );
 }
@@ -132,6 +132,47 @@ export function DetailRow({
       <dd className={mono ? "text-sm font-mono text-right break-all" : "text-sm text-right"}>
         {children}
       </dd>
+    </div>
+  );
+}
+
+/** Paginacao anterior/proxima para listas paginadas por range (ex.: extrato). */
+export function Pagination({
+  basePath,
+  query = {},
+  page,
+  hasMore,
+}: {
+  basePath: string;
+  query?: Record<string, string>;
+  page: number;
+  hasMore: boolean;
+}) {
+  const buildHref = (targetPage: number) => {
+    const params = new URLSearchParams(query);
+    params.set("page", String(targetPage));
+    return `${basePath}?${params.toString()}`;
+  };
+
+  return (
+    <div className="flex items-center justify-between pt-4">
+      <span className="text-sm text-flux-muted">Página {page}</span>
+      <div className="flex gap-2">
+        {page > 1 ? (
+          <Link href={buildHref(page - 1)} className="btn-secondary text-sm">
+            Anterior
+          </Link>
+        ) : (
+          <span className="btn-secondary text-sm opacity-40 pointer-events-none">Anterior</span>
+        )}
+        {hasMore ? (
+          <Link href={buildHref(page + 1)} className="btn-secondary text-sm">
+            Próxima
+          </Link>
+        ) : (
+          <span className="btn-secondary text-sm opacity-40 pointer-events-none">Próxima</span>
+        )}
+      </div>
     </div>
   );
 }
