@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 
 /** Badge de status de pagamento/reembolso/disputa, com rotulo em portugues. */
 const STATUS_STYLES: Record<string, string> = {
@@ -78,8 +78,31 @@ export function PageHeader({
   );
 }
 
-export function EmptyState({ children }: { children: ReactNode }) {
-  return <div className="card text-center py-16 text-flux-muted">{children}</div>;
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  children,
+}: {
+  icon?: LucideIcon;
+  title?: string;
+  description?: string;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  if (children) {
+    return <div className="card text-center py-16 text-flux-muted">{children}</div>;
+  }
+
+  return (
+    <div className="card text-center py-16 text-flux-muted">
+      {Icon && <Icon className="w-8 h-8 mx-auto mb-3 opacity-50" />}
+      {title && <p className="text-sm font-medium text-white mb-1">{title}</p>}
+      {description && <p className="text-sm max-w-sm mx-auto">{description}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
 }
 
 export function ErrorState({ detail }: { detail: string }) {
@@ -90,16 +113,35 @@ export function ErrorState({ detail }: { detail: string }) {
   );
 }
 
-/** Tabela padrao do painel — recebe os cabecalhos e as linhas ja montadas. */
-export function Table({ headers, children }: { headers: string[]; children: ReactNode }) {
+/** Tabela padrao do painel — recebe os cabecalhos e as linhas ja montadas.
+ * `align` (opcional) alinha colunas especificas pelo indice do header, ex.:
+ * `align={{ 3: "right" }}` alinha a 4a coluna a direita. */
+export function Table({
+  headers,
+  children,
+  align,
+}: {
+  headers: string[];
+  children: ReactNode;
+  align?: Record<number, "left" | "center" | "right">;
+}) {
   return (
     <div className="card overflow-hidden p-0">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-flux-muted border-b border-flux-border bg-flux-gray/30">
-              {headers.map((h) => (
-                <th key={h} className="px-6 py-3 font-medium whitespace-nowrap">
+              {headers.map((h, i) => (
+                <th
+                  key={h}
+                  className={`px-6 py-3 font-medium whitespace-nowrap ${
+                    align?.[i] === "right"
+                      ? "text-right"
+                      : align?.[i] === "center"
+                      ? "text-center"
+                      : ""
+                  }`}
+                >
                   {h}
                 </th>
               ))}
