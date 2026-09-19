@@ -4,7 +4,7 @@ import { env } from "./env.js";
 /**
  * Clientes Supabase do backend (service role e anon).
  *
- * Netlify Functions (Node 20) nao expoe WebSocket nativo. O
+ * Netlify Functions (Node < 22) nao expoe WebSocket nativo. O
  * @supabase/supabase-js inicializa RealtimeClient no createClient e, sem
  * WebSocket, lanca no boot:
  *   "Node.js detected but native WebSocket not found"
@@ -12,7 +12,8 @@ import { env } from "./env.js";
  *
  * O backend nunca assina canais realtime (so REST + Auth admin). Instalamos
  * um WebSocket no-op global ANTES do createClient para a factory nao falhar;
- * o transporte nunca conecta de fato.
+ * o transporte nunca conecta de fato. Tipos DOM (BinaryType, CloseEvent) sao
+ * evitados de proposito: o tsconfig do backend so tem "ES2022".
  *
  * O frontend (browser) nao usa este arquivo e mantem realtime normal.
  */
@@ -34,27 +35,28 @@ function ensureNoopWebSocket(): void {
     protocol = "";
     bufferedAmount = 0;
     extensions = "";
-    binaryType: BinaryType = "blob";
-    onopen: ((ev: Event) => void) | null = null;
-    onerror: ((ev: Event) => void) | null = null;
-    onclose: ((ev: CloseEvent) => void) | null = null;
-    onmessage: ((ev: MessageEvent) => void) | null = null;
+    binaryType: "blob" | "arraybuffer" = "blob";
+    onopen: ((ev: unknown) => void) | null = null;
+    onerror: ((ev: unknown) => void) | null = null;
+    onclose: ((ev: unknown) => void) | null = null;
+    onmessage: ((ev: unknown) => void) | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     constructor(_url?: string | URL, _protocols?: string | string[]) {
       /* never connects */
     }
-    close() {
+    close(_code?: number, _reason?: string) {
       /* noop */
     }
-    send() {
+    send(_data?: unknown) {
       /* noop */
     }
-    addEventListener() {
+    addEventListener(_type?: string, _listener?: unknown) {
       /* noop */
     }
-    removeEventListener() {
+    removeEventListener(_type?: string, _listener?: unknown) {
       /* noop */
     }
-    dispatchEvent() {
+    dispatchEvent(_event?: unknown) {
       return false;
     }
   }
