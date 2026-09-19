@@ -4,21 +4,17 @@ import { env } from "./env.js";
 /**
  * Clientes Supabase do backend (service role e anon).
  *
- * Netlify Functions (Node < 22) nao expoe WebSocket nativo. O
- * @supabase/supabase-js inicializa RealtimeClient no createClient e, sem
- * WebSocket, lanca no boot:
+ * Netlify Functions podem nao expor WebSocket nativo. O @supabase/supabase-js
+ * inicializa RealtimeClient no createClient e, sem WebSocket, lanca no boot:
  *   "Node.js detected but native WebSocket not found"
  * A funcao inteira cai — /health e /v1/* respondem 502 antes de qualquer rota.
  *
  * O backend nunca assina canais realtime (so REST + Auth admin). Instalamos
- * um WebSocket no-op global ANTES do createClient para a factory nao falhar;
- * o transporte nunca conecta de fato. Tipos DOM (BinaryType, CloseEvent) sao
- * evitados de proposito: o tsconfig do backend so tem "ES2022".
- *
- * O frontend (browser) nao usa este arquivo e mantem realtime normal.
+ * um WebSocket no-op global ANTES do createClient para a factory nao falhar.
+ * Sem tipos DOM: o tsconfig do backend so tem "ES2022".
  */
 function ensureNoopWebSocket(): void {
-  const g = globalThis as typeof globalThis & { WebSocket?: unknown };
+  const g = globalThis as Record<string, unknown>;
   if (typeof g.WebSocket === "function") return;
 
   class NoopWebSocket {
@@ -40,7 +36,7 @@ function ensureNoopWebSocket(): void {
     onerror: ((ev: unknown) => void) | null = null;
     onclose: ((ev: unknown) => void) | null = null;
     onmessage: ((ev: unknown) => void) | null = null;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     constructor(_url?: string | URL, _protocols?: string | string[]) {
       /* never connects */
     }
@@ -61,7 +57,7 @@ function ensureNoopWebSocket(): void {
     }
   }
 
-  g.WebSocket = NoopWebSocket as unknown as typeof WebSocket;
+  g.WebSocket = NoopWebSocket;
 }
 
 ensureNoopWebSocket();
