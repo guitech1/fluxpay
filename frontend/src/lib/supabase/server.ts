@@ -1,5 +1,9 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+
+/** Formato que o @supabase/ssr manda para `setAll` — sem isso o parâmetro
+ * fica implicitamente `any`, e o build de produção do Next (strict) recusa. */
+type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 /**
  * Cliente Supabase para Server Components e Route Handlers. Le a sessao
@@ -20,7 +24,7 @@ export async function createClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
