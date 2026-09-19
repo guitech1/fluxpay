@@ -133,11 +133,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Fora do middleware: assets do Next, imagens, e os arquivos que o PWA
-  // precisa servir sem interferencia (manifest, service worker, offline,
-  // icones, robots). Passar o sw.js pelo middleware quebra o escopo do
-  // service worker.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|robots.txt|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|robots.txt|icons/|v1(?:/|$)|dashboard-api(?:/|$)|admin-api(?:/|$)|health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest)$).*)",
   ],
 };
