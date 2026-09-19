@@ -1,5 +1,5 @@
 import { requirePlatformAdmin, canAct } from "@/lib/admin-server";
-import { OrganizationDetailPanel } from "@/components/admin/panels";
+import { OrganizationDetailPanel } from "@/components/admin/OrganizationDetailPanel";
 
 export const dynamic = "force-dynamic";
 

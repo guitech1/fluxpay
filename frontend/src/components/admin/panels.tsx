@@ -1,10 +1,7 @@
 "use client";
 
-export {
-  OverviewPanel,
-  OrganizationsPanel,
-  OrganizationDetailPanel,
-} from "./panels-org";
+export { OverviewPanel, OrganizationsPanel } from "./panels-list";
+export { OrganizationDetailPanel } from "./OrganizationDetailPanel";
 export {
   UsersPanel,
   PaymentsPanel,
