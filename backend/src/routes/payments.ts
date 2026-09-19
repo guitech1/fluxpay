@@ -25,6 +25,11 @@ const createPaymentSchema = z.object({
     })
     .optional(),
   idempotency_key: z.string().max(255).optional(),
+  // Validade do PIX, em segundos (5 min a 7 dias). So se aplica quando
+  // payment_method.type === "pix"; providers de cartao ignoram o campo.
+  // Sem isso, o painel (que sim tinha essa opcao) e a API publica geravam
+  // cobrancas com validade diferente para o mesmo caso de uso.
+  expires_in_seconds: z.number().int().min(300).max(604800).optional(),
 });
 
 router.post("/", apiKeyAuth, requireSecretKey, idempotencyCheck, async (req, res, next) => {

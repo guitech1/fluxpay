@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2, Copy, Check, Trash2 } from "lucide-react";
+import { Plus, Loader2, Copy, Check, Trash2, Webhook } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils";
@@ -112,10 +112,11 @@ export function WebhooksManager({
       )}
 
       {endpoints.length === 0 ? (
-        <EmptyState>
-          Nenhum endpoint configurado. Cadastre uma URL para receber eventos de pagamento assim que
-          eles acontecerem, em vez de ficar consultando a API.
-        </EmptyState>
+        <EmptyState
+          icon={Webhook}
+          title="Nenhum endpoint configurado"
+          description="Cadastre uma URL para receber os eventos de pagamento assim que eles acontecerem, em vez de consultar a API de tempos em tempos."
+        />
       ) : (
         <Table headers={["URL", "Eventos", "Descrição", "Criado em", "Status", ""]}>
           {endpoints.map((e) => (

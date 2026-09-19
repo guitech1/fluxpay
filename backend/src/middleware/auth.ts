@@ -37,7 +37,7 @@ export async function apiKeyAuth(
       res.status(401).json({
         error: {
           type: "authentication_error",
-          message: "Missing API key. Provide Authorization: Bearer <key> or X-Api-Key header.",
+          message: "Chave de API ausente. Envie o header Authorization: Bearer <chave> ou X-Api-Key.",
         },
       });
       return;
@@ -48,7 +48,7 @@ export async function apiKeyAuth(
       res.status(401).json({
         error: {
           type: "authentication_error",
-          message: "Invalid API key format.",
+          message: "Formato de chave de API invalido.",
         },
       });
       return;
@@ -68,7 +68,7 @@ export async function apiKeyAuth(
       res.status(401).json({
         error: {
           type: "authentication_error",
-          message: "Invalid API key.",
+          message: "Chave de API invalida ou revogada.",
         },
       });
       return;
@@ -87,7 +87,7 @@ export async function apiKeyAuth(
       res.status(403).json({
         error: {
           type: "permission_error",
-          message: `Conta indisponivel (status: ${org?.status ?? "desconhecido"}). Fale com o suporte da FluxPay.`,
+          message: "Esta conta esta com as operacoes bloqueadas. Fale com o suporte da FluxPay.",
         },
       });
       return;
@@ -113,7 +113,7 @@ export async function apiKeyAuth(
     res.status(500).json({
       error: {
         type: "api_error",
-        message: "Internal authentication error.",
+        message: "Nao foi possivel validar a chave de API. Tente novamente.",
       },
     });
   }
@@ -131,7 +131,7 @@ export function requireSecretKey(
     res.status(403).json({
       error: {
         type: "permission_error",
-        message: "This endpoint requires a secret API key.",
+        message: "Este endpoint exige uma chave secreta (sk_).",
       },
     });
     return;

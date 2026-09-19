@@ -4,7 +4,12 @@ import { sessionAuth, requireRole } from "../middleware/session-auth.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { generateApiKey } from "../utils/crypto.js";
 import { createWebhookEndpoint } from "../services/webhooks.js";
-import { createRefund, cancelPayment, simulateSandboxPayment } from "../services/payments.js";
+import {
+  createPayment,
+  createRefund,
+  cancelPayment,
+  simulateSandboxPayment,
+} from "../services/payments.js";
 
 const router = Router();
 
@@ -79,6 +84,56 @@ router.post("/webhooks/endpoints", requireRole("owner", "admin", "developer"), a
 
     // endpoint.secret so existe neste instante — mostrar uma vez e avisar.
     res.status(201).json({ data: endpoint });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// COBRANCA PIX PELO PAINEL
+//
+// Esta rota e o que faltava para existir uma experiencia de "Nova cobranca"
+// no painel: antes, so dava para criar cobranca via API key em /v1/payments.
+// Ela usa exatamente o mesmo caminho de codigo (services/payments.createPayment
+// -> provider), entao em producao a cobranca e criada de verdade na NexusPag
+// e em teste no provider sandbox — sem nenhum atalho especifico de painel.
+//
+// Os campos aceitos sao os que a API de PIX da NexusPag realmente entende
+// (valor, descricao, external_id e expiracao — ver docs/nexuspag-api.md,
+// POST /api/pix/create), mais o vinculo opcional com um cliente do FluxPay.
+// ============================================================
+router.post("/payments", requireRole("owner", "admin", "developer"), async (req, res, next) => {
+  try {
+    const schema = z.object({
+      // Centavos, como todo o core. R$ 1,00 e o minimo aceito pela NexusPag.
+      amount: z.number().int().min(100, "O valor minimo de uma cobranca PIX e R$ 1,00."),
+      description: z.string().max(200).optional(),
+      /** Sua referencia (pedido, fatura). Vira external_id na NexusPag. */
+      reference: z.string().max(120).optional(),
+      customer_id: z.string().uuid().optional(),
+      /** Validade em minutos: 5 min a 7 dias. */
+      expires_in_minutes: z.number().int().min(5).max(10080).optional(),
+    });
+    const body = schema.parse(req.body);
+
+    const payment = await createPayment(
+      req.dashboardAuth!.organizationId,
+      req.dashboardAuth!.environment,
+      {
+        amount: body.amount,
+        currency: "BRL",
+        customer_id: body.customer_id,
+        description: body.description,
+        payment_method: { type: "pix" },
+        // external_id na NexusPag e chave de idempotencia: reenviar a mesma
+        // referencia devolve a cobranca existente em vez de criar outra.
+        idempotency_key: body.reference || undefined,
+        expires_in_seconds: (body.expires_in_minutes || 60) * 60,
+        metadata: { created_from: "dashboard" },
+      }
+    );
+
+    res.status(201).json({ data: payment });
   } catch (err) {
     next(err);
   }

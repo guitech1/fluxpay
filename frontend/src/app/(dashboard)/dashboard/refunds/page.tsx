@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { RefreshCcw } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { PageHeader, StatusBadge, Table, Mono, EmptyState, ErrorState } from "@/components/dashboard/ui";
@@ -25,12 +27,18 @@ export default async function RefundsPage() {
       />
 
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : refunds.length === 0 ? (
-        <EmptyState>
-          Nenhum reembolso neste ambiente. Reembolsos são criados na tela de Pagamentos ou por{" "}
-          <code className="text-flux-red">POST /v1/payments/:id/refunds</code>.
-        </EmptyState>
+        <EmptyState
+          icon={RefreshCcw}
+          title="Nenhum reembolso ainda"
+          description="Reembolsos aparecem aqui depois de solicitados na tela de uma cobrança aprovada."
+          action={
+            <Link href="/dashboard/payments?status=succeeded" className="btn-secondary">
+              Ver cobranças aprovadas
+            </Link>
+          }
+        />
       ) : (
         <Table headers={["ID", "Pagamento", "Valor", "Motivo", "Status", "Data"]}>
           {refunds.map((r) => (

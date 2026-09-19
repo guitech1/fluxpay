@@ -1,14 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { FluxLogo } from "@/components/brand/FluxLogo";
+import { authError } from "@/lib/labels";
 
-export default function LoginPage() {
+/**
+ * O middleware manda quem tentou abrir uma pagina privada para ca com
+ * ?next=<rota>. Depois de entrar, a pessoa volta para onde queria ir em vez
+ * de cair sempre na visao geral. So aceitamos caminhos internos do painel:
+ * um `next` apontando para fora viraria redirecionamento aberto.
+ */
+function safeNext(value: string | null): string {
+  if (!value) return "/dashboard";
+  if (!value.startsWith("/dashboard") && !value.startsWith("/onboarding")) return "/dashboard";
+  return value;
+}
+
+function LoginForm() {
   const router = useRouter();
+  const next = safeNext(useSearchParams().get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -25,15 +39,13 @@ export default function LoginPage() {
     setLoading(false);
 
     if (error) {
-      setError(
-        error.message === "Invalid login credentials"
-          ? "E-mail ou senha incorretos."
-          : error.message
-      );
+      // Nunca a mensagem crua do Supabase Auth: authError traduz o que da
+      // para agir em cima e manda o resto para o console.
+      setError(authError(error.message));
       return;
     }
 
-    router.push("/dashboard");
+    router.push(next);
     router.refresh();
   }
 
@@ -94,5 +106,15 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams exige um limite de Suspense para o Next conseguir
+  // pre-renderizar esta rota.
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

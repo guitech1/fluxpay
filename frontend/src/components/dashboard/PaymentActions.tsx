@@ -2,15 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
+import { friendlyError } from "@/lib/labels";
 import { formatCurrency } from "@/lib/utils";
+import { Alert, Modal, SubmitButton } from "@/components/dashboard/ui-client";
 
 /**
- * Reembolso e cancelamento NAO podem ser feitos direto pelo Supabase client:
- * a migration 010 deixou payments/refunds somente leitura para o usuario
- * logado, justamente porque essas acoes precisam falar com o adquirente.
- * Tudo passa por /dashboard-api/payments/:id/{refund,cancel}.
+ * Reembolso e cancelamento NÃO podem ser feitos direto pelo cliente Supabase:
+ * a política do banco deixou pagamentos e reembolsos somente leitura para o
+ * usuário logado, justamente porque essas ações precisam falar com o
+ * adquirente. Tudo passa por /dashboard-api/payments/:id/{refund,cancel}.
  */
 export function PaymentActions({
   paymentId,
@@ -25,7 +26,7 @@ export function PaymentActions({
   amount: number;
   currency: string;
   canWrite: boolean;
-  /** Cobranca PIX simulada (ambiente de teste, provider sandbox). */
+  /** Cobrança de teste: permite confirmar o pagamento manualmente. */
   canSimulate?: boolean;
 }) {
   const router = useRouter();
@@ -37,9 +38,7 @@ export function PaymentActions({
   const canCancel = status === "pending" || status === "processing";
   const showSimulate = canSimulate && status === "pending";
 
-  if (!canWrite || (!canRefund && !canCancel && !showSimulate)) {
-    return <span className="text-flux-muted text-xs">—</span>;
-  }
+  if (!canWrite || (!canRefund && !canCancel && !showSimulate)) return null;
 
   async function simulate() {
     setBusy("simulate");
@@ -48,7 +47,7 @@ export function PaymentActions({
       await dashboardFetch(`/payments/${paymentId}/simulate-payment`, { method: "POST" });
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao simular o pagamento.");
+      setError(friendlyError(err, "Não foi possível confirmar a cobrança de teste."));
     } finally {
       setBusy(null);
     }
@@ -60,98 +59,109 @@ export function PaymentActions({
     try {
       await dashboardFetch(`/payments/${paymentId}/${action}`, {
         method: "POST",
-        body: action === "refund" ? { reason: "requested_by_customer" } : undefined,
+        body: action === "refund" ? { reason: "Solicitação do cliente" } : undefined,
       });
       setConfirming(null);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha na operação.");
+      setError(
+        friendlyError(
+          err,
+          action === "refund"
+            ? "Não foi possível registrar o reembolso."
+            : "Não foi possível cancelar a cobrança."
+        )
+      );
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-3">
-        {showSimulate && (
-          <button
-            className="text-xs text-amber-300 hover:text-amber-200 underline underline-offset-2 disabled:opacity-50"
-            onClick={simulate}
-            disabled={busy !== null}
-            title="Ambiente de teste: confirma a cobranca sem adquirente e sem dinheiro real"
-          >
-            {busy === "simulate" ? "Simulando..." : "Simular pagamento"}
-          </button>
-        )}
-        {canRefund && (
-          <button
-            className="text-xs text-flux-muted hover:text-white underline underline-offset-2 disabled:opacity-50"
-            onClick={() => setConfirming("refund")}
-            disabled={busy !== null}
-          >
-            Reembolsar
-          </button>
-        )}
-        {canCancel && (
-          <button
-            className="text-xs text-flux-muted hover:text-white underline underline-offset-2 disabled:opacity-50"
-            onClick={() => setConfirming("cancel")}
-            disabled={busy !== null}
-          >
-            Cancelar
-          </button>
-        )}
-      </div>
-
-      {confirming && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="card w-full max-w-md space-y-4">
-            <h3 className="font-medium">
-              {confirming === "refund" ? "Confirmar reembolso" : "Cancelar cobrança"}
-            </h3>
-            <p className="text-sm text-flux-muted">
-              {confirming === "refund" ? (
-                <>
-                  O valor de <strong className="text-white">{formatCurrency(amount, currency)}</strong>{" "}
-                  será devolvido ao cliente. Em PIX pela NexusPag, o estorno automático não é
-                  suportado — a operação vai falhar com uma mensagem explicando isso, e a devolução
-                  precisa ser feita manualmente.
-                </>
-              ) : (
-                <>A cobrança deixa de aceitar pagamento. Se o cliente já pagou, cancelar não desfaz.</>
-              )}
-            </p>
-
-            {error && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-xs text-red-300">
-                {error}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <button
-                className="btn-secondary text-sm"
-                onClick={() => {
-                  setConfirming(null);
-                  setError(null);
-                }}
-                disabled={busy !== null}
-              >
-                Voltar
-              </button>
-              <button
-                className="btn-primary text-sm flex items-center gap-2"
-                onClick={() => run(confirming)}
-                disabled={busy !== null}
-              >
-                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
+    <div className="flex items-center gap-2">
+      {showSimulate && (
+        <SubmitButton
+          type="button"
+          variant="ghost"
+          className="text-sm"
+          loading={busy === "simulate"}
+          onClick={simulate}
+        >
+          Confirmar teste
+        </SubmitButton>
       )}
+      {canCancel && (
+        <button
+          type="button"
+          className="btn-ghost text-sm"
+          onClick={() => setConfirming("cancel")}
+          disabled={busy !== null}
+        >
+          Cancelar cobrança
+        </button>
+      )}
+      {canRefund && (
+        <button
+          type="button"
+          className="btn-ghost text-sm"
+          onClick={() => setConfirming("refund")}
+          disabled={busy !== null}
+        >
+          Reembolsar
+        </button>
+      )}
+
+      <Modal
+        open={confirming !== null}
+        onClose={() => {
+          setConfirming(null);
+          setError(null);
+        }}
+        title={confirming === "refund" ? "Confirmar reembolso" : "Cancelar cobrança"}
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => {
+                setConfirming(null);
+                setError(null);
+              }}
+              disabled={busy !== null}
+            >
+              Voltar
+            </button>
+            <SubmitButton
+              type="button"
+              className="text-sm"
+              loading={busy !== null}
+              onClick={() => confirming && run(confirming)}
+            >
+              Confirmar
+            </SubmitButton>
+          </>
+        }
+      >
+        <p className="text-sm text-flux-muted leading-relaxed">
+          {confirming === "refund" ? (
+            <>
+              O valor de{" "}
+              <strong className="text-white">{formatCurrency(amount, currency)}</strong> será
+              devolvido ao cliente. Para cobranças PIX, a devolução automática não está
+              disponível: a operação será recusada e o valor precisa ser devolvido manualmente.
+            </>
+          ) : (
+            <>
+              A cobrança deixa de aceitar pagamento. Se o cliente já tiver pago, o cancelamento
+              não desfaz o pagamento.
+            </>
+          )}
+        </p>
+
+        {error && <Alert>{error}</Alert>}
+      </Modal>
+
+      {error && !confirming && <Alert>{error}</Alert>}
     </div>
   );
 }

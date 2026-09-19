@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Wallet, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Wallet, Clock, CheckCircle, XCircle, CreditCard, Plus } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { OverviewCharts, type DailyPoint } from "@/components/dashboard/OverviewCharts";
@@ -152,10 +152,17 @@ export default async function OverviewPage() {
         </div>
 
         {(recent || []).length === 0 ? (
-          <EmptyState>
-            Nenhuma transação neste ambiente ainda. Crie uma cobrança com{" "}
-            <code className="text-flux-red">POST /v1/payments</code> para ver dados aqui.
-          </EmptyState>
+          <EmptyState
+            icon={CreditCard}
+            title="Nenhuma transação ainda"
+            description="Assim que você gerar a primeira cobrança PIX, ela aparece aqui com o status atualizado automaticamente."
+            action={
+              <Link href="/dashboard/payments/new" className="btn-primary">
+                <Plus className="w-4 h-4" />
+                Nova cobrança
+              </Link>
+            }
+          />
         ) : (
           <Table headers={["ID", "Cliente", "Valor", "Método", "Status", "Data"]}>
             {((recent || []) as unknown as Payment[]).map((p) => (

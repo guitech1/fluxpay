@@ -112,7 +112,7 @@ export function CompanyForm({
         </div>
       ) : (
         <p className="text-sm text-flux-muted">
-          Somente owner e admin podem alterar os dados da empresa.
+          Somente o proprietário da conta e administradores podem alterar os dados da empresa.
         </p>
       )}
     </div>

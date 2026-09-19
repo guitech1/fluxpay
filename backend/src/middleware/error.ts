@@ -13,9 +13,18 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Formato unico de erro da API: { error: { type, message, request_id? } }.
+ *
+ * Regra que vale para todo o backend: a mensagem devolvida e SEMPRE escrita
+ * para ser lida por uma pessoa. Stack trace, mensagem do Postgres, corpo de
+ * resposta do adquirente e qualquer outro detalhe tecnico ficam no log do
+ * servidor (console.error) — nunca no corpo da resposta. Quem precisa do
+ * detalhe tem acesso ao log; quem esta na tela nao precisa dele.
+ */
 export function errorHandler(
   err: Error,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void {
@@ -31,22 +40,30 @@ export function errorHandler(
   }
 
   if (err instanceof ZodError) {
+    // Os campos invalidos sao uteis para quem integra (e a propria tela usa
+    // para marcar o campo), mas a mensagem geral continua em portugues claro.
     res.status(400).json({
       error: {
         type: "validation_error",
-        message: "Invalid request parameters.",
+        message: "Alguns campos da requisicao estao invalidos.",
         details: err.flatten().fieldErrors,
       },
     });
     return;
   }
 
-  console.error("Unhandled error:", err);
+  console.error("[fluxpay] erro nao tratado:", {
+    method: req.method,
+    path: req.path,
+    error: err?.message,
+    stack: err?.stack,
+  });
 
   res.status(500).json({
     error: {
       type: "api_error",
-      message: "An unexpected error occurred.",
+      message:
+        "Nao foi possivel concluir a operacao. Tente novamente em instantes.",
     },
   });
 }
@@ -55,7 +72,7 @@ export function notFoundHandler(_req: Request, res: Response): void {
   res.status(404).json({
     error: {
       type: "not_found",
-      message: "The requested resource was not found.",
+      message: "Recurso nao encontrado.",
     },
   });
 }

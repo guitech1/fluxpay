@@ -11,10 +11,10 @@ export async function createCheckoutSession(
   input: CreateCheckoutSessionInput
 ) {
   if (!input.amount || input.amount <= 0) {
-    throw new AppError(400, "validation_error", "Amount must be positive.");
+    throw new AppError(400, "validation_error", "Informe um valor valido para a cobranca.");
   }
   if (!input.success_url || !input.cancel_url) {
-    throw new AppError(400, "validation_error", "success_url and cancel_url are required.");
+    throw new AppError(400, "validation_error", "Informe as URLs de retorno (sucesso e cancelamento).");
   }
 
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 min
@@ -39,7 +39,7 @@ export async function createCheckoutSession(
     .single();
 
   if (error) {
-    throw new AppError(500, "api_error", "Failed to create checkout session.");
+    throw new AppError(500, "api_error", "Nao foi possivel criar a sessao de checkout.");
   }
 
   // Public URL for the hosted checkout page
@@ -59,7 +59,7 @@ export async function getCheckoutSession(sessionId: string) {
     .maybeSingle();
 
   if (error || !data) {
-    throw new AppError(404, "not_found", "Checkout session not found.");
+    throw new AppError(404, "not_found", "Cobranca nao encontrada ou ja finalizada.");
   }
 
   if (data.status === "open" && data.expires_at && new Date(data.expires_at) < new Date()) {

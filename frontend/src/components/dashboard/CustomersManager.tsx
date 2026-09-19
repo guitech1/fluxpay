@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2, Trash2, Pencil } from "lucide-react";
+import { Plus, Loader2, Trash2, Pencil, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils";
 import { Table, Mono, EmptyState } from "./ui";
@@ -106,10 +106,11 @@ export function CustomersManager({
       )}
 
       {customers.length === 0 ? (
-        <EmptyState>
-          Nenhum cliente neste ambiente. Eles aparecem aqui quando você cria pelo painel ou por{" "}
-          <code className="text-flux-red">POST /v1/customers</code>.
-        </EmptyState>
+        <EmptyState
+          icon={Users}
+          title="Nenhum cliente cadastrado"
+          description="Cadastre clientes para vincular cobranças a quem pagou e acompanhar o histórico de cada um."
+        />
       ) : (
         <Table headers={["Nome", "E-mail", "Documento", "ID externo", "Criado em", ""]}>
           {customers.map((c) => (

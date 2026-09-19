@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Loader2, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { authError as friendlyAuthError } from "@/lib/labels";
 
 /** Conta do usuario logado: nome exibido e troca de senha (Supabase Auth). */
 export function AccountSettings({ email, role }: { email: string | null; role: string }) {
@@ -51,7 +52,7 @@ export function AccountSettings({ email, role }: { email: string | null; role: s
     const { error: authError } = await supabase.auth.updateUser({ password });
     setBusy(null);
     if (authError) {
-      setError(authError.message);
+      setError(friendlyAuthError(authError.message));
       return;
     }
     setPassword("");

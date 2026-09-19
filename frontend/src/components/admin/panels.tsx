@@ -16,6 +16,25 @@ import {
 } from "./common";
 import { StatusBadge } from "@/components/dashboard/ui";
 
+const PAYMENT_STATUS_FILTERS = [
+  "all",
+  "succeeded",
+  "pending",
+  "failed",
+  "expired",
+  "refunded",
+  "canceled",
+];
+const PAYMENT_STATUS_FILTER_LABELS: Record<string, string> = {
+  all: "Todos os status",
+  succeeded: "Aprovados",
+  pending: "Pendentes",
+  failed: "Recusados",
+  expired: "Expirados",
+  refunded: "Reembolsados",
+  canceled: "Cancelados",
+};
+
 const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
 // ============================================================
@@ -162,6 +181,14 @@ interface OrgRow {
 }
 
 const STATUS_FILTERS = ["all", "active", "pending", "suspended", "banned", "disabled"];
+const STATUS_FILTER_LABELS: Record<string, string> = {
+  all: "Todos os status",
+  active: "Ativas",
+  pending: "Em análise",
+  suspended: "Suspensas",
+  banned: "Banidas",
+  disabled: "Desativadas",
+};
 
 export function OrganizationsPanel() {
   const [search, setSearch] = useState("");
@@ -184,7 +211,7 @@ export function OrganizationsPanel() {
         <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
           {STATUS_FILTERS.map((s) => (
             <option key={s} value={s}>
-              {s === "all" ? "Todos os status" : s}
+              {STATUS_FILTER_LABELS[s] ?? s}
             </option>
           ))}
         </select>
@@ -659,9 +686,9 @@ export function PaymentsPanel() {
               onChange={(e) => setSearch(e.target.value)}
             />
             <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
-              {["all", "succeeded", "pending", "failed", "expired", "refunded", "canceled"].map((s) => (
+              {PAYMENT_STATUS_FILTERS.map((s) => (
                 <option key={s} value={s}>
-                  {s === "all" ? "Todos os status" : s}
+                  {PAYMENT_STATUS_FILTER_LABELS[s] ?? s}
                 </option>
               ))}
             </select>
@@ -1198,7 +1225,7 @@ export function SettingsPanel({ canConfigure }: { canConfigure: boolean }) {
           </div>
         ) : (
           <p className="text-sm text-flux-muted">
-            Somente superadmin altera as configurações globais.
+            Somente um administrador master altera as configurações globais.
           </p>
         )}
       </div>

@@ -17,7 +17,7 @@ export async function createPayment(
   input: CreatePaymentInput
 ): Promise<Payment> {
   if (!input.amount || input.amount <= 0) {
-    throw new AppError(400, "validation_error", "Amount must be a positive integer (in cents).");
+    throw new AppError(400, "validation_error", "Informe um valor valido para a cobranca.");
   }
 
   const currency = (input.currency || "BRL").toUpperCase();
@@ -29,16 +29,37 @@ export async function createPayment(
   // Call the isolated provider layer. Para PIX, repassamos os campos extras
   // que a NexusPag exige (webhook_url, external_id, expiracao); providers de
   // cartao simplesmente ignoram esses campos.
-  const providerResult = await provider.createPayment({
-    amount: input.amount,
-    currency,
-    paymentMethodToken: input.payment_method?.token,
-    metadata: input.metadata,
-    description: input.description,
-    externalId: input.idempotency_key || paymentId,
-    webhookUrl: `${env.API_BASE_URL}/v1/webhooks/nexuspag`,
-    expirationSeconds: paymentType === "pix" ? 3600 : undefined,
-  });
+  //
+  // O erro do adapter (que pode conter corpo cru de resposta HTTP do
+  // adquirente) fica no log do servidor; para quem chamou vai uma mensagem
+  // curta e sem detalhe interno. AppError vindo do proprio registry
+  // (producao sem adquirente) ja e uma mensagem publica e passa direto.
+  let providerResult;
+  try {
+    providerResult = await provider.createPayment({
+      amount: input.amount,
+      currency,
+      paymentMethodToken: input.payment_method?.token,
+      metadata: input.metadata,
+      description: input.description,
+      externalId: input.idempotency_key || paymentId,
+      webhookUrl: `${env.API_BASE_URL}/v1/webhooks/nexuspag`,
+      expirationSeconds: paymentType === "pix" ? input.expires_in_seconds || 3600 : undefined,
+    });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    console.error("[payments] provider.createPayment falhou:", {
+      provider: provider.name,
+      environment,
+      organizationId,
+      error: err instanceof Error ? err.message : err,
+    });
+    throw new AppError(
+      502,
+      "provider_error",
+      "Nao foi possivel gerar a cobranca no momento. Tente novamente em instantes."
+    );
+  }
 
   // Simple fee calculation example (1.5% + fixed) — para PIX, usamos a taxa
   // que a propria NexusPag devolveu (providerResult.pix), quando disponivel.
@@ -79,7 +100,7 @@ export async function createPayment(
 
   if (error) {
     console.error("Create payment error:", error);
-    throw new AppError(500, "api_error", "Failed to create payment.");
+    throw new AppError(500, "api_error", "Nao foi possivel registrar a cobranca. Tente novamente.");
   }
 
   // Ledger entry for successful payments
@@ -125,7 +146,7 @@ export async function getPayment(
     .maybeSingle();
 
   if (error || !data) {
-    throw new AppError(404, "not_found", "Payment not found.");
+    throw new AppError(404, "not_found", "Cobranca nao encontrada.");
   }
 
   return data as Payment;
@@ -164,7 +185,7 @@ export async function listPayments(
   const { data, error } = await query;
 
   if (error) {
-    throw new AppError(500, "api_error", "Failed to list payments.");
+    throw new AppError(500, "api_error", "Nao foi possivel carregar as cobrancas.");
   }
 
   const hasMore = (data?.length || 0) > limit;
@@ -180,7 +201,7 @@ export async function cancelPayment(
   const payment = await getPayment(organizationId, paymentId);
 
   if (!["pending", "processing"].includes(payment.status)) {
-    throw new AppError(400, "invalid_request", "Only pending or processing payments can be canceled.");
+    throw new AppError(400, "invalid_request", "So e possivel cancelar uma cobranca que ainda esta pendente.");
   }
 
   const { data, error } = await supabaseAdmin
@@ -195,7 +216,7 @@ export async function cancelPayment(
     .single();
 
   if (error || !data) {
-    throw new AppError(500, "api_error", "Failed to cancel payment.");
+    throw new AppError(500, "api_error", "Nao foi possivel cancelar a cobranca. Tente novamente.");
   }
 
   dispatchWebhook(organizationId, payment.environment, "payment.canceled", data).catch(console.error);
@@ -211,13 +232,13 @@ export async function createRefund(
   const payment = await getPayment(organizationId, paymentId);
 
   if (!["succeeded", "partially_refunded"].includes(payment.status)) {
-    throw new AppError(400, "invalid_request", "Only succeeded payments can be refunded.");
+    throw new AppError(400, "invalid_request", "So e possivel reembolsar uma cobranca ja aprovada.");
   }
 
   const refundAmount = input.amount ?? payment.amount;
 
   if (refundAmount <= 0 || refundAmount > payment.amount) {
-    throw new AppError(400, "validation_error", "Invalid refund amount.");
+    throw new AppError(400, "validation_error", "Valor de reembolso invalido.");
   }
 
   const provider = getProvider(payment.environment);
@@ -244,7 +265,7 @@ export async function createRefund(
     .single();
 
   if (error) {
-    throw new AppError(500, "api_error", "Failed to create refund.");
+    throw new AppError(500, "api_error", "Nao foi possivel registrar o reembolso. Tente novamente.");
   }
 
   // Update payment status

@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { PageHeader, StatusBadge, Table, Mono, EmptyState, ErrorState } from "@/components/dashboard/ui";
@@ -25,12 +26,13 @@ export default async function DisputesPage() {
       />
 
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : disputes.length === 0 ? (
-        <EmptyState>
-          Nenhuma disputa neste ambiente. PIX não tem chargeback, então disputas só aparecem em
-          métodos que suportam contestação.
-        </EmptyState>
+        <EmptyState
+          icon={AlertTriangle}
+          title="Nenhuma disputa aberta"
+          description="Cobranças PIX não têm chargeback. Disputas só aparecem em métodos de pagamento que permitem contestação."
+        />
       ) : (
         <Table headers={["ID", "Pagamento", "Valor", "Motivo", "Prazo", "Status", "Aberta em"]}>
           {disputes.map((d) => (

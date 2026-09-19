@@ -105,10 +105,11 @@ export function ApiKeysManager({
       )}
 
       {apiKeys.length === 0 ? (
-        <EmptyState>
-          Nenhuma chave neste ambiente ainda. Crie uma para começar a chamar{" "}
-          <code className="text-flux-red">/v1/*</code>.
-        </EmptyState>
+        <EmptyState
+          icon={Key}
+          title="Nenhuma chave neste ambiente"
+          description="Crie uma chave para o seu sistema se autenticar na API. A chave secreta é exibida uma única vez, no momento da criação."
+        />
       ) : (
         <Table headers={["Nome", "Tipo", "Prefixo", "Último uso", "Criada em", "Status", ""]}>
           {apiKeys.map((k) => (

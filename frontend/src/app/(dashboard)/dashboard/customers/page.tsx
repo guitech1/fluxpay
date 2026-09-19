@@ -19,7 +19,7 @@ export default async function CustomersPage() {
     <div className="space-y-6">
       <PageHeader title="Clientes" description="Clientes cadastrados no ambiente selecionado" />
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : (
         <CustomersManager
           customers={(data || []) as Customer[]}

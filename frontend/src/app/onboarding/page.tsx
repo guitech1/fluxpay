@@ -183,8 +183,8 @@ export default function OnboardingPage() {
           </button>
 
           <p className="text-xs text-flux-muted text-center">
-            Voce entra como <strong className="text-white/80">owner</strong> e comeca no ambiente de
-            testes. Nenhuma cobranca real acontece ate voce trocar para producao.
+            Você entra como <strong className="text-white/80">proprietário da conta</strong> e começa
+            no ambiente de testes. Nenhuma cobrança real acontece até você ativar a produção.
           </p>
         </form>
       </div>

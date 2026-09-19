@@ -26,7 +26,7 @@ export async function createCustomer(
 
   if (error) {
     console.error("Create customer error:", error);
-    throw new AppError(500, "api_error", "Failed to create customer.");
+    throw new AppError(500, "api_error", "Nao foi possivel salvar o cliente. Tente novamente.");
   }
 
   return data as Customer;
@@ -44,7 +44,7 @@ export async function getCustomer(
     .maybeSingle();
 
   if (error || !data) {
-    throw new AppError(404, "not_found", "Customer not found.");
+    throw new AppError(404, "not_found", "Cliente nao encontrado.");
   }
 
   return data as Customer;
@@ -66,7 +66,7 @@ export async function listCustomers(
     .limit(limit);
 
   if (error) {
-    throw new AppError(500, "api_error", "Failed to list customers.");
+    throw new AppError(500, "api_error", "Nao foi possivel carregar os clientes.");
   }
 
   return { data: (data || []) as Customer[] };

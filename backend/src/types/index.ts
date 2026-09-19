@@ -86,6 +86,8 @@ export interface CreatePaymentInput {
     token?: string;
   };
   idempotency_key?: string;
+  /** Validade da cobranca PIX em segundos. Padrao: 3600 (1 hora). */
+  expires_in_seconds?: number;
 }
 
 export interface CreateCustomerInput {

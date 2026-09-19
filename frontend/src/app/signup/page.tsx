@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { authError } from "@/lib/labels";
 import { FluxLogo } from "@/components/brand/FluxLogo";
 
 export default function SignupPage() {
@@ -32,7 +33,7 @@ export default function SignupPage() {
     setLoading(false);
 
     if (error) {
-      setError(error.message);
+      setError(authError(error.message));
       return;
     }
 

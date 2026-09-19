@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { FileText } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatDate } from "@/lib/utils";
 import { PageHeader, Table, Mono, EmptyState, ErrorState } from "@/components/dashboard/ui";
@@ -32,12 +34,18 @@ export default async function LogsPage() {
       />
 
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : logs.length === 0 ? (
-        <EmptyState>
-          Nenhuma chamada registrada neste ambiente ainda. As requisições aparecem aqui assim que
-          você usar uma chave <code className="text-flux-red">sk_{environment}_</code>.
-        </EmptyState>
+        <EmptyState
+          icon={FileText}
+          title="Nenhuma chamada registrada"
+          description="Toda requisição feita com uma chave de API deste ambiente aparece aqui, com data, origem e resultado."
+          action={
+            <Link href="/dashboard/api" className="btn-secondary">
+              Ver chaves e documentação
+            </Link>
+          }
+        />
       ) : (
         <Table headers={["Método", "Rota", "Status", "Duração", "IP", "Request ID", "Quando"]}>
           {logs.map((l) => (

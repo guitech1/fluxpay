@@ -37,7 +37,7 @@ export async function sessionAuth(
 
     if (!authHeader?.startsWith("Bearer ")) {
       res.status(401).json({
-        error: { type: "authentication_error", message: "Sessao ausente." },
+        error: { type: "authentication_error", message: "Faca login para continuar." },
       });
       return;
     }
@@ -64,7 +64,7 @@ export async function sessionAuth(
 
     if (userError || !userData?.user) {
       res.status(401).json({
-        error: { type: "authentication_error", message: "Sessao invalida ou expirada." },
+        error: { type: "authentication_error", message: "Sua sessao expirou. Entre novamente." },
       });
       return;
     }
@@ -97,7 +97,8 @@ export async function sessionAuth(
       res.status(403).json({
         error: {
           type: "permission_error",
-          message: `Conta indisponivel (status: ${org?.status ?? "desconhecido"}). Acoes estao bloqueadas.`,
+          message:
+            "Esta conta esta com as operacoes bloqueadas. Fale com o suporte da FluxPay.",
         },
       });
       return;
@@ -116,7 +117,7 @@ export async function sessionAuth(
   } catch (err) {
     console.error("Session auth error:", err);
     res.status(500).json({
-      error: { type: "api_error", message: "Erro interno de autenticacao." },
+      error: { type: "api_error", message: "Nao foi possivel validar sua sessao. Tente novamente." },
     });
   }
 }
@@ -128,7 +129,7 @@ export function requireRole(...roles: Array<"owner" | "admin" | "developer" | "v
       res.status(403).json({
         error: {
           type: "permission_error",
-          message: `Esta acao requer um dos papeis: ${roles.join(", ")}.`,
+          message: "Voce nao tem permissao para executar esta acao.",
         },
       });
       return;

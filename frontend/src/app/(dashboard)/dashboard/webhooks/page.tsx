@@ -41,7 +41,7 @@ export default async function WebhooksPage() {
       />
 
       {error ? (
-        <ErrorState message={error.message} />
+        <ErrorState detail={error.message} />
       ) : (
         <WebhooksManager
           endpoints={(data || []) as WebhookEndpoint[]}
