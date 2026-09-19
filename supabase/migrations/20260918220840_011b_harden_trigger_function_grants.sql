@@ -1,0 +1,11 @@
+-- FluxPay 011b — fecha a chamada direta a uma funcao de trigger via API REST
+--
+-- fluxpay_block_inactive_organization e uma funcao de TRIGGER, nunca deveria
+-- ser chamavel direto via RPC. SECURITY DEFINER + schema public a expunha em
+-- /rest/v1/rpc/fluxpay_block_inactive_organization para anon/authenticated.
+-- Revogar EXECUTE nao quebra o trigger (o Postgres nao exige grant de EXECUTE
+-- para disparo de trigger), so fecha a chamada direta via API REST.
+--
+-- Esta migration ja estava aplicada no projeto Supabase e faltava no
+-- repositorio: sem ela, um projeto novo nasceria com a funcao exposta.
+REVOKE EXECUTE ON FUNCTION public.fluxpay_block_inactive_organization() FROM PUBLIC, anon, authenticated;

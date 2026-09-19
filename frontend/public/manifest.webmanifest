@@ -1,0 +1,27 @@
+{
+  "name": "FluxPay",
+  "short_name": "FluxPay",
+  "description": "Gateway de pagamentos PIX: cobrancas, checkout, webhooks e painel em tempo real.",
+  "id": "/dashboard",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#0A0A0A",
+  "theme_color": "#0A0A0A",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Pagamentos", "short_name": "Pagamentos", "url": "/dashboard/payments" },
+    { "name": "Chaves de API", "short_name": "Chaves", "url": "/dashboard/api-keys" },
+    { "name": "Webhooks", "short_name": "Webhooks", "url": "/dashboard/webhooks" }
+  ]
+}

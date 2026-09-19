@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Sem conexão · FluxPay</title>
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        background: #0a0a0a; color: #fafafa; font-family: Inter, system-ui, sans-serif; padding: 24px;
+      }
+      .box { max-width: 360px; text-align: center; }
+      img { width: 56px; height: 56px; }
+      h1 { font-size: 18px; margin: 20px 0 8px; font-weight: 600; }
+      p { font-size: 14px; color: #8a8f98; line-height: 1.6; margin: 0 0 24px; }
+      button {
+        background: #fc0019; color: #fff; border: 0; border-radius: 10px;
+        padding: 12px 20px; font-size: 14px; font-weight: 500; min-height: 44px; cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <img src="/icons/icon-192.png" alt="FluxPay" />
+      <h1>Você está sem conexão</h1>
+      <p>O painel do FluxPay precisa de internet para mostrar dados de cobranças e saldo.</p>
+      <button onclick="location.reload()">Tentar novamente</button>
+    </div>
+  </body>
+</html>

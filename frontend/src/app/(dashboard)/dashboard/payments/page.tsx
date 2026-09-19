@@ -1,0 +1,123 @@
+import Link from "next/link";
+import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { PageHeader, StatusBadge, Table, Mono, EmptyState, ErrorState } from "@/components/dashboard/ui";
+import { PaymentActions } from "@/components/dashboard/PaymentActions";
+import type { Payment } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+const FILTERS = [
+  { value: "all", label: "Todos os status" },
+  { value: "succeeded", label: "Aprovados" },
+  { value: "pending", label: "Pendentes" },
+  { value: "failed", label: "Recusados" },
+  { value: "expired", label: "Expirados" },
+  { value: "refunded", label: "Reembolsados" },
+];
+
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { supabase, environment, role } = await requireDashboardContext();
+  const { status } = await searchParams;
+
+  let query = supabase
+    .from("payments")
+    .select(
+      "id, amount, currency, status, payment_type, provider, provider_txid, fee_amount, net_amount, description, created_at, paid_at, expires_at, customers(id, name, email)"
+    )
+    .eq("environment", environment)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (status && status !== "all") {
+    query = query.eq("status", status);
+  }
+
+  const { data, error } = await query;
+  const payments = (data || []) as unknown as Payment[];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Pagamentos"
+        description="Todas as transações do ambiente selecionado (100 mais recentes)"
+        action={
+          <div className="flex flex-wrap gap-1.5">
+            {FILTERS.map((f) => {
+              const active = (status || "all") === f.value;
+              return (
+                <Link
+                  key={f.value}
+                  href={f.value === "all" ? "/dashboard/payments" : `/dashboard/payments?status=${f.value}`}
+                  className={
+                    active
+                      ? "px-3 py-1.5 rounded-lg text-xs font-medium bg-flux-red/10 text-flux-red border border-flux-red/20"
+                      : "px-3 py-1.5 rounded-lg text-xs font-medium text-flux-muted border border-flux-border hover:text-white"
+                  }
+                >
+                  {f.label}
+                </Link>
+              );
+            })}
+          </div>
+        }
+      />
+
+      {error ? (
+        <ErrorState message={error.message} />
+      ) : payments.length === 0 ? (
+        <EmptyState>
+          Nenhuma transação encontrada. Crie uma cobrança PIX com{" "}
+          <code className="text-flux-red">POST /v1/payments</code> usando uma chave{" "}
+          <code className="text-flux-red">sk_{environment}_</code>.
+        </EmptyState>
+      ) : (
+        <Table headers={["ID", "Cliente", "Valor", "Taxa", "Método", "Status", "Data", ""]}>
+          {payments.map((p) => (
+            <tr key={p.id} className="hover:bg-flux-gray/40 align-middle">
+              <td className="px-6 py-4">
+                <Mono>{p.id.slice(0, 8)}</Mono>
+                {p.provider_txid && (
+                  <div className="text-[11px] text-flux-muted mt-0.5">txid {p.provider_txid}</div>
+                )}
+              </td>
+              <td className="px-6 py-4">
+                {p.customers?.name || p.customers?.email || <span className="text-flux-muted">—</span>}
+                {p.description && (
+                  <div className="text-xs text-flux-muted truncate max-w-[220px]">{p.description}</div>
+                )}
+              </td>
+              <td className="px-6 py-4 font-medium whitespace-nowrap">
+                {formatCurrency(p.amount, p.currency)}
+              </td>
+              <td className="px-6 py-4 text-flux-muted whitespace-nowrap">
+                {p.fee_amount ? formatCurrency(p.fee_amount, p.currency) : "—"}
+              </td>
+              <td className="px-6 py-4 uppercase text-xs text-flux-muted">{p.payment_type || "—"}</td>
+              <td className="px-6 py-4">
+                <StatusBadge status={p.status} />
+              </td>
+              <td className="px-6 py-4 text-flux-muted whitespace-nowrap">
+                {formatDate(p.created_at)}
+              </td>
+              <td className="px-6 py-4 text-right">
+                <PaymentActions
+                  paymentId={p.id}
+                  status={p.status}
+                  amount={p.amount}
+                  currency={p.currency}
+                  canWrite={canWrite(role)}
+                  canSimulate={environment === "test" && p.provider === "sandbox"}
+                />
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </div>
+  );
+}

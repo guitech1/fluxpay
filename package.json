@@ -1,0 +1,21 @@
+{
+  "name": "fluxpay",
+  "private": true,
+  "description": "FluxPay — gateway de pagamentos (dashboard Next.js + API Express, empacotados para a Netlify)",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend"
+  },
+  "dependencies": {
+    "serverless-http": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
