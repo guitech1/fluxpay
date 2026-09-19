@@ -7,19 +7,14 @@ type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 /**
  * Roda antes de toda navegacao (exceto assets estaticos — ver `matcher`).
- * Cinco responsabilidades:
+ * Quatro responsabilidades:
  * 1. Renovar a sessao do Supabase (refresh token) e propagar os cookies.
  * 2. Bloquear /dashboard, /onboarding e /admin para quem nao esta logado, e
  *    mandar quem ja esta logado para longe de /login e /signup.
- * 3. Fechar a documentacao da API: /docs deixou de ser publica e vive dentro
- *    do painel, em /dashboard/api. Visitante que abre /docs cai no /login com
- *    ?next=/dashboard/api; quem ja esta logado vai direto para a pagina nova.
- *    Isso e uma protecao de rota, nao um esconde-esconde de CSS: nenhum
- *    endpoint privado e servido para quem nao autenticou.
- * 4. Resolver qual organizacao o usuario esta operando (cookie fluxpay_org_id).
- * 5. Aplicar o MODO MANUTENCAO nas paginas do painel — server-side.
+ * 3. Resolver qual organizacao o usuario esta operando (cookie fluxpay_org_id).
+ * 4. Aplicar o MODO MANUTENCAO nas paginas do painel — server-side.
  *
- * Sobre o item 5: as paginas /dashboard/* sao Server Components que falam
+ * Sobre o item 4: as paginas /dashboard/* sao Server Components que falam
  * direto com o Supabase, sem passar pelo backend Express. O guard do backend
  * (middleware/maintenance.ts) nunca ve essas requisicoes, entao antes disso o
  * modo manutencao fechava a API e deixava o painel funcionando. Aqui o
@@ -71,35 +66,15 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/onboarding") ||
     pathname.startsWith("/admin");
 
-  // --- Documentacao da API: area autenticada ---------------------------
-  // /docs era publica e mostrava endpoints, formato de payload e regras do
-  // sandbox antes de qualquer cadastro. Agora ela so existe dentro do painel.
-  if (pathname === "/docs" || pathname.startsWith("/docs/")) {
-    const url = request.nextUrl.clone();
-    url.search = "";
-    if (!user) {
-      url.pathname = "/login";
-      url.searchParams.set("next", "/dashboard/api");
-    } else {
-      url.pathname = "/dashboard/api";
-    }
-    return NextResponse.redirect(url);
-  }
-
   if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.search = "";
-    // Depois de entrar, o usuario volta para onde queria ir.
-    url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
   }
 
   if (user && isAuthRoute) {
     const url = request.nextUrl.clone();
-    const next = request.nextUrl.searchParams.get("next");
-    url.pathname = next && next.startsWith("/dashboard") ? next : "/dashboard";
-    url.search = "";
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
