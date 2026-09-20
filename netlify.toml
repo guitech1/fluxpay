@@ -16,23 +16,20 @@
   functions = "netlify/functions"
 
 [build.environment]
-  # Node 22 expoe WebSocket nativo — evita crash do @supabase/supabase-js no boot
-  # da funcao ("Node.js detected but native WebSocket not found" -> 502).
-  NODE_VERSION = "22"
+  # Node 20: compatível com o plano Free da Netlify e com o backend.
+  NODE_VERSION = "20"
   # O Next.js do monorepo precisa saber que a raiz do projeto e o diretorio atual.
   NPM_FLAGS = "--include-workspace-root"
-  # Runtime das functions (nao so do build): mantem a API no mesmo Node do backend.
-  AWS_LAMBDA_JS_RUNTIME = "nodejs22.x"
+  AWS_LAMBDA_JS_RUNTIME = "nodejs20.x"
 
 [functions]
   node_bundler = "esbuild"
 
-# A funcao agendada tambem declara o cron no proprio arquivo
-# (netlify/functions/scheduled-jobs.ts, `export const config`). Repetir aqui
-# deixa explicito no painel: a cada 10 minutos expira PIX/checkouts vencidos e
-# reenvia webhooks em "retrying".
-[functions."scheduled-jobs"]
-  schedule = "*/10 * * * *"
+# Scheduled Functions (cron) exigem plano Pro na Netlify.
+# No Free o build pode falhar se o schedule estiver declarado aqui.
+# Reative o bloco abaixo ao subir de plano:
+# [functions."scheduled-jobs"]
+#   schedule = "*/10 * * * *"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
@@ -49,9 +46,6 @@
   status = 200
   force = true
 
-# O painel administrativo chama /admin-api/* (frontend/src/lib/admin-api.ts).
-# Sem este redirect a API do ADM responde 404 em producao — o painel abre e
-# nenhuma tela carrega.
 [[redirects]]
   from = "/admin-api/*"
   to = "/.netlify/functions/api/admin-api/:splat"
