@@ -69,6 +69,26 @@ export async function sessionAuth(
       return;
     }
 
+    // Usuario suspenso/banido/desativado nao executa operacoes do painel
+    // (criar cobranca, chave, reembolso). A leitura das Server Components
+    // continua pela RLS; este middleware cobre so /dashboard-api/*.
+    const { data: userRow } = await supabaseAdmin
+      .from("users")
+      .select("status")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+
+    if (userRow && userRow.status && userRow.status !== "active") {
+      res.status(403).json({
+        error: {
+          type: "permission_error",
+          message:
+            "Este usuario esta com as operacoes bloqueadas. Fale com o suporte da FluxPay.",
+        },
+      });
+      return;
+    }
+
     const { data: membership, error: memberError } = await supabaseAdmin
       .from("organization_members")
       .select("role")

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { adminFetch } from "@/lib/admin-api";
 
+export { adminFetch };
+
 /** Busca dados do /admin-api com estados de carregamento, erro e recarga. */
 export function useAdminData<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
@@ -40,8 +42,8 @@ export function Loading() {
 
 export function Failed({ message }: { message: string }) {
   return (
-    <div className="card border-red-500/20 bg-red-500/5 flex items-start gap-3 text-sm text-red-300">
-      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+    <div className="card border-red-500/20 bg-red-500/5 text-sm text-red-300 flex items-start gap-2">
+      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
       <span>{message}</span>
     </div>
   );
@@ -71,95 +73,98 @@ export function AdminTable({ headers, children }: { headers: string[]; children:
 export function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="card">
-      <div className="text-sm text-flux-muted">{label}</div>
-      <div className="text-2xl font-semibold tracking-tight mt-2">{value}</div>
+      <div className="text-sm text-flux-muted mb-1">{label}</div>
+      <div className="text-2xl font-semibold tracking-tight">{value}</div>
       {hint && <div className="text-xs text-flux-muted mt-1">{hint}</div>}
     </div>
   );
 }
 
-const ACCOUNT_STATUS: Record<string, { label: string; className: string }> = {
-  active: { label: "Ativa", className: "badge-success" },
-  pending: { label: "Pendente", className: "badge-pending" },
-  suspended: { label: "Suspensa", className: "badge bg-amber-500/10 text-amber-400" },
-  banned: { label: "Banida", className: "badge-failed" },
-  disabled: { label: "Desativada", className: "badge bg-gray-500/10 text-gray-400" },
+const STATUS_LABELS: Record<string, string> = {
+  active: "Ativa",
+  pending: "Pendente",
+  suspended: "Suspensa",
+  banned: "Banida",
+  disabled: "Desativada",
+};
+
+const STATUS_STYLES: Record<string, string> = {
+  active: "badge-success",
+  pending: "badge-pending",
+  suspended: "badge bg-amber-500/10 text-amber-400",
+  banned: "badge-failed",
+  disabled: "badge bg-gray-500/10 text-gray-400",
 };
 
 export function AccountStatusBadge({ status }: { status: string }) {
-  const s = ACCOUNT_STATUS[status] || { label: status, className: "badge" };
-  return <span className={s.className}>{s.label}</span>;
+  return (
+    <span className={STATUS_STYLES[status] || "badge bg-gray-500/10 text-gray-400"}>
+      {STATUS_LABELS[status] || status}
+    </span>
+  );
 }
 
-/**
- * Diálogo de confirmação com MOTIVO OBRIGATÓRIO (mínimo de 10 caracteres, o
- * mesmo que o backend valida). Toda ação sensível do ADM passa por aqui, e o
- * motivo vai parar na trilha de auditoria junto com o estado antes/depois.
- */
 export function ReasonDialog({
   title,
   description,
-  confirmLabel = "Confirmar",
+  confirmLabel,
   onConfirm,
   onClose,
 }: {
   title: string;
-  description?: ReactNode;
-  confirmLabel?: string;
+  description: string;
+  confirmLabel: string;
   onConfirm: (reason: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function confirm() {
+  async function submit() {
     if (reason.trim().length < 10) {
-      setError("Descreva o motivo com pelo menos 10 caracteres — ele fica registrado na auditoria.");
+      setError("Informe um motivo com pelo menos 10 caracteres.");
       return;
     }
-    setBusy(true);
+    setLoading(true);
     setError(null);
     try {
       await onConfirm(reason.trim());
-      onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha na operação.");
-    } finally {
-      setBusy(false);
+      setError(err instanceof Error ? err.message : "Falha ao executar a ação.");
+      setLoading(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-      <div className="card w-full max-w-lg space-y-4">
-        <h3 className="font-medium">{title}</h3>
-        {description && <div className="text-sm text-flux-muted">{description}</div>}
-
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
+      <div className="relative w-full max-w-md rounded-xl border border-flux-border bg-flux-dark p-5 space-y-4 shadow-xl">
         <div>
-          <label className="block text-sm font-medium mb-1.5">Motivo (obrigatório)</label>
+          <h2 className="font-semibold">{title}</h2>
+          <p className="text-sm text-flux-muted mt-1">{description}</p>
+        </div>
+        <div>
+          <label className="label" htmlFor="admin-reason">
+            Motivo
+          </label>
           <textarea
-            className="input min-h-[90px] resize-y"
+            id="admin-reason"
+            className="input min-h-[96px]"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Ex.: denúncia de fraude confirmada no chamado #1234"
+            placeholder="Descreva o motivo (obrigatório)"
+            maxLength={500}
             autoFocus
           />
         </div>
-
-        {error && (
-          <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-xs text-red-300">
-            {error}
-          </div>
-        )}
-
+        {error && <p className="text-sm text-red-300">{error}</p>}
         <div className="flex justify-end gap-2">
-          <button className="btn-secondary text-sm" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-secondary text-sm" onClick={onClose} disabled={loading}>
             Cancelar
           </button>
-          <button className="btn-primary text-sm flex items-center gap-2" onClick={confirm} disabled={busy}>
-            {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-            {confirmLabel}
+          <button type="button" className="btn-primary text-sm" onClick={submit} disabled={loading}>
+            {loading ? "Salvando…" : confirmLabel}
           </button>
         </div>
       </div>
