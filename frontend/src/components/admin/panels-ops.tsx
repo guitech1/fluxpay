@@ -11,7 +11,7 @@ import {
   AdminTable,
 } from "./common";
 import { StatusBadge } from "@/components/dashboard/ui";
-import { AccountStatusBadge, ReasonDialog } from "./common";
+import { AccountStatusBadge, ReasonDialog, adminFetch } from "./common";
 
 const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
@@ -249,8 +249,6 @@ export function SettingsPanel({ canConfigure }: { canConfigure: boolean }) {
             Apenas superadmin
           </button>
         )}
-          {maintenance?.enabled ? "Desligar manutenção" : "Ligar manutenção"}
-        </button>
       </div>
       <div className="card text-sm">
         Estado atual: <strong>{maintenance?.enabled ? "ATIVA" : "INATIVA"}</strong>
