@@ -11,6 +11,7 @@ import {
   AdminTable,
 } from "./common";
 import { StatusBadge } from "@/components/dashboard/ui";
+import { AccountStatusBadge } from "./common";
 
 const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
@@ -131,10 +132,49 @@ export function AuditPanel() {
   );
 }
 
-export function SettingsPanel({ canConfigure: _c }: { canConfigure: boolean }) {
+export function SettingsPanel({ canConfigure }: { canConfigure: boolean }) {
+  const { data, loading, error, reload } = useAdminData<{ key: string; value: any }[]>("/settings");
+  const maintenance = data?.find((x) => x.key === "maintenance")?.value;
+
+  async function save(enabled: boolean) {
+    const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
+    if (!canConfigure || reason.length < 10) return;
+    await adminFetch("/settings/maintenance", {
+      method: "PUT",
+      body: {
+        enabled,
+        message: maintenance?.message || "A FluxPay está em manutenção. Voltamos em instantes.",
+        allow_admins: maintenance?.allow_admins ?? true,
+        scope: maintenance?.scope || "all",
+        reason,
+      },
+    });
+    reload();
+  }
+
+  if (loading) return <Loading />;
+  if (error) return <Failed message={error} />;
   return (
-    <div className="card text-sm text-flux-muted">
-      Configurações de manutenção permanecem em /admin/settings (implementação completa no backend).
+    <div className="space-y-4">
+      <div className="card flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="font-medium">Modo de manutenção</div>
+          <div className="text-sm text-flux-muted mt-1">
+            Estado persistido em platform_settings e aplicado pelo backend e middleware do Next.
+          </div>
+        </div>
+        <button
+          className={maintenance?.enabled ? "btn-secondary text-sm" : "btn-primary text-sm"}
+          disabled={!canConfigure}
+          onClick={() => save(!maintenance?.enabled)}
+        >
+          {maintenance?.enabled ? "Desligar manutenção" : "Ligar manutenção"}
+        </button>
+      </div>
+      <div className="card text-sm">
+        Estado atual: <strong>{maintenance?.enabled ? "ATIVA" : "INATIVA"}</strong>
+        <span className="text-flux-muted"> · escopo: {maintenance?.scope || "all"} · admins liberados: {maintenance?.allow_admins ? "sim" : "não"}</span>
+      </div>
     </div>
   );
 }
