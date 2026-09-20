@@ -1,12 +1,12 @@
--- FluxPay 018 — corrigir detecção de service_role no trigger de users.status
+-- FluxPay 018 — corrigir trigger de users.status (suspender/banir)
 --
--- A migration 016 usava current_setting('request.jwt.claim.role'), que no
--- PostgREST/Supabase atual frequentemente vem vazio mesmo com a service_role
--- key. Resultado: suspender/banir usuário via /admin-api falhava (42501) e a
--- API devolvia 500 genérico.
+-- Bug: a 016 bloqueava QUALQUER update de status quando
+-- current_setting('request.jwt.claim.role') não era literalmente 'service_role'.
+-- No PostgREST atual esse setting costuma vir vazio mesmo com a service_role
+-- key — o backend ADM recebia 42501 e a API respondia 500 genérico.
 --
--- Correção: aceitar service_role via auth.role(), claims JSON e current_user.
--- Continua bloqueando authenticated/anon de alterar status.
+-- Correção: negar APENAS quando o papel é authenticated ou anon.
+-- service_role (e contextos internos) podem alterar status.
 
 CREATE OR REPLACE FUNCTION public.fluxpay_protect_user_status()
 RETURNS TRIGGER
@@ -16,7 +16,6 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   jwt_role text;
-  db_user text := current_user;
 BEGIN
   IF NEW.status IS DISTINCT FROM OLD.status THEN
     BEGIN
@@ -29,9 +28,7 @@ BEGIN
       jwt_role := NULL;
     END;
 
-    -- service_role key do backend OU papéis internos do Postgres/Supabase
-    IF COALESCE(jwt_role, '') IS DISTINCT FROM 'service_role'
-       AND db_user NOT IN ('service_role', 'postgres', 'supabase_admin', 'supabase_auth_admin') THEN
+    IF jwt_role IN ('authenticated', 'anon') THEN
       RAISE EXCEPTION 'Somente o backend administrativo pode alterar o status do usuario.'
         USING ERRCODE = '42501';
     END IF;
@@ -46,6 +43,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.fluxpay_protect_user_status() IS
-  'Impede que clientes authenticated/anon mudem users.status. service_role (backend ADM) pode alterar.';
+  'Bloqueia mudança de users.status por authenticated/anon. service_role (backend ADM) pode alterar.';
 
 REVOKE ALL ON FUNCTION public.fluxpay_protect_user_status() FROM PUBLIC, anon, authenticated;
