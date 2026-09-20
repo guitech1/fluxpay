@@ -1,10 +1,10 @@
-import { requirePlatformAdmin } from "@/lib/admin-server";
+import { requirePlatformAdmin, isAdminRole } from "@/lib/admin-server";
 import { PaymentsPanel } from "@/components/admin/panels";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPaymentsPage() {
-  await requirePlatformAdmin();
+  const admin = await requirePlatformAdmin();
 
   return (
     <div className="space-y-6">
@@ -14,7 +14,7 @@ export default async function AdminPaymentsPage() {
           Transações, reembolsos e disputas de todas as contas do ambiente selecionado
         </p>
       </div>
-      <PaymentsPanel />
+      <PaymentsPanel canAct={isAdminRole(admin.role)} />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Search } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   useAdminData,
@@ -11,21 +11,56 @@ import {
   AdminTable,
 } from "./common";
 import { StatusBadge } from "@/components/dashboard/ui";
-import { AccountStatusBadge, adminFetch } from "./common";
+import { AccountStatusBadge, ReasonDialog, adminFetch } from "./common";
 
 const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
-export function UsersPanel() {
+function ReasonDialogTrigger({
+  title,
+  description,
+  confirmLabel,
+  onConfirm,
+  disabled,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: (reason: string) => Promise<void>;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        className="btn-secondary text-sm"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
+        {confirmLabel}
+      </button>
+    );
+  }
+  return (
+    <ReasonDialog
+      title={title}
+      description={description}
+      confirmLabel={confirmLabel}
+      onClose={() => setOpen(false)}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+export function UsersPanel({ canAct }: { canAct: boolean }) {
   const [search, setSearch] = useState("");
+  const [pendingAction, setPendingAction] = useState<{ id: string; status: string; label: string } | null>(null);
   const { data, loading, error, reload } = useAdminData<{
     users: { id: string; email: string; full_name: string | null; status: string; status_reason: string | null; created_at: string }[];
   }>(`/users?search=${encodeURIComponent(search)}`);
 
-  async function setStatus(id: string, status: string) {
-    const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
-    if (reason.length < 10) return;
+  async function setStatus(id: string, status: string, reason: string) {
     await adminFetch(`/users/${id}/status`, { method: "POST", body: { status, reason } });
-    reload();
+    await reload();
   }
 
   return (
@@ -46,23 +81,39 @@ export function UsersPanel() {
               <td className="px-5 py-3 text-flux-muted">{formatDate(u.created_at)}</td>
               <td className="px-5 py-3">
                 <div className="flex flex-wrap gap-1">
-                  {u.status !== "active" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "active")}>Reativar</button>}
-                  {u.status === "active" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "suspended")}>Suspender</button>}
-                  {u.status !== "banned" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "banned")}>Banir</button>}
-                  {u.status !== "disabled" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "disabled")}>Desativar</button>}
+                  {canAct && u.status !== "active" && <button className="btn-secondary text-xs" onClick={() => setPendingAction({ id: u.id, status: "active", label: "Reativar usuário" })}>Reativar</button>}
+                  {canAct && u.status === "active" && <button className="btn-secondary text-xs" onClick={() => setPendingAction({ id: u.id, status: "suspended", label: "Suspender usuário" })}>Suspender</button>}
+                  {canAct && u.status !== "banned" && <button className="btn-secondary text-xs" onClick={() => setPendingAction({ id: u.id, status: "banned", label: "Banir usuário" })}>Banir</button>}
+                  {canAct && u.status !== "disabled" && <button className="btn-secondary text-xs" onClick={() => setPendingAction({ id: u.id, status: "disabled", label: "Desativar usuário" })}>Desativar</button>}
                 </div>
               </td>
             </tr>
           ))}
         </AdminTable>
       )}
+      {pendingAction && (
+        <ReasonDialog
+          title={pendingAction.label}
+          description="Essa alteração afeta o acesso operacional do usuário e ficará registrada na auditoria."
+          confirmLabel={pendingAction.label}
+          onClose={() => setPendingAction(null)}
+          onConfirm={(reason) => setStatus(pendingAction.id, pendingAction.status, reason)}
+        />
+      )}
     </div>
   );
 }
-export function PaymentsPanel() {
+export function PaymentsPanel({ canAct }: { canAct: boolean }) {
   const { data, loading, error, reload } = useAdminData<
     { id: string; amount: number; currency: string; status: string; organization_id: string; created_at: string; organizations?: { name: string } | null }[]
   >("/payments");
+  const [pendingPayment, setPendingPayment] = useState<string | null>(null);
+
+  async function release(id: string, reason: string) {
+    await adminFetch(`/payments/${id}/release`, { method: "POST", body: { reason } });
+    await reload();
+  }
+
   return (
     <div className="space-y-4">
       <button className="btn-secondary text-sm" onClick={reload}>Atualizar</button>
@@ -76,16 +127,8 @@ export function PaymentsPanel() {
               <td className="px-5 py-3"><StatusBadge status={r.status} /></td>
               <td className="px-5 py-3 text-flux-muted">{formatDate(r.created_at)}</td>
               <td className="px-5 py-3">
-                {r.status === "succeeded" && (
-                  <button
-                    className="btn-secondary text-xs"
-                    onClick={async () => {
-                      const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
-                      if (reason.length < 10) return;
-                      await adminFetch(`/payments/${r.id}/release`, { method: "POST", body: { reason } });
-                      reload();
-                    }}
-                  >
+                {canAct && r.status === "succeeded" && (
+                  <button className="btn-secondary text-xs" onClick={() => setPendingPayment(r.id)}>
                     Liberar saldo
                   </button>
                 )}
@@ -93,6 +136,15 @@ export function PaymentsPanel() {
             </tr>
           ))}
         </AdminTable>
+      )}
+      {pendingPayment && (
+        <ReasonDialog
+          title="Liberar saldo"
+          description="A ação antecipa apenas a disponibilidade do saldo de um pagamento já confirmado. O status e os valores do pagamento não serão alterados."
+          confirmLabel="Liberar saldo"
+          onClose={() => setPendingPayment(null)}
+          onConfirm={(reason) => release(pendingPayment, reason)}
+        />
       )}
     </div>
   );
@@ -151,20 +203,26 @@ export function SettingsPanel({ canConfigure }: { canConfigure: boolean }) {
   const { data, loading, error, reload } = useAdminData<{ key: string; value: any }[]>("/settings");
   const maintenance = data?.find((x) => x.key === "maintenance")?.value;
 
-  async function save(enabled: boolean) {
-    const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
-    if (!canConfigure || reason.length < 10) return;
-    await adminFetch("/settings/maintenance", {
-      method: "PUT",
-      body: {
-        enabled,
-        message: maintenance?.message || "A FluxPay está em manutenção. Voltamos em instantes.",
-        allow_admins: maintenance?.allow_admins ?? true,
-        scope: maintenance?.scope || "all",
-        reason,
-      },
-    });
-    reload();
+  const [saving, setSaving] = useState(false);
+
+  async function save(enabled: boolean, reason: string) {
+    if (!canConfigure) return;
+    setSaving(true);
+    try {
+      await adminFetch("/settings/maintenance", {
+        method: "PUT",
+        body: {
+          enabled,
+          message: maintenance?.message || "A FluxPay está em manutenção. Voltamos em instantes.",
+          allow_admins: maintenance?.allow_admins ?? true,
+          scope: maintenance?.scope || "all",
+          reason,
+        },
+      });
+      await reload();
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) return <Loading />;
@@ -178,13 +236,19 @@ export function SettingsPanel({ canConfigure }: { canConfigure: boolean }) {
             Estado persistido em platform_settings e aplicado pelo backend e middleware do Next.
           </div>
         </div>
-        <button
-          className={maintenance?.enabled ? "btn-secondary text-sm" : "btn-primary text-sm"}
-          disabled={!canConfigure}
-          onClick={() => save(!maintenance?.enabled)}
-        >
-          {maintenance?.enabled ? "Desligar manutenção" : "Ligar manutenção"}
-        </button>
+        {canConfigure ? (
+          <ReasonDialogTrigger
+            title={maintenance?.enabled ? "Desligar manutenção" : "Ligar manutenção"}
+            description="A alteração é global e ficará registrada na auditoria."
+            confirmLabel={maintenance?.enabled ? "Desligar" : "Ligar"}
+            onConfirm={(reason) => save(!maintenance?.enabled, reason)}
+            disabled={saving}
+          />
+        ) : (
+          <button className="btn-secondary text-sm" disabled>
+            Apenas superadmin
+          </button>
+        )}
       </div>
       <div className="card text-sm">
         Estado atual: <strong>{maintenance?.enabled ? "ATIVA" : "INATIVA"}</strong>

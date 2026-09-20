@@ -52,6 +52,11 @@ export function canAct(role: PlatformAdminRole): boolean {
   return role === "superadmin" || role === "admin";
 }
 
+/** Alias explícito usado pelas páginas /admin/users e /admin/payments. */
+export function isAdminRole(role: PlatformAdminRole): boolean {
+  return role === "superadmin" || role === "admin";
+}
+
 export function isSuperAdmin(role: PlatformAdminRole): boolean {
   return role === "superadmin";
 }
