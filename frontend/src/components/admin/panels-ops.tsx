@@ -16,9 +16,17 @@ const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
 export function UsersPanel() {
   const [search, setSearch] = useState("");
-  const { data, loading, error, reload } = useAdminData<{ users: { id: string; email: string; full_name: string | null; created_at: string }[] }>(
-    `/users?search=${encodeURIComponent(search)}`
-  );
+  const { data, loading, error, reload } = useAdminData<{
+    users: { id: string; email: string; full_name: string | null; status: string; status_reason: string | null; created_at: string }[];
+  }>(`/users?search=${encodeURIComponent(search)}`);
+
+  async function setStatus(id: string, status: string) {
+    const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
+    if (reason.length < 10) return;
+    await adminFetch(`/users/${id}/status`, { method: "POST", body: { status, reason } });
+    reload();
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
@@ -29,11 +37,20 @@ export function UsersPanel() {
         <button className="btn-secondary text-sm" onClick={reload}>Buscar</button>
       </div>
       {loading ? <Loading /> : error ? <Failed message={error} /> : (
-        <AdminTable headers={["Usuário", "Criado em"]}>
+        <AdminTable headers={["Usuário", "Status", "Criado em", "Ações"]}>
           {(data?.users || []).map((u) => (
             <tr key={u.id}>
               <td className="px-5 py-3">{u.full_name || u.email}<div className="text-xs text-flux-muted">{u.email}</div></td>
+              <td className="px-5 py-3"><AccountStatusBadge status={u.status} /></td>
               <td className="px-5 py-3 text-flux-muted">{formatDate(u.created_at)}</td>
+              <td className="px-5 py-3">
+                <div className="flex flex-wrap gap-1">
+                  {u.status !== "active" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "active")}>Reativar</button>}
+                  {u.status === "active" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "suspended")}>Suspender</button>}
+                  {u.status !== "banned" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "banned")}>Banir</button>}
+                  {u.status !== "disabled" && <button className="btn-secondary text-xs" onClick={() => setStatus(u.id, "disabled")}>Desativar</button>}
+                </div>
+              </td>
             </tr>
           ))}
         </AdminTable>
@@ -41,7 +58,6 @@ export function UsersPanel() {
     </div>
   );
 }
-
 export function PaymentsPanel() {
   const { data, loading, error, reload } = useAdminData<
     { id: string; amount: number; currency: string; status: string; organization_id: string; created_at: string; organizations?: { name: string } | null }[]
