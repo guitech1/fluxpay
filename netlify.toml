@@ -1,33 +1,21 @@
 # ============================================================
-# FluxPay na Netlify — um site so serve o painel (Next.js) e a API (Express).
-#
-# O Next.js e publicado pelo plugin oficial; a API inteira roda dentro de uma
-# unica funcao (netlify/functions/api.ts) e os redirects abaixo preservam
-# exatamente os paths documentados (/v1/... e /dashboard-api/...), entao nada
-# muda do ponto de vista de quem consome a API.
+# FluxPay na Netlify — painel (Next.js) + API (Express)
 # ============================================================
 
 [build]
-  # 1. instala frontend + backend + raiz de uma vez (npm workspaces)
-  # 2. compila o backend para backend/dist (as functions importam de la)
-  # 3. builda o Next.js
   command = "npm install --workspaces --include-workspace-root && npm run build --workspace=backend && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
 [build.environment]
-  # Node 20: compatível com o plano Free da Netlify e com o backend.
   NODE_VERSION = "20"
-  # O Next.js do monorepo precisa saber que a raiz do projeto e o diretorio atual.
   NPM_FLAGS = "--include-workspace-root"
   AWS_LAMBDA_JS_RUNTIME = "nodejs20.x"
 
 [functions]
   node_bundler = "esbuild"
 
-# Scheduled Functions (cron) exigem plano Pro na Netlify.
-# No Free o build pode falhar se o schedule estiver declarado aqui.
-# Reative o bloco abaixo ao subir de plano:
+# Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
 #   schedule = "*/10 * * * *"
 
