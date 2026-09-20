@@ -69,6 +69,22 @@ export async function sessionAuth(
       return;
     }
 
+    const { data: userStatus } = await supabaseAdmin
+      .from("users")
+      .select("status, status_reason")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+
+    if (!userStatus || userStatus.status !== "active") {
+      res.status(403).json({
+        error: {
+          type: "permission_error",
+          message: "Este usuário está com as operações bloqueadas. Fale com o suporte da FluxPay.",
+        },
+      });
+      return;
+    }
+
     const { data: membership, error: memberError } = await supabaseAdmin
       .from("organization_members")
       .select("role")
