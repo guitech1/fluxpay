@@ -94,7 +94,8 @@ BEGIN
    WHERE payment_id = payment_row.id
      AND organization_id = p_organization_id
      AND environment = p_environment
-     AND available_on > NOW();
+     AND available_on > NOW()
+  RETURNING id;
 
   GET DIAGNOSTICS changed_count = ROW_COUNT;
 
