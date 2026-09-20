@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { PageHeader, StatusBadge, Table, Mono, EmptyState, ErrorState } from "@/components/dashboard/ui";
@@ -23,6 +24,7 @@ export default async function PaymentsPage({
 }) {
   const { supabase, environment, role } = await requireDashboardContext();
   const { status } = await searchParams;
+  const write = canWrite(role);
 
   let query = supabase
     .from("payments")
@@ -46,23 +48,31 @@ export default async function PaymentsPage({
         title="Pagamentos"
         description="Todas as transações do ambiente selecionado (100 mais recentes)"
         action={
-          <div className="flex flex-wrap gap-1.5">
-            {FILTERS.map((f) => {
-              const active = (status || "all") === f.value;
-              return (
-                <Link
-                  key={f.value}
-                  href={f.value === "all" ? "/dashboard/payments" : `/dashboard/payments?status=${f.value}`}
-                  className={
-                    active
-                      ? "px-3 py-1.5 rounded-lg text-xs font-medium bg-flux-red/10 text-flux-red border border-flux-red/20"
-                      : "px-3 py-1.5 rounded-lg text-xs font-medium text-flux-muted border border-flux-border hover:text-white"
-                  }
-                >
-                  {f.label}
-                </Link>
-              );
-            })}
+          <div className="flex flex-col items-end gap-3">
+            {write && (
+              <Link href="/dashboard/payments/new" className="btn-primary">
+                <Plus className="w-4 h-4" />
+                Criar cobrança
+              </Link>
+            )}
+            <div className="flex flex-wrap gap-1.5 justify-end">
+              {FILTERS.map((f) => {
+                const active = (status || "all") === f.value;
+                return (
+                  <Link
+                    key={f.value}
+                    href={f.value === "all" ? "/dashboard/payments" : `/dashboard/payments?status=${f.value}`}
+                    className={
+                      active
+                        ? "px-3 py-1.5 rounded-lg text-xs font-medium bg-flux-red/10 text-flux-red border border-flux-red/20"
+                        : "px-3 py-1.5 rounded-lg text-xs font-medium text-flux-muted border border-flux-border hover:text-white"
+                    }
+                  >
+                    {f.label}
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         }
       />
@@ -70,11 +80,22 @@ export default async function PaymentsPage({
       {error ? (
         <ErrorState detail={error.message} />
       ) : payments.length === 0 ? (
-        <EmptyState>
-          Nenhuma transação encontrada. Crie uma cobrança PIX com{" "}
-          <code className="text-flux-red">POST /v1/payments</code> usando uma chave{" "}
-          <code className="text-flux-red">sk_{environment}_</code>.
-        </EmptyState>
+        <EmptyState
+          title="Nenhuma transação ainda"
+          description={
+            write
+              ? "Gere a primeira cobrança PIX pelo painel ou via API com uma chave sk_ do ambiente selecionado."
+              : "Quando houver cobranças neste ambiente, elas aparecem aqui."
+          }
+          action={
+            write ? (
+              <Link href="/dashboard/payments/new" className="btn-primary">
+                <Plus className="w-4 h-4" />
+                Criar cobrança
+              </Link>
+            ) : undefined
+          }
+        />
       ) : (
         <Table headers={["ID", "Cliente", "Valor", "Taxa", "Método", "Status", "Data", ""]}>
           {payments.map((p) => (
@@ -112,7 +133,7 @@ export default async function PaymentsPage({
                   status={p.status}
                   amount={p.amount}
                   currency={p.currency}
-                  canWrite={canWrite(role)}
+                  canWrite={write}
                   canSimulate={environment === "test" && p.provider === "sandbox"}
                 />
               </td>
