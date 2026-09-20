@@ -67,7 +67,7 @@ export function PaymentsPanel() {
     <div className="space-y-4">
       <button className="btn-secondary text-sm" onClick={reload}>Atualizar</button>
       {loading ? <Loading /> : error ? <Failed message={error} /> : (
-        <AdminTable headers={["ID", "Conta", "Valor", "Status", "Data"]}>
+        <AdminTable headers={["ID", "Conta", "Valor", "Status", "Data", "Ações"]}>
           {(data || []).map((r) => (
             <tr key={r.id}>
               <td className="px-5 py-3 font-mono text-xs">{short(r.id)}</td>
@@ -75,6 +75,21 @@ export function PaymentsPanel() {
               <td className="px-5 py-3">{formatCurrency(r.amount, r.currency)}</td>
               <td className="px-5 py-3"><StatusBadge status={r.status} /></td>
               <td className="px-5 py-3 text-flux-muted">{formatDate(r.created_at)}</td>
+              <td className="px-5 py-3">
+                {r.status === "succeeded" && (
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={async () => {
+                      const reason = window.prompt("Motivo obrigatório (mínimo 10 caracteres):")?.trim() || "";
+                      if (reason.length < 10) return;
+                      await adminFetch(`/payments/${r.id}/release`, { method: "POST", body: { reason } });
+                      reload();
+                    }}
+                  >
+                    Liberar saldo
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </AdminTable>
