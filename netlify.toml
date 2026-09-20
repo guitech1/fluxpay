@@ -3,13 +3,16 @@
 # ============================================================
 
 [build]
-  command = "npm install --workspaces --include-workspace-root && npm run build --workspace=backend && npm run build --workspace=frontend"
+  # --include=dev: typescript/tsc vive em devDependencies do backend.
+  # Se NODE_ENV=production estiver setado no painel, o npm pula
+  # devDependencies e o build quebra com "tsc: not found".
+  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
-  NPM_FLAGS = "--include-workspace-root"
+  NPM_FLAGS = "--include-workspace-root --include=dev"
   AWS_LAMBDA_JS_RUNTIME = "nodejs20.x"
 
 [functions]

@@ -7,11 +7,8 @@ import {
 
 /**
  * Job de manutencao periodica.
- *
- * No plano Free da Netlify, Scheduled Functions (cron) nao estao disponiveis
- * e declarar `schedule` no export config pode derrubar o build. Por isso o
- * cron fica desligado aqui; a funcao continua invocavel manualmente e pode
- * voltar a ser agendada no netlify.toml ao subir de plano.
+ * Cron desligado no plano Free (Scheduled Functions = Pro).
+ * Reative com: export const config = { schedule: "*/10 * * * *" };
  */
 export default async () => {
   const events = await reprocessUnmatchedProviderEvents().catch((err) => {
@@ -43,6 +40,3 @@ export default async () => {
     { headers: { "Content-Type": "application/json" } }
   );
 };
-
-// Cron desligado no Free. Para reativar (plano Pro+):
-// export const config = { schedule: "*/10 * * * *" };
