@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Wallet, Clock, CheckCircle, XCircle, CreditCard, Plus } from "lucide-react";
-import { requireDashboardContext } from "@/lib/dashboard-server";
+import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { OverviewCharts, type DailyPoint } from "@/components/dashboard/OverviewCharts";
 import { PageHeader, StatusBadge, Table, Mono, EmptyState } from "@/components/dashboard/ui";
@@ -56,7 +56,8 @@ function MetricCard({
 }
 
 export default async function OverviewPage() {
-  const { supabase, organization, environment } = await requireDashboardContext();
+  const { supabase, organization, environment, role } = await requireDashboardContext();
+  const write = canWrite(role);
 
   const since = startOfDayUTC(13).toISOString();
 
@@ -109,6 +110,14 @@ export default async function OverviewPage() {
       <PageHeader
         title="Visão geral"
         description={`${organization.name} · ambiente ${environment === "live" ? "de produção" : "de testes"}`}
+        action={
+          write ? (
+            <Link href="/dashboard/payments/new" className="btn-primary">
+              <Plus className="w-4 h-4" />
+              Criar cobrança
+            </Link>
+          ) : undefined
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -157,10 +166,12 @@ export default async function OverviewPage() {
             title="Nenhuma transação ainda"
             description="Assim que você gerar a primeira cobrança PIX, ela aparece aqui com o status atualizado automaticamente."
             action={
-              <Link href="/dashboard/payments/new" className="btn-primary">
-                <Plus className="w-4 h-4" />
-                Nova cobrança
-              </Link>
+              write ? (
+                <Link href="/dashboard/payments/new" className="btn-primary">
+                  <Plus className="w-4 h-4" />
+                  Criar cobrança
+                </Link>
+              ) : undefined
             }
           />
         ) : (
