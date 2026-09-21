@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -15,6 +16,21 @@ const KEY_TYPES: { value: PixKeyType; label: string }[] = [
   { value: "qrc", label: "PIX copia e cola" },
 ];
 
+/** "1.234,56" / "1234,56" / "1234.56" -> centavos. Mesmo padrão de NewPaymentForm. */
+function parseAmountToCents(value: string): number | null {
+  const cleaned = value.replace(/[^\d,.-]/g, "").trim();
+  if (!cleaned) return null;
+
+  const normalized = cleaned.includes(",")
+    ? cleaned.replace(/\./g, "").replace(",", ".")
+    : cleaned;
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+
+  return Math.round(parsed * 100);
+}
+
 interface Props {
   availableCents: number;
   currency: string;
@@ -24,12 +40,16 @@ interface Props {
 }
 
 export function WithdrawForm({
-  availableCents,
+  availableCents: availableCentsProp,
   currency,
   canWithdraw,
   environment,
   onSuccess,
 }: Props) {
+  const router = useRouter();
+  // RPC BIGINT pode chegar como string em alguns clientes; force number.
+  const availableCents = Number(availableCentsProp) || 0;
+
   const [amountReais, setAmountReais] = useState("");
   const [pixKey, setPixKey] = useState("");
   const [pixKeyType, setPixKeyType] = useState<PixKeyType>("cpf");
@@ -59,19 +79,20 @@ export function WithdrawForm({
     );
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    const reais = parseFloat(amountReais.replace(",", "."));
-    if (!Number.isFinite(reais) || reais < 10) {
+    const cents = parseAmountToCents(amountReais);
+    if (cents === null || cents < 1000) {
       setError("Informe um valor de no mínimo R$ 10,00.");
       return;
     }
-    const cents = Math.round(reais * 100);
     if (cents > availableCents) {
-      setError("Valor acima do saldo disponível.");
+      setError(
+        `Valor acima do saldo disponível (${formatCurrency(availableCents, currency)}).`
+      );
       return;
     }
     if (!pixKey.trim()) {
@@ -81,7 +102,7 @@ export function WithdrawForm({
 
     setLoading(true);
     try {
-      const res = await dashboardFetch<{ data: { id: string; status: string } }>("/withdrawals", {
+      await dashboardFetch<{ data: { id: string; status: string } }>("/withdrawals", {
         method: "POST",
         body: {
           amount: cents,
@@ -89,12 +110,15 @@ export function WithdrawForm({
           pix_key_type: pixKeyType,
         },
       });
+
       setSuccess(
-        `Pedido criado (${res.data.id.slice(0, 8)}…). Status: ${res.data.status}. Aguardando aprovação.`
+        "Saque solicitado com sucesso! Aguarde até 24 horas para processamento."
       );
       setAmountReais("");
       setPixKey("");
       onSuccess?.();
+      // Atualiza saldo e extrato (Server Component da carteira).
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao solicitar saque.");
     } finally {
@@ -102,8 +126,10 @@ export function WithdrawForm({
     }
   }
 
+  const belowMinimum = availableCents < 1000;
+
   return (
-    <form onSubmit={handleSubmit} className="card space-y-4">
+    <form onSubmit={handleSubmit} className="card space-y-4" noValidate>
       <div>
         <h3 className="text-sm font-medium">Solicitar saque</h3>
         <p className="text-xs text-flux-muted mt-1">
@@ -118,7 +144,8 @@ export function WithdrawForm({
           <input
             type="text"
             inputMode="decimal"
-            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
+            autoComplete="off"
+            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
             placeholder="10,00"
             value={amountReais}
             onChange={(e) => setAmountReais(e.target.value)}
@@ -128,7 +155,7 @@ export function WithdrawForm({
         <label className="block text-sm">
           <span className="text-flux-muted">Tipo da chave</span>
           <select
-            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
+            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
             value={pixKeyType}
             onChange={(e) => setPixKeyType(e.target.value as PixKeyType)}
             disabled={loading}
@@ -146,7 +173,8 @@ export function WithdrawForm({
         <span className="text-flux-muted">Chave PIX</span>
         <input
           type="text"
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
+          autoComplete="off"
+          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
           placeholder="CPF, e-mail, telefone ou chave"
           value={pixKey}
           onChange={(e) => setPixKey(e.target.value)}
@@ -154,10 +182,24 @@ export function WithdrawForm({
         />
       </label>
 
-      {error && <p className="text-sm text-red-300">{error}</p>}
-      {success && <p className="text-sm text-emerald-300">{success}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-red-300">
+          {error}
+        </p>
+      )}
+      {success && (
+        <p role="status" className="text-sm text-emerald-300">
+          {success}
+        </p>
+      )}
 
-      <button type="submit" className="btn-primary" disabled={loading || availableCents < 1000}>
+      {belowMinimum && !error && !success && (
+        <p className="text-xs text-flux-muted">
+          Saldo mínimo para saque: R$ 10,00.
+        </p>
+      )}
+
+      <button type="submit" className="btn-primary" disabled={loading}>
         {loading ? "Enviando…" : "Solicitar saque"}
       </button>
     </form>
