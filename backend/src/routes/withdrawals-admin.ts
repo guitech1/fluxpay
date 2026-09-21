@@ -25,9 +25,10 @@ router.get("/", requireAdminRole("superadmin", "admin", "support"), async (req, 
       data: rows.map((w) => ({
         ...publicWithdrawalView(w),
         organization_id: w.organization_id,
-        provider_withdrawal_id: w.provider_withdrawal_id,
-        provider_status: w.provider_status,
-        reviewed_by: w.reviewed_by,
+        provider_reference: w.provider_reference,
+        approved_by: w.approved_by,
+        approved_at: w.approved_at,
+        rejected_at: w.rejected_at,
       })),
     });
   } catch (err) {
@@ -58,8 +59,9 @@ router.post("/:id/approve", requireAdminRole("superadmin", "admin"), async (req,
       data: {
         ...publicWithdrawalView(updated),
         organization_id: updated.organization_id,
-        provider_withdrawal_id: updated.provider_withdrawal_id,
-        provider_status: updated.provider_status,
+        provider_reference: updated.provider_reference,
+        approved_by: updated.approved_by,
+        approved_at: updated.approved_at,
       },
     });
   } catch (err) {
