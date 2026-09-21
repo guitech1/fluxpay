@@ -5,6 +5,7 @@ export { OrganizationDetailPanel } from "./OrganizationDetailPanel";
 export {
   UsersPanel,
   PaymentsPanel,
+  WithdrawalsPanel,
   WebhooksPanel,
   SecurityPanel,
   AuditPanel,
