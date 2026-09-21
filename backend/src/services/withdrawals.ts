@@ -32,6 +32,7 @@ export interface WithdrawalRequest {
   rejected_at: string | null;
   rejection_reason: string | null;
   failed_at: string | null;
+  correlation_id: string | null;
   provider_reference: string | null;
   failure_reason: string | null;
   balance_transaction_id: string | null;
@@ -102,7 +103,7 @@ function mapWithdrawalInsertError(err: {
   if (
     code === "42P01" ||
     code === "PGRST205" ||
-    /withdrawal_requests/i.test(msg) && /does not exist|not find|schema cache/i.test(msg)
+    (/withdrawal_requests/i.test(msg) && /does not exist|not find|schema cache/i.test(msg))
   ) {
     return new AppError(
       503,
@@ -226,7 +227,7 @@ export async function requestWithdrawal(params: {
     throw new AppError(500, "api_error", "Usuario do saque nao encontrado no cadastro da plataforma.");
   }
 
-  let { data: row, error: insertError } = await supabaseAdmin
+  const { data: row, error: insertError } = await supabaseAdmin
     .from("withdrawal_requests")
     .insert({ ...baseRow, requested_by: params.userId })
     .select("*")
