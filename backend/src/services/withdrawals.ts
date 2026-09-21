@@ -93,6 +93,49 @@ function assertPixKey(type: PixKeyType, key: string): void {
   }
 }
 
+/** Mensagens legíveis para erros comuns do insert em withdrawal_requests. */
+function mapWithdrawalInsertError(err: {
+  code?: string;
+  message?: string;
+  details?: string;
+}): AppError {
+  const code = err.code || "";
+  const msg = `${err.message || ""} ${err.details || ""}`;
+
+  // Tabela inexistente (migration 015 nao aplicada)
+  if (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    /withdrawal_requests/i.test(msg) && /does not exist|not find|schema cache/i.test(msg)
+  ) {
+    return new AppError(
+      503,
+      "api_error",
+      "Tabela de saques ainda nao esta disponivel no banco. Aplique a migration 015_withdrawal_requests e tente de novo."
+    );
+  }
+
+  // FK violada (ex.: requested_by nao existe em public.users)
+  if (code === "23503") {
+    return new AppError(
+      500,
+      "api_error",
+      "Nao foi possivel vincular o pedido ao usuario. Tente novamente em instantes."
+    );
+  }
+
+  // CHECK / constraint
+  if (code === "23514") {
+    return new AppError(
+      400,
+      "validation_error",
+      "Dados do saque invalidos. Confira valor e chave PIX."
+    );
+  }
+
+  return new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
+}
+
 export async function requestWithdrawal(params: {
   organizationId: string;
   environment: Environment;
@@ -158,26 +201,43 @@ export async function requestWithdrawal(params: {
     throw new AppError(500, "api_error", "Nao foi possivel reservar o saldo para o saque.");
   }
 
-  const { data: row, error: insertError } = await supabaseAdmin
+  const baseRow = {
+    id: requestId,
+    organization_id: params.organizationId,
+    environment: params.environment,
+    amount: params.amountCents,
+    fee_amount: feeAmount,
+    net_amount: netAmount,
+    currency: "BRL",
+    pix_key: params.pixKey.trim(),
+    pix_key_type: params.pixKeyType,
+    status: "pending" as const,
+    correlation_id: correlationId,
+    balance_transaction_id: ledger.id,
+    metadata: {},
+  };
+
+  let { data: row, error: insertError } = await supabaseAdmin
     .from("withdrawal_requests")
-    .insert({
-      id: requestId,
-      organization_id: params.organizationId,
-      environment: params.environment,
-      amount: params.amountCents,
-      fee_amount: feeAmount,
-      net_amount: netAmount,
-      currency: "BRL",
-      pix_key: params.pixKey.trim(),
-      pix_key_type: params.pixKeyType,
-      status: "pending",
-      requested_by: params.userId,
-      correlation_id: correlationId,
-      balance_transaction_id: ledger.id,
-      metadata: {},
-    })
+    .insert({ ...baseRow, requested_by: params.userId })
     .select("*")
     .single();
+
+  // FK 23503 em requested_by: usuario existe no Auth mas pode faltar em public.users.
+  // O pedido de saque nao deve depender disso — grava sem o vinculo.
+  if (insertError?.code === "23503") {
+    console.warn(
+      "[withdrawals] requested_by FK failed, retrying without user link:",
+      insertError.message
+    );
+    const retry = await supabaseAdmin
+      .from("withdrawal_requests")
+      .insert({ ...baseRow, requested_by: null })
+      .select("*")
+      .single();
+    row = retry.data;
+    insertError = retry.error;
+  }
 
   if (insertError) {
     await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
@@ -190,7 +250,17 @@ export async function requestWithdrawal(params: {
       if (existing) return existing;
       throw new AppError(409, "conflict", "Ja existe um saque com esta referencia.");
     }
-    console.error("[withdrawals] insert failed:", insertError);
+    console.error("[withdrawals] insert failed:", {
+      code: insertError.code,
+      message: insertError.message,
+      details: insertError.details,
+      hint: (insertError as { hint?: string }).hint,
+    });
+    throw mapWithdrawalInsertError(insertError);
+  }
+
+  if (!row) {
+    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
     throw new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
   }
 
