@@ -150,6 +150,172 @@ export function PaymentsPanel({ canAct }: { canAct: boolean }) {
   );
 }
 
+type WithdrawalRow = {
+  id: string;
+  organization_id: string;
+  amount: number;
+  fee_amount?: number;
+  net_amount?: number;
+  currency: string;
+  status: string;
+  pix_key_masked?: string;
+  pix_key_type?: string;
+  correlation_id?: string | null;
+  provider_reference?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  failure_reason?: string | null;
+  created_at: string;
+};
+
+export function WithdrawalsPanel({ canAct }: { canAct: boolean }) {
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const path =
+    statusFilter === "all"
+      ? "/withdrawals?limit=50"
+      : `/withdrawals?status=${encodeURIComponent(statusFilter)}&limit=50`;
+  const { data, loading, error, reload } = useAdminData<WithdrawalRow[]>(path);
+  const [action, setAction] = useState<
+    { id: string; type: "approve" | "reject" } | null
+  >(null);
+
+  async function approve(id: string, reason: string) {
+    await adminFetch(`/withdrawals/${id}/approve`, {
+      method: "POST",
+      body: { reason },
+    });
+    await reload();
+  }
+
+  async function reject(id: string, reason: string) {
+    await adminFetch(`/withdrawals/${id}/reject`, {
+      method: "POST",
+      body: { reason },
+    });
+    await reload();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          className="input w-auto text-sm"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="pending">Pendentes</option>
+          <option value="approved">Aprovados</option>
+          <option value="processing">Processando</option>
+          <option value="completed">Concluídos</option>
+          <option value="rejected">Rejeitados</option>
+          <option value="failed">Falhou</option>
+          <option value="all">Todos</option>
+        </select>
+        <button className="btn-secondary text-sm" onClick={reload}>
+          Atualizar
+        </button>
+      </div>
+
+      {loading ? (
+        <Loading />
+      ) : error ? (
+        <Failed message={error} />
+      ) : (
+        <AdminTable
+          headers={["ID", "Conta", "Valor", "PIX", "Status", "Solicitado", "Ações"]}
+        >
+          {(data || []).length === 0 ? (
+            <tr>
+              <td colSpan={7} className="px-5 py-8 text-center text-flux-muted">
+                Nenhum saque neste filtro.
+              </td>
+            </tr>
+          ) : (
+            (data || []).map((w) => (
+              <tr key={w.id}>
+                <td className="px-5 py-3 font-mono text-xs">{short(w.id)}</td>
+                <td className="px-5 py-3">
+                  <Link
+                    href={`/admin/organizations/${w.organization_id}`}
+                    className="hover:underline font-mono text-xs"
+                  >
+                    {short(w.organization_id)}
+                  </Link>
+                </td>
+                <td className="px-5 py-3">
+                  {formatCurrency(w.amount, w.currency || "BRL")}
+                </td>
+                <td className="px-5 py-3 text-xs">
+                  <span className="text-flux-muted">{w.pix_key_type || "—"}</span>
+                  <div className="font-mono">{w.pix_key_masked || "—"}</div>
+                </td>
+                <td className="px-5 py-3">
+                  <StatusBadge status={w.status} />
+                  {w.failure_reason && (
+                    <div className="text-xs text-red-300 mt-1 max-w-[160px] truncate" title={w.failure_reason}>
+                      {w.failure_reason}
+                    </div>
+                  )}
+                  {w.rejection_reason && (
+                    <div className="text-xs text-flux-muted mt-1 max-w-[160px] truncate" title={w.rejection_reason}>
+                      {w.rejection_reason}
+                    </div>
+                  )}
+                </td>
+                <td className="px-5 py-3 text-flux-muted text-xs">
+                  {formatDate(w.created_at)}
+                </td>
+                <td className="px-5 py-3">
+                  {canAct && w.status === "pending" && (
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        className="btn-primary text-xs"
+                        onClick={() => setAction({ id: w.id, type: "approve" })}
+                      >
+                        Aprovar
+                      </button>
+                      <button
+                        className="btn-secondary text-xs"
+                        onClick={() => setAction({ id: w.id, type: "reject" })}
+                      >
+                        Rejeitar
+                      </button>
+                    </div>
+                  )}
+                  {w.status !== "pending" && (
+                    <span className="text-xs text-flux-muted">—</span>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </AdminTable>
+      )}
+
+      {action?.type === "approve" && (
+        <ReasonDialog
+          title="Aprovar saque"
+          description="O valor será enviado via PIX pelo adquirente (NexusPag). Confirme a chave e o valor antes de continuar."
+          confirmLabel="Aprovar e enviar PIX"
+          onClose={() => setAction(null)}
+          onConfirm={(reason) => approve(action.id, reason)}
+        />
+      )}
+      {action?.type === "reject" && (
+        <ReasonDialog
+          title="Rejeitar saque"
+          description="O pedido será rejeitado e o saldo reservado será devolvido à carteira do lojista."
+          confirmLabel="Rejeitar saque"
+          onClose={() => setAction(null)}
+          onConfirm={(reason) => reject(action.id, reason)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function WebhooksPanel({ canAct: _canAct }: { canAct: boolean }) {
   const { data, loading, error, reload } = useAdminData<{ deliveries: unknown[]; provider_events: unknown[] }>("/webhooks");
   if (loading) return <Loading />;
