@@ -1,10 +1,16 @@
 import { createClient } from "./supabase/client";
 
 function getCookie(name: string): string | undefined {
-  return document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${name}=`))
-    ?.split("=")[1];
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${name}=`;
+  const row = document.cookie.split("; ").find((part) => part.startsWith(prefix));
+  if (!row) return undefined;
+  const raw = row.slice(prefix.length);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 /**
@@ -33,12 +39,16 @@ export async function dashboardFetch<T = unknown>(
   const environment = getCookie("fluxpay_env") || "test";
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
+  if (!orgId) {
+    throw new Error("Organizacao nao selecionada. Recarregue a pagina ou escolha a empresa.");
+  }
+
   const response = await fetch(`${apiUrl}/dashboard-api${path}`, {
     method: options.method || "GET",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
-      "X-Organization-Id": orgId || "",
+      "X-Organization-Id": orgId,
       "X-Environment": environment,
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -47,7 +57,11 @@ export async function dashboardFetch<T = unknown>(
   const json = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(json?.error?.message || `Erro ${response.status} ao chamar ${path}`);
+    const message =
+      json?.error?.message ||
+      (typeof json?.message === "string" ? json.message : null) ||
+      `Erro ${response.status} ao chamar ${path}`;
+    throw new Error(message);
   }
 
   return json as T;
