@@ -20,25 +20,21 @@ export interface WithdrawalRequest {
   organization_id: string;
   environment: Environment;
   amount: number;
-  fee_amount: number;
-  net_amount: number;
+  fee: number;
+  net: number;
   currency: string;
   pix_key: string;
   pix_key_type: PixKeyType;
   status: WithdrawalStatus;
   requested_by: string | null;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
   rejection_reason: string | null;
-  review_note: string | null;
-  correlation_id: string | null;
-  provider: string | null;
-  provider_withdrawal_id: string | null;
-  provider_response: unknown;
-  provider_status: string | null;
+  failed_at: string | null;
+  provider_reference: string | null;
   failure_reason: string | null;
   balance_transaction_id: string | null;
-  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -206,38 +202,35 @@ export async function requestWithdrawal(params: {
     organization_id: params.organizationId,
     environment: params.environment,
     amount: params.amountCents,
-    fee_amount: feeAmount,
-    net_amount: netAmount,
+    fee: feeAmount,
+    net: netAmount,
     currency: "BRL",
     pix_key: params.pixKey.trim(),
     pix_key_type: params.pixKeyType,
     status: "pending" as const,
     correlation_id: correlationId,
     balance_transaction_id: ledger.id,
-    metadata: {},
   };
+
+  // A tabela de producao usa o schema consolidado (fee/net e correlation_id UUID).
+  // requested_by e NOT NULL, portanto o usuario deve existir em public.users.
+  const { data: publicUser, error: publicUserError } = await supabaseAdmin
+    .from("users")
+    .select("id")
+    .eq("id", params.userId)
+    .maybeSingle();
+
+  if (publicUserError || !publicUser) {
+    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
+    console.error("[withdrawals] requested_by user lookup failed:", publicUserError);
+    throw new AppError(500, "api_error", "Usuario do saque nao encontrado no cadastro da plataforma.");
+  }
 
   let { data: row, error: insertError } = await supabaseAdmin
     .from("withdrawal_requests")
     .insert({ ...baseRow, requested_by: params.userId })
     .select("*")
     .single();
-
-  // FK 23503 em requested_by: usuario existe no Auth mas pode faltar em public.users.
-  // O pedido de saque nao deve depender disso — grava sem o vinculo.
-  if (insertError?.code === "23503") {
-    console.warn(
-      "[withdrawals] requested_by FK failed, retrying without user link:",
-      insertError.message
-    );
-    const retry = await supabaseAdmin
-      .from("withdrawal_requests")
-      .insert({ ...baseRow, requested_by: null })
-      .select("*")
-      .single();
-    row = retry.data;
-    insertError = retry.error;
-  }
 
   if (insertError) {
     await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
@@ -372,7 +365,7 @@ export async function rejectWithdrawal(params: {
     type: "adjustment",
     amount: w.amount,
     currency: w.currency,
-    net: w.net_amount,
+    net: w.net,
     fee: 0,
     description: `Estorno de saque rejeitado (${w.id.slice(0, 8)})`,
     available_on: new Date().toISOString(),
@@ -382,9 +375,8 @@ export async function rejectWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: "rejected",
-      reviewed_by: params.adminUserId,
-      reviewed_at: new Date().toISOString(),
       rejection_reason: params.reason,
+      rejected_at: new Date().toISOString(),
     })
     .eq("id", w.id)
     .eq("status", "pending")
@@ -423,9 +415,8 @@ export async function approveAndExecuteWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: "approved",
-      reviewed_by: params.adminUserId,
-      reviewed_at: new Date().toISOString(),
-      review_note: params.note || null,
+      approved_by: params.adminUserId,
+      approved_at: new Date().toISOString(),
     })
     .eq("id", w.id)
     .in("status", ["pending", "approved"]);
@@ -433,7 +424,7 @@ export async function approveAndExecuteWithdrawal(params: {
   let providerResult;
   try {
     providerResult = await createNexusPagWithdrawal({
-      amountCents: w.net_amount,
+      amountCents: w.net,
       pixKey: w.pix_key,
       pixKeyType: w.pix_key_type as PixKeyType,
     });
@@ -446,9 +437,8 @@ export async function approveAndExecuteWithdrawal(params: {
       .from("withdrawal_requests")
       .update({
         status: terminal ? "failed" : "processing",
-        provider: "nexuspag",
         failure_reason: failureReason,
-        provider_response: { error: failureReason, code: e.code, status: e.status },
+        failed_at: terminal ? new Date().toISOString() : null,
       })
       .eq("id", w.id);
 
@@ -467,12 +457,10 @@ export async function approveAndExecuteWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider: "nexuspag",
-      provider_withdrawal_id: providerResult.providerWithdrawalId,
-      provider_status: providerResult.status,
-      provider_response: providerResult.rawResponse,
-      fee_amount: providerResult.feeCents,
+      provider_reference: providerResult.providerWithdrawalId,
+      fee: providerResult.feeCents,
       failure_reason: null,
+      failed_at: null,
     })
     .eq("id", w.id)
     .select("*")
@@ -494,8 +482,8 @@ export function publicWithdrawalView(w: WithdrawalRequest) {
   return {
     id: w.id,
     amount: w.amount,
-    fee_amount: w.fee_amount,
-    net_amount: w.net_amount,
+    fee_amount: w.fee,
+    net_amount: w.net,
     currency: w.currency,
     pix_key_masked: maskPixKey(w.pix_key, w.pix_key_type as PixKeyType),
     pix_key_type: w.pix_key_type,
@@ -505,6 +493,6 @@ export function publicWithdrawalView(w: WithdrawalRequest) {
     correlation_id: w.correlation_id,
     created_at: w.created_at,
     updated_at: w.updated_at,
-    reviewed_at: w.reviewed_at,
+    reviewed_at: w.approved_at,
   };
 }
