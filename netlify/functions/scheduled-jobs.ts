@@ -8,7 +8,7 @@ import {
 /**
  * Job de manutencao periodica.
  * Cron desligado no plano Free (Scheduled Functions = Pro).
- * Reative com: export const config = { schedule: "*/10 * * * *" };
+ * Reative com: export const config = { schedule: "*\/10 * * * *" };
  */
 export default async () => {
   const events = await reprocessUnmatchedProviderEvents().catch((err) => {
