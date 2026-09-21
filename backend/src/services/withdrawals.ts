@@ -43,7 +43,7 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
-const MIN_WITHDRAWAL_CENTS = 1000;
+const MIN_WITHDRAWAL_CENTS = 600;
 
 function maskPixKey(key: string, type: PixKeyType): string {
   if (type === "email") {
