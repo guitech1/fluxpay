@@ -1,7 +1,6 @@
 /**
  * Tipos das linhas do banco que o painel realmente le.
- * Espelham as migrations 001–010 (nao sao gerados automaticamente: o objetivo
- * aqui e ser explicito sobre o subconjunto de colunas que a UI usa).
+ * Espelham as migrations 001–010 + KYC (nao sao gerados automaticamente).
  */
 
 export type Environment = "test" | "live";
@@ -17,6 +16,8 @@ export type PaymentStatus =
   | "expired";
 
 export type OrgRole = "owner" | "admin" | "developer" | "viewer";
+
+export type OrgKycStatus = "none" | "pending" | "verified" | "rejected";
 
 export interface Organization {
   id: string;
@@ -34,6 +35,12 @@ export interface Organization {
   status_reason: string | null;
   status_changed_at: string | null;
   created_at: string;
+  kyc_required?: boolean;
+  kyc_status?: OrgKycStatus;
+  kyc_verified_at?: string | null;
+  kyc_document_type?: string | null;
+  kyc_document_masked?: string | null;
+  kyc_rejection_reason?: string | null;
 }
 
 export interface Payment {
@@ -46,9 +53,6 @@ export interface Payment {
   payment_type: string | null;
   provider: string | null;
   provider_txid: string | null;
-  // Referencia que o proprio lojista informa na criacao da cobranca
-  // (idempotency_key) — coluna real desde a migration 006. So a pagina de
-  // detalhe (payments/[id]) seleciona e exibe esse campo por enquanto.
   provider_external_id: string | null;
   fee_amount: number | null;
   net_amount: number | null;
