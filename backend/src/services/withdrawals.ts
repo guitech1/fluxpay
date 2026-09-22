@@ -40,7 +40,7 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
-const MIN_WITHDRAWAL_CENTS = 300;
+const MIN_WITHDRAWAL_CENTS = 1000;
 
 function maskPixKey(key: string, type: PixKeyType): string {
   if (type === "email") {
@@ -142,6 +142,24 @@ export async function requestWithdrawal(params: {
   pixKeyType: PixKeyType;
   correlationId?: string;
 }): Promise<WithdrawalRequest> {
+  const { data: organization, error: organizationError } = await supabaseAdmin
+    .from("organizations")
+    .select("kyc_required, kyc_status")
+    .eq("id", params.organizationId)
+    .maybeSingle();
+
+  if (organizationError) throw organizationError;
+  if (!organization) {
+    throw new AppError(404, "not_found", "Organizacao nao encontrada.");
+  }
+  if (organization.kyc_required && organization.kyc_status !== "verified") {
+    throw new AppError(
+      403,
+      "kyc_required",
+      "Verifique sua identidade antes de solicitar um saque."
+    );
+  }
+
   if (params.environment !== "live") {
     throw new AppError(
       400,
