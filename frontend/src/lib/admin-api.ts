@@ -1,6 +1,7 @@
 import { createClient } from "./supabase/client";
 
 function getCookie(name: string): string | undefined {
+  if (typeof document === "undefined") return undefined;
   return document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`))
@@ -27,17 +28,29 @@ export async function adminFetch<T = unknown>(
   if (!session) throw new Error("Sessão expirada. Faça login novamente.");
 
   const environment = getCookie("fluxpay_env") || "test";
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+  // Em producao fica vazio de proposito (mesmo host do painel via redirects Netlify).
+  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  const url = `${apiUrl}/admin-api${path.startsWith("/") ? path : `/${path}`}`;
 
-  const response = await fetch(`${apiUrl}/admin-api${path}`, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-      "X-Environment": environment,
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+        "X-Environment": environment,
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    throw new Error(
+      `Falha de rede ao chamar ${url}. ` +
+        (apiUrl
+          ? `NEXT_PUBLIC_API_URL=${apiUrl} pode estar errada ou bloqueada por CORS.`
+          : "Confirme que /admin-api responde no mesmo dominio do painel.")
+    );
+  }
 
   const json = await response.json().catch(() => null);
 

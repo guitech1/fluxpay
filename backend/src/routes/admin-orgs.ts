@@ -62,22 +62,32 @@ router.get("/organizations", async (req, res, next) => {
     const search = sanitizeSearch(req.query.search as string | undefined);
     const status = req.query.status as string | undefined;
 
-    let query = supabaseAdmin
-      .from("organizations")
-      .select(
-        "id, name, slug, legal_name, document, email, country, status, status_reason, status_changed_at, kyc_required, kyc_status, kyc_verified_at, kyc_document_masked, kyc_rejection_reason, created_at"
-      )
-      .order("created_at", { ascending: false })
-      .limit(200);
+    const baseSelect =
+      "id, name, slug, legal_name, document, email, country, status, status_reason, status_changed_at, created_at";
+    const kycSelect =
+      baseSelect +
+      ", kyc_required, kyc_status, kyc_verified_at, kyc_document_masked, kyc_rejection_reason";
 
-    if (status && status !== "all") query = query.eq("status", status);
-    if (search) {
-      query = query.or(
-        `name.ilike.%${search}%,slug.ilike.%${search}%,email.ilike.%${search}%,document.ilike.%${search}%`
-      );
+    async function runList(selectCols: string) {
+      let query = supabaseAdmin
+        .from("organizations")
+        .select(selectCols)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (status && status !== "all") query = query.eq("status", status);
+      if (search) {
+        query = query.or(
+          `name.ilike.%${search}%,slug.ilike.%${search}%,email.ilike.%${search}%,document.ilike.%${search}%`
+        );
+      }
+      return query;
     }
 
-    const { data, error } = await query;
+    let { data, error } = await runList(kycSelect);
+    if (error && /kyc_/i.test(error.message || "")) {
+      console.warn("[admin] organizations list sem colunas KYC:", error.message);
+      ({ data, error } = await runList(baseSelect));
+    }
     if (error) throw error;
 
     res.json({ data: data || [] });
@@ -91,13 +101,26 @@ router.get("/organizations/:id", async (req, res, next) => {
     const environment = req.platformAdmin!.environment;
     const orgId = req.params.id;
 
-    const { data: organization, error } = await supabaseAdmin
+    const detailBase =
+      "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, created_at";
+    const detailKyc =
+      detailBase +
+      ", kyc_required, kyc_status, kyc_verified_at, kyc_document_type, kyc_document_masked, kyc_rejection_reason";
+
+    let { data: organization, error } = await supabaseAdmin
       .from("organizations")
-      .select(
-        "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, kyc_required, kyc_status, kyc_verified_at, kyc_document_type, kyc_document_masked, kyc_rejection_reason, created_at"
-      )
+      .select(detailKyc)
       .eq("id", orgId)
       .maybeSingle();
+
+    if (error && /kyc_/i.test(error.message || "")) {
+      console.warn("[admin] organization detail sem colunas KYC:", error.message);
+      ({ data: organization, error } = await supabaseAdmin
+        .from("organizations")
+        .select(detailBase)
+        .eq("id", orgId)
+        .maybeSingle());
+    }
 
     if (error) throw error;
     if (!organization) {
