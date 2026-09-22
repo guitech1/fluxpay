@@ -108,6 +108,26 @@ export async function getKycStatus(organizationId: string) {
   const organization = await getOrganization(organizationId);
   let verification = await getLatestVerification(organizationId);
 
+  if (verification?.status === "pending" && verification.provider_verification_id) {
+    try {
+      const provider = await getKycVerification(verification.provider_verification_id);
+      const providerStatus = String(provider.status || "").toLowerCase();
+      if (providerStatus === "approved" || providerStatus === "rejected") {
+        await syncKycFromProvider({
+          providerVerificationId: provider.id,
+          externalId: provider.external_id ?? null,
+          eventStatus: providerStatus === "approved" ? "approved" : "rejected",
+          rejectionReason: provider.rejection_reason ?? null,
+          payerName: provider.payer_name ?? null,
+          providerResponse: provider,
+        });
+        return getKycStatus(organizationId);
+      }
+    } catch (error) {
+      console.warn("[kyc] provider status poll failed:", error);
+    }
+  }
+
   if (verification?.status === "pending" && verification.expires_at && new Date(verification.expires_at).getTime() <= Date.now()) {
     await supabaseAdmin
       .from("kyc_verifications")
