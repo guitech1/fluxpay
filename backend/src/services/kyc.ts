@@ -331,12 +331,28 @@ export async function adminResetKyc(params: {
   adminUserId: string;
   reason: string;
 }) {
+  const now = new Date().toISOString();
+  const latest = await getLatestVerification(params.organizationId);
+
+  if (latest?.id) {
+    await supabaseAdmin
+      .from("kyc_verifications")
+      .update({
+        status: "expired",
+        reviewed_by: params.adminUserId,
+        reviewed_at: now,
+        review_note: params.reason,
+        updated_at: now,
+      })
+      .eq("id", latest.id);
+  }
+
   await supabaseAdmin
     .from("organizations")
     .update({
       kyc_status: "none",
       kyc_verified_at: null,
-      kyc_rejection_reason: params.reason,
+      kyc_rejection_reason: null,
       kyc_document_type: null,
       kyc_document_masked: null,
     })
