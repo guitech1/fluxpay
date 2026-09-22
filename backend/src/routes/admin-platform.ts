@@ -54,16 +54,16 @@ router.post(
   async (req, res, next) => {
     try {
       const body = z.object({ reason: reasonSchema }).parse(req.body);
-      const result = await retryDeliveryById(req.params.id);
+      await retryDeliveryById(req.params.id);
       await logAdminAction(req, {
         action: "webhook.delivery.retry",
         targetType: "webhook_delivery",
         targetId: req.params.id,
         targetLabel: req.params.id,
         reason: body.reason,
-        stateAfter: result as Record<string, unknown>,
+        stateAfter: { retried: true, delivery_id: req.params.id },
       });
-      res.json({ data: result });
+      res.json({ data: { id: req.params.id, retried: true } });
     } catch (err) {
       next(err);
     }
