@@ -35,6 +35,11 @@ interface OrgDetail {
     status_reason: string | null;
     status_changed_at: string | null;
     created_at: string;
+    kyc_required?: boolean;
+    kyc_status?: string;
+    kyc_verified_at?: string | null;
+    kyc_document_masked?: string | null;
+    kyc_rejection_reason?: string | null;
   };
   members: { id: string; role: string; created_at: string; users?: { email: string } | null }[];
   payments: {
@@ -65,9 +70,24 @@ interface OrgDetail {
   }[];
 }
 
+function kycLabel(status?: string) {
+  switch (status) {
+    case "verified":
+      return "Verificado";
+    case "pending":
+      return "Pendente";
+    case "rejected":
+      return "Rejeitado";
+    default:
+      return "Não iniciado";
+  }
+}
+
 export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: boolean }) {
   const { data, loading, error, reload } = useAdminData<OrgDetail>(`/organizations/${id}`);
   const [action, setAction] = useState<(typeof ACTIONS)[number] | null>(null);
+  const [kycBusy, setKycBusy] = useState(false);
+  const [kycError, setKycError] = useState<string | null>(null);
 
   if (loading) return <Loading />;
   if (error) return <Failed message={error} />;
@@ -81,6 +101,19 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
       body: { status, reason },
     });
     reload();
+  }
+
+  async function postKyc(body: Record<string, unknown>) {
+    setKycBusy(true);
+    setKycError(null);
+    try {
+      await adminFetch(`/organizations/${id}/kyc`, { method: "POST", body });
+      reload();
+    } catch (err) {
+      setKycError(err instanceof Error ? err.message : "Falha ao atualizar KYC.");
+    } finally {
+      setKycBusy(false);
+    }
   }
 
   return (
@@ -109,6 +142,81 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
                 {a.label}
               </button>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-medium">Verificação de identidade (KYC)</h2>
+            <p className="text-sm text-flux-muted mt-1">
+              Quando exigido, o lojista não acessa o painel até verificar (PIX R$ 2 ou aprovação
+              manual).
+            </p>
+          </div>
+          <span className="text-sm">
+            Status: <strong>{kycLabel(org.kyc_status)}</strong>
+            {org.kyc_document_masked ? ` · ${org.kyc_document_masked}` : ""}
+          </span>
+        </div>
+        {org.kyc_rejection_reason && (
+          <p className="text-sm text-amber-200/90">Motivo: {org.kyc_rejection_reason}</p>
+        )}
+        {kycError && <p className="text-sm text-red-300">{kycError}</p>}
+        {canAct && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={kycBusy}
+              onClick={() =>
+                postKyc({
+                  kyc_required: !org.kyc_required,
+                  reason: org.kyc_required
+                    ? "Remover exigencia de KYC pela ficha da conta"
+                    : "Exigir KYC pela ficha da conta",
+                })
+              }
+            >
+              {org.kyc_required ? "Deixar de exigir KYC" : "Exigir KYC"}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={kycBusy || org.kyc_status === "verified"}
+              onClick={() =>
+                postKyc({ action: "approve", note: "Aprovacao manual pelo ADM" })
+              }
+            >
+              Aprovar KYC
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={kycBusy}
+              onClick={() => {
+                const reason = window.prompt("Motivo da rejeição (mín. 5 caracteres)");
+                if (reason && reason.trim().length >= 5) {
+                  postKyc({ action: "reject", reason: reason.trim() });
+                }
+              }}
+            >
+              Rejeitar
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={kycBusy}
+              onClick={() => {
+                const reason = window.prompt("Motivo para pedir verificação de novo");
+                if (reason && reason.trim().length >= 5) {
+                  postKyc({ action: "reset", reason: reason.trim() });
+                }
+              }}
+            >
+              Pedir de novo
+            </button>
           </div>
         )}
       </div>
