@@ -7,7 +7,9 @@ import type { PaymentProvider, PaymentStatus, RefundStatus, PixDetails } from ".
  *   POST /api/pix/create   — cria a cobranca PIX (resposta aninhada em "transaction")
  *   GET  /api/pix/{id}     — consulta status (resposta PLANA, sem "transaction")
  *   POST /api/withdrawals  — saque da carteira PRINCIPAL (dona da API key)
- *   POST <webhook_url>     — notificacao "payment.confirmed" quando o PIX e pago
+ *   POST /api/kyc/verify   — verificacao KYC (PIX R$ 2 travado no CPF/CNPJ)
+ *   GET  /api/kyc/verify/{id}
+ *   POST <webhook_url>     — payment.confirmed | kyc.verified | kyc.rejected
  *
  * O saque da carteira principal so deve ser chamado apos aprovacao administrativa
  * de um pedido de lojista (services/withdrawals.ts). Nunca no pedido direto.
@@ -294,4 +296,110 @@ export async function createNexusPagWithdrawal(params: {
       typeof data.new_balance === "number" ? reaisToCents(data.new_balance) : undefined,
     rawResponse: data,
   };
+}
+
+// ---------------------------------------------------------------------------
+// KYC — POST /api/kyc/verify + GET /api/kyc/verify/{id}
+// ---------------------------------------------------------------------------
+
+export interface NexusPagKycResult {
+  id: string;
+  externalId: string | null;
+  status: "pending" | "approved" | "rejected" | "expired" | string;
+  documentType: string;
+  documentNumberMasked: string;
+  amountCents: number;
+  qrCode: string;
+  qrCodeImage: string;
+  expiresAt: string | null;
+  verifiedAt: string | null;
+  rejectionReason: string | null;
+  payerName: string | null;
+  rawResponse?: unknown;
+}
+
+interface NexusPagKycResponse {
+  success?: boolean;
+  verification?: {
+    id: string;
+    external_id?: string | null;
+    status: string;
+    document_type?: string;
+    document_number?: string;
+    amount?: number;
+    qr_code?: string;
+    qr_code_image?: string;
+    expires_at?: string | null;
+    verified_at?: string | null;
+    paid_at?: string | null;
+    rejection_reason?: string | null;
+    payer_name?: string | null;
+  };
+}
+
+function mapKyc(data: NonNullable<NexusPagKycResponse["verification"]>): NexusPagKycResult {
+  return {
+    id: data.id,
+    externalId: data.external_id ?? null,
+    status: data.status,
+    documentType: data.document_type || "",
+    documentNumberMasked: data.document_number || "",
+    amountCents: reaisToCents(data.amount ?? 2),
+    qrCode: data.qr_code || "",
+    qrCodeImage: data.qr_code_image || "",
+    expiresAt: data.expires_at ?? null,
+    verifiedAt: data.verified_at ?? data.paid_at ?? null,
+    rejectionReason: data.rejection_reason ?? null,
+    payerName: data.payer_name ?? null,
+  };
+}
+
+export async function createNexusPagKycVerification(params: {
+  document: string;
+  documentType: "CPF" | "CNPJ";
+  externalId?: string;
+  webhookUrl?: string;
+}): Promise<NexusPagKycResult> {
+  const body: Record<string, unknown> = {
+    document: params.document,
+    document_type: params.documentType,
+  };
+  if (params.externalId) body.external_id = params.externalId;
+  if (params.webhookUrl) body.webhook_url = params.webhookUrl;
+
+  const response = await fetch(`${NEXUSPAG_BASE_URL}/api/kyc/verify`, {
+    method: "POST",
+    headers: {
+      "x-api-key": getApiKey(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = (await response.json().catch(() => null)) as NexusPagKycResponse | null;
+
+  if (!response.ok || !data?.success || !data.verification) {
+    throw new Error(
+      `NexusPag recusou KYC (HTTP ${response.status}): ${JSON.stringify(data)}`
+    );
+  }
+
+  return { ...mapKyc(data.verification), rawResponse: data };
+}
+
+export async function getNexusPagKycVerification(id: string): Promise<NexusPagKycResult> {
+  const response = await fetch(
+    `${NEXUSPAG_BASE_URL}/api/kyc/verify/${encodeURIComponent(id)}`,
+    { headers: { "x-api-key": getApiKey() } }
+  );
+
+  const data = (await response.json().catch(() => null)) as NexusPagKycResponse | null;
+
+  if (!response.ok || !data?.success || !data.verification) {
+    throw new Error(
+      `Falha ao consultar KYC na NexusPag (HTTP ${response.status}): ${JSON.stringify(data)}`
+    );
+  }
+
+  return { ...mapKyc(data.verification), rawResponse: data };
 }

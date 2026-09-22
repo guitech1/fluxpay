@@ -16,7 +16,7 @@ router.use(sessionAuth);
 router.post("/", requireRole("owner", "admin"), async (req, res, next) => {
   try {
     const schema = z.object({
-      amount: z.number().int().min(300, "Valor minimo de saque: R$ 3,00."),
+      amount: z.number().int().min(1000, "Valor minimo de saque: R$ 10,00."),
       pix_key: z.string().min(1).max(500),
       pix_key_type: z.enum(["cpf", "cnpj", "email", "phone", "random", "qrc"]),
       correlation_id: z.string().min(1).max(120).optional(),
