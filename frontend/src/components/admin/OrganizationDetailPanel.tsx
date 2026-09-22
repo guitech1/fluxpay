@@ -67,13 +67,30 @@ interface OrgDetail {
 
 export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: boolean }) {
   const { data, loading, error, reload } = useAdminData<OrgDetail>(`/organizations/${id}`);
-  const [action, setAction] = useState<(typeof ACTIONS)[number] | null>(null);
+  const [action, setAction] = useState<(typeof ACTIONS)[number] | null>(null);\n  const [kycAction, setKycAction] = useState<"approve" | "reject" | "reset" | null>(null);
 
   if (loading) return <Loading />;
   if (error) return <Failed message={error} />;
   if (!data) return null;
 
   const org = data.organization;
+
+  async function changeKyc(actionName: "approve" | "reject" | "reset", reason: string) {
+    await adminFetch(`/organizations/${id}/kyc`, {
+      method: "POST",
+      body: { action: actionName, reason },
+    });
+    setKycAction(null);
+    reload();
+  }
+
+  async function toggleKyc(required: boolean) {
+    await adminFetch(`/organizations/${id}/kyc`, {
+      method: "POST",
+      body: { kyc_required: required },
+    });
+    reload();
+  }
 
   async function changeStatus(status: string, reason: string) {
     await adminFetch(`/organizations/${id}/status`, {
@@ -177,6 +194,22 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
           ))}
         </AdminTable>
       </div>
+
+      {kycAction && (
+        <ReasonDialog
+          title={kycAction === "approve" ? "Aprovar KYC" : kycAction === "reject" ? "Rejeitar KYC" : "Pedir nova verificação"}
+          description={
+            kycAction === "approve"
+              ? "Aprovação manual da verificação desta organização."
+              : kycAction === "reject"
+                ? "Informe o motivo da rejeição."
+                : "A verificação atual será resetada para permitir uma nova tentativa."
+          }
+          confirmLabel={kycAction === "approve" ? "Aprovar" : kycAction === "reject" ? "Rejeitar" : "Pedir de novo"}
+          onConfirm={(reason) => changeKyc(kycAction, reason)}
+          onClose={() => setKycAction(null)}
+        />
+      )}
 
       {action && (
         <ReasonDialog
