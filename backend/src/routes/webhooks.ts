@@ -194,7 +194,7 @@ router.post("/nexuspag", async (req, res, next) => {
         throw eventError;
       }
 
-      const rejected = normalizedEvent.includes("rejected") || normalizedEvent.includes("failed");
+      const rejected = normalizedEvent.includes("rejected") || normalizedEvent.includes("failed") || providerStatus === "rejected";
       const result = await syncKycFromProvider({
         providerVerificationId: providerVerificationId || externalId!,
         eventStatus: rejected ? "rejected" : "approved",
