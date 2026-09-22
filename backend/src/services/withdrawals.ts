@@ -40,7 +40,7 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
-const MIN_WITHDRAWAL_CENTS = 300;
+const MIN_WITHDRAWAL_CENTS = 1000;
 
 function maskPixKey(key: string, type: PixKeyType): string {
   if (type === "email") {
@@ -99,7 +99,6 @@ function mapWithdrawalInsertError(err: {
   const code = err.code || "";
   const msg = `${err.message || ""} ${err.details || ""}`;
 
-  // Tabela inexistente (migration 015 nao aplicada)
   if (
     code === "42P01" ||
     code === "PGRST205" ||
@@ -112,7 +111,6 @@ function mapWithdrawalInsertError(err: {
     );
   }
 
-  // FK violada (ex.: requested_by nao existe em public.users)
   if (code === "23503") {
     return new AppError(
       500,
@@ -121,7 +119,6 @@ function mapWithdrawalInsertError(err: {
     );
   }
 
-  // CHECK / constraint
   if (code === "23514") {
     return new AppError(
       400,
@@ -159,6 +156,21 @@ export async function requestWithdrawal(params: {
   }
 
   assertPixKey(params.pixKeyType, params.pixKey);
+
+  // Gate KYC: se a conta exige e nao esta verified, bloqueia saque
+  const { data: orgKyc } = await supabaseAdmin
+    .from("organizations")
+    .select("kyc_required, kyc_status")
+    .eq("id", params.organizationId)
+    .maybeSingle();
+
+  if (orgKyc?.kyc_required && orgKyc.kyc_status !== "verified") {
+    throw new AppError(
+      403,
+      "kyc_required",
+      "Complete a verificacao de identidade antes de solicitar saques."
+    );
+  }
 
   const balance = await getBalance(params.organizationId, params.environment);
   const brl = balance.available.find((b) => b.currency === "BRL");
@@ -213,8 +225,6 @@ export async function requestWithdrawal(params: {
     balance_transaction_id: ledger.id,
   };
 
-  // A tabela de producao usa o schema consolidado (fee/net e correlation_id UUID).
-  // requested_by e NOT NULL, portanto o usuario deve existir em public.users.
   const { data: publicUser, error: publicUserError } = await supabaseAdmin
     .from("users")
     .select("id")
