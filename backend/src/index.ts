@@ -19,6 +19,7 @@ import withdrawalsDashboardRouter from "./routes/withdrawals-dashboard.js";
 import withdrawalsAdminRouter from "./routes/withdrawals-admin.js";
 import adminBalanceReleaseRouter from "./routes/admin-balance-release.js";
 import kycDashboardRouter from "./routes/kyc-dashboard.js";
+import adminKycRouter from "./routes/admin-kyc.js";
 
 const app = express();
 
@@ -85,6 +86,7 @@ app.use("/dashboard-api/kyc", kycDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
+app.use("/admin-api", adminKycRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 
 app.use(notFoundHandler);
