@@ -16,7 +16,7 @@ const KEY_TYPES: { value: PixKeyType; label: string }[] = [
   { value: "qrc", label: "PIX copia e cola" },
 ];
 
-const MIN_WITHDRAWAL_CENTS = 300;
+const MIN_WITHDRAWAL_CENTS = 1000;
 
 /** "1.234,56" / "1234,56" / "1234.56" -> centavos. Mesmo padrão de NewPaymentForm. */
 function parseAmountToCents(value: string): number | null {
@@ -70,6 +70,19 @@ export function WithdrawForm({
     );
   }
 
+  if (kycRequired && !kycVerified) {
+    return (
+      <div className="card bg-amber-500/5 border-amber-500/20">
+        <p className="text-sm text-amber-100">
+          Sua organização exige verificação de identidade para liberar saques.
+        </p>
+        <a href="/verificar-identidade" className="btn-primary inline-flex mt-3">
+          Verificar identidade
+        </a>
+      </div>
+    );
+  }
+
   if (!canWithdraw) {
     return (
       <div className="card bg-amber-500/5 border-amber-500/20">
@@ -88,7 +101,7 @@ export function WithdrawForm({
 
     const cents = parseAmountToCents(amountReais);
     if (cents === null || cents < MIN_WITHDRAWAL_CENTS) {
-      setError("Informe um valor de no mínimo R$ 3,00.");
+      setError("Informe um valor de no mínimo R$ 10,00.");
       return;
     }
     if (cents > availableCents) {
@@ -148,7 +161,7 @@ export function WithdrawForm({
             inputMode="decimal"
             autoComplete="off"
             className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
-            placeholder="3,00"
+            placeholder="10,00"
             value={amountReais}
             onChange={(e) => setAmountReais(e.target.value)}
             disabled={loading}
@@ -197,7 +210,7 @@ export function WithdrawForm({
 
       {belowMinimum && !error && !success && (
         <p className="text-xs text-flux-muted">
-          Saldo mínimo para saque: R$ 3,00.
+          Saldo mínimo para saque: R$ 10,00.
         </p>
       )}
 
