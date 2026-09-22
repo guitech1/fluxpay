@@ -18,10 +18,42 @@ import {
 } from "../services/customers.js";
 import { AppError } from "../middleware/error.js";
 import { inScopeOrNull } from "../utils/scope.js";
+import { getKycStatus, startKycVerification } from "../services/kyc.js";
 
 const router = Router();
 
+
 router.use(sessionAuth);
+
+router.post("/kyc/start", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = z.object({
+      document: z.string().min(1).max(30),
+      document_type: z.enum(["CPF", "CNPJ"]),
+    }).parse(req.body);
+
+    const result = await startKycVerification({
+      organizationId: req.dashboardAuth!.organizationId,
+      userId: req.dashboardAuth!.userId,
+      document: body.document,
+      documentType: body.document_type,
+    });
+
+    res.status(201).json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/kyc/status", async (req, res, next) => {
+  try {
+    const status = await getKycStatus(req.dashboardAuth!.organizationId);
+    res.json({ data: status });
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 // ============================================================
 // API KEYS
