@@ -82,7 +82,7 @@ export async function getKycStatus(organizationId: string) {
     await supabaseAdmin
       .from("kyc_verifications")
       .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("id", verification.id)
+      .eq("id", matchedVerification.id)
       .eq("status", "pending");
     if (organization.kyc_status === "pending") {
       await supabaseAdmin
@@ -202,10 +202,21 @@ export async function syncKycFromProvider(params: {
     .maybeSingle();
 
   if (error) throw error;
-  if (!verification) return { matched: false };
+  let matchedVerification = verification;
+  if (!matchedVerification && params.externalId) {
+    const { data: byExternal, error: externalError } = await supabaseAdmin
+      .from("kyc_verifications")
+      .select("id, organization_id, status, document_type, document_masked, provider_verification_id, external_id")
+      .eq("provider", "nexuspag")
+      .eq("external_id", params.externalId)
+      .maybeSingle();
+    if (externalError) throw externalError;
+    matchedVerification = byExternal;
+  }
+  if (!matchedVerification) return { matched: false, organizationId: null };
 
   const finalStatus = params.eventStatus;
-  if (verification.status === finalStatus) return { matched: true, duplicate: true };
+  if (matchedVerification.status === finalStatus) return { matched: true, duplicate: true, organizationId: matchedVerification.organization_id };
 
   const now = new Date().toISOString();
   const { data: updated, error: updateError } = await supabaseAdmin
@@ -219,7 +230,7 @@ export async function syncKycFromProvider(params: {
       provider_response: params.providerResponse,
       updated_at: now,
     })
-    .eq("id", verification.id)
+    .eq("id", matchedVerification.id)
     .neq("status", finalStatus)
     .select("id, organization_id, status, document_type, document_masked, rejection_reason, verified_at, approved_via")
     .maybeSingle();
@@ -231,13 +242,13 @@ export async function syncKycFromProvider(params: {
     .update({
       kyc_status: finalStatus === "approved" ? "verified" : "rejected",
       kyc_verified_at: finalStatus === "approved" ? now : null,
-      kyc_document_type: verification.document_type,
-      kyc_document_masked: verification.document_masked,
+      kyc_document_type: matchedVerification.document_type,
+      kyc_document_masked: matchedVerification.document_masked,
       kyc_rejection_reason: finalStatus === "rejected" ? (params.rejectionReason ?? null) : null,
     })
-    .eq("id", verification.organization_id);
+    .eq("id", matchedVerification.organization_id);
 
-  return { matched: true, duplicate: !updated };
+  return { matched: true, duplicate: !updated, organizationId: matchedVerification.organization_id };
 }
 
 export async function updateKycByAdmin(params: {
@@ -282,7 +293,7 @@ export async function updateKycByAdmin(params: {
           reviewed_at: now,
           updated_at: now,
         })
-        .eq("id", verification.id);
+        .eq("id", matchedVerification.id);
     }
     const { data, error } = await supabaseAdmin
       .from("organizations")
@@ -317,15 +328,15 @@ export async function updateKycByAdmin(params: {
       rejection_reason: params.action === "reject" ? (params.reason ?? "Rejeitado pelo administrador.") : null,
       updated_at: now,
     })
-    .eq("id", verification.id);
+    .eq("id", matchedVerification.id);
 
   const { data, error } = await supabaseAdmin
     .from("organizations")
     .update({
       kyc_status: params.action === "approve" ? "verified" : "rejected",
       kyc_verified_at: params.action === "approve" ? now : null,
-      kyc_document_type: verification.document_type,
-      kyc_document_masked: verification.document_masked,
+      kyc_document_type: matchedVerification.document_type,
+      kyc_document_masked: matchedVerification.document_masked,
       kyc_rejection_reason: params.action === "reject" ? (params.reason ?? "Rejeitado pelo administrador.") : null,
     })
     .eq("id", params.organizationId)
