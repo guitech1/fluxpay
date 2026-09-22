@@ -81,7 +81,6 @@ export async function startKycVerification(params: {
   const documentMasked = maskDocument(documentNumber);
   const externalId = `kyc-${params.organizationId}-${documentNumber.slice(-4)}-${uuidv4().slice(0, 8)}`;
 
-  // Reaproveita pendente ainda valida (QR nao expirado)
   const latest = await getLatestVerification(params.organizationId);
   if (latest && latest.status === "pending" && latest.expires_at) {
     const exp = new Date(latest.expires_at).getTime();
@@ -90,7 +89,7 @@ export async function startKycVerification(params: {
     }
   }
 
-  const webhookUrl = `${env.PUBLIC_API_URL || env.FRONTEND_URL}/v1/webhooks/nexuspag`;
+  const webhookUrl = `${env.API_BASE_URL}/v1/webhooks/nexuspag`;
 
   let provider;
   try {
@@ -276,14 +275,9 @@ export async function adminSetKycRequired(params: {
     kyc_required_at: params.required ? new Date().toISOString() : null,
     kyc_required_by: params.required ? params.adminUserId : null,
   };
-  if (!params.required) {
-    // Desligar exigencia nao apaga historico, so libera o painel
-  } else {
-    // Ao exigir, se ainda nao verified, garante status util
+  if (params.required) {
     const org = await getOrganizationKyc(params.organizationId);
-    if (org.kyc_status === "none" || org.kyc_status === "verified") {
-      if (org.kyc_status !== "verified") updates.kyc_status = "none";
-    }
+    if (org.kyc_status !== "verified") updates.kyc_status = "none";
   }
 
   const { data, error } = await supabaseAdmin
@@ -345,7 +339,6 @@ export async function adminResetKyc(params: {
   return getOrganizationKyc(params.organizationId);
 }
 
-/** Resolve organization_id a partir de ids do provider (webhook). */
 export async function findOrgIdByKycProviderIds(params: {
   providerVerificationId?: string | null;
   externalId?: string | null;
