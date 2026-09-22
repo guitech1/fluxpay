@@ -1,26 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-/** Mesmo motivo do lib/supabase/server.ts: sem tipar, o parâmetro fica
- * implicitamente `any` e o build de produção do Next recusa. */
 type CookieToSet = { name: string; value: string; options: CookieOptions };
-
-/**
- * Roda antes de toda navegacao (exceto assets estaticos — ver `matcher`).
- * Quatro responsabilidades:
- * 1. Renovar a sessao do Supabase (refresh token) e propagar os cookies.
- * 2. Bloquear /dashboard, /onboarding e /admin para quem nao esta logado, e
- *    mandar quem ja esta logado para longe de /login e /signup.
- * 3. Resolver qual organizacao o usuario esta operando (cookie fluxpay_org_id).
- * 4. Aplicar o MODO MANUTENCAO nas paginas do painel — server-side.
- *
- * Sobre o item 4: as paginas /dashboard/* sao Server Components que falam
- * direto com o Supabase, sem passar pelo backend Express. O guard do backend
- * (middleware/maintenance.ts) nunca ve essas requisicoes, entao antes disso o
- * modo manutencao fechava a API e deixava o painel funcionando. Aqui o
- * bloqueio acontece no servidor do Next, antes de qualquer pagina renderizar:
- * desligar o JavaScript do navegador nao contorna nada.
- */
 
 interface MaintenanceStatus {
   enabled: boolean;
@@ -58,13 +39,11 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/signup");
-  // /admin tambem exige sessao. A verificacao de "e da equipe da FluxPay?"
-  // nao acontece aqui e sim no layout do /admin (server) e em cada rota
-  // /admin-api/* (backend) — o middleware so barra quem nem logado esta.
   const isProtectedRoute =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/onboarding") ||
-    pathname.startsWith("/admin");
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/verificar-identidade");
 
   if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
@@ -78,12 +57,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // --- /docs: documentacao e conteudo de cliente ------------------------
-  // Tres lugares do codigo (app/page.tsx, dashboard/api/page.tsx e
-  // components/dashboard/ApiDocs.tsx) ja afirmavam que "/docs foi fechada no
-  // middleware" — mas a regra nunca existiu, e a pagina publica continuava
-  // servindo a listagem de endpoints. Esta e a regra que faltava. A
-  // documentacao viva fica em /dashboard/api, dentro do painel.
   if (pathname === "/docs" || pathname.startsWith("/docs/")) {
     const url = request.nextUrl.clone();
     url.search = "";
@@ -96,8 +69,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // --- Modo manutencao (paginas do painel) -----------------------------
-  // O ADM (/admin) NUNCA e bloqueado: e de la que a manutencao se desliga.
   const isDashboardPage =
     pathname.startsWith("/dashboard") || pathname.startsWith("/onboarding");
 
@@ -105,8 +76,6 @@ export async function middleware(request: NextRequest) {
     const { data, error } = await supabase.rpc("fluxpay_maintenance_status");
     const status = (data ?? null) as MaintenanceStatus | null;
 
-    // Se o RPC nao existir ou falhar, seguimos em frente: uma falha de leitura
-    // de configuracao nao pode derrubar o painel inteiro.
     if (!error && status?.enabled && (status.scope === "all" || status.scope === "dashboard")) {
       const bypass = status.allow_admins && status.is_platform_admin;
 
@@ -115,15 +84,13 @@ export async function middleware(request: NextRequest) {
         url.pathname = "/manutencao";
         url.search = "";
         const redirect = NextResponse.redirect(url);
-        // Mantem os cookies de sessao renovados nesta mesma resposta.
         supabaseResponse.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
         return redirect;
       }
     }
   }
-  // ---------------------------------------------------------------------
 
-  if (user && pathname.startsWith("/dashboard")) {
+  if (user && (pathname.startsWith("/dashboard") || pathname.startsWith("/verificar-identidade"))) {
     const hasOrgCookie = request.cookies.get("fluxpay_org_id")?.value;
 
     if (!hasOrgCookie) {

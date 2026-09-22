@@ -1,13 +1,7 @@
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { requireDashboardContext } from "@/lib/dashboard-server";
-
-/**
- * Layout de todo o painel. Server Component: resolve sessao, empresa atual e
- * ambiente uma unica vez e passa para a Topbar. Quem nao tem sessao ou empresa
- * e redirecionado aqui dentro (requireDashboardContext), antes de qualquer
- * pagina renderizar.
- */
 
 /** Texto para o lojista — nunca o status cru do banco ("suspended", "banned"). */
 function blockedAccountMessage(status: string): string {
@@ -29,6 +23,11 @@ export default async function DashboardLayout({
   const { organization, environment, user, role, isPlatformAdmin } =
     await requireDashboardContext();
 
+  // KYC obrigatório e ainda não verified → só a página /verificar-identidade
+  if (organization.kyc_required && organization.kyc_status !== "verified") {
+    redirect("/verificar-identidade");
+  }
+
   return (
     <div className="flex min-h-screen bg-flux-black">
       <Sidebar environment={environment} organizationName={organization.name} />
@@ -41,11 +40,6 @@ export default async function DashboardLayout({
           isPlatformAdmin={isPlatformAdmin}
         />
 
-        {/*
-          Único aviso permanente do painel, e ele é do usuário: a conta está
-          impedida de operar. O motivo interno (status_reason) é anotação da
-          equipe da FluxPay e fica só no painel administrativo.
-        */}
         {organization.status !== "active" && (
           <div
             role="status"
