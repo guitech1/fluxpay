@@ -1,6 +1,7 @@
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { requireDashboardContext } from "@/lib/dashboard-server";
+import { redirect } from "next/navigation";
 
 /**
  * Layout de todo o painel. Server Component: resolve sessao, empresa atual e
