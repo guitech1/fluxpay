@@ -11,6 +11,7 @@ import {
   invalidateMaintenanceCache,
 } from "../middleware/maintenance.js";
 import { retryDeliveryById } from "../services/webhooks.js";
+import { updateKycByAdmin } from "../services/kyc.js";
 import {
   getPaymentByProviderReference,
   markPixPaymentSucceeded,
@@ -140,7 +141,7 @@ router.get("/organizations/:id", async (req, res, next) => {
     const { data: organization, error } = await supabaseAdmin
       .from("organizations")
       .select(
-        "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, created_at"
+        "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, created_at, kyc_required, kyc_status, kyc_verified_at, kyc_document_type, kyc_document_masked, kyc_rejection_reason, kyc_required_at, kyc_required_by"
       )
       .eq("id", orgId)
       .maybeSingle();
