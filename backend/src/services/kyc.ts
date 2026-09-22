@@ -219,6 +219,7 @@ export async function startKycVerification(params: {
 
 export async function syncKycFromProvider(params: {
   providerVerificationId: string;
+  externalId?: string | null;
   eventStatus: "approved" | "rejected";
   rejectionReason?: string | null;
   payerName?: string | null;
