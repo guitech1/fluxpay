@@ -8,11 +8,41 @@ export type KycDocumentType = "CPF" | "CNPJ";
 export type KycOrgStatus = "none" | "pending" | "verified" | "rejected";
 export type KycVerificationStatus = "pending" | "approved" | "rejected" | "expired";
 
+function validateCpf(d: string): boolean {
+  if (d.length !== 11 || /^([0-9])\\1+$/.test(d)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Number(d[i]) * (10 - i);
+  let digit = (sum * 10) % 11;
+  if (digit === 10) digit = 0;
+  if (digit !== Number(d[9])) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += Number(d[i]) * (11 - i);
+  digit = (sum * 10) % 11;
+  if (digit === 10) digit = 0;
+  return digit === Number(d[10]);
+}
+
+function validateCnpj(d: string): boolean {
+  if (d.length !== 14 || /^([0-9])\\1+$/.test(d)) return false;
+  const calc = (length: number) => {
+    const weights = length === 12
+      ? [5,4,3,2,9,8,7,6,5,4,3,2]
+      : [6,5,4,3,2,9,8,7,6,5,4,3,2];
+    const sum = weights.reduce((acc, weight, i) => acc + Number(d[i]) * weight, 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
+}
+
 function normalizeDocument(document: string, type: KycDocumentType): string {
   const digits = document.replace(/\D/g, "");
   const expected = type === "CPF" ? 11 : 14;
   if (digits.length !== expected) {
     throw new AppError(400, "validation_error", `${type} deve ter ${expected} digitos.`);
+  }
+  if (type === "CPF" ? !validateCpf(digits) : !validateCnpj(digits)) {
+    throw new AppError(400, "validation_error", `${type} invalido.`);
   }
   return digits;
 }
