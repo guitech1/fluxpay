@@ -10,6 +10,7 @@ import {
   markPixPaymentSucceeded,
 } from "../services/payments.js";
 import { decideWebhookAction } from "../services/provider-events.js";
+import { syncKycFromProvider } from "../services/kyc.js";
 
 const router = Router();
 
@@ -125,7 +126,106 @@ router.post("/nexuspag", async (req, res, next) => {
       return;
     }
 
-    const payload = req.body as NexusPagWebhookPayload;
+    const payload = req.body as NexusPagWebhookPayload & {
+      verification_id?: string;
+      rejection_reason?: string;
+      verification?: {
+        id?: string;
+        external_id?: string | null;
+        status?: string;
+        rejection_reason?: string | null;
+        payer_name?: string | null;
+      };
+    };
+    const eventType =
+      payload.event || (req.headers["x-webhook-event"] as string | undefined) || "unknown";
+
+    // NexusPag KYC pode variar o nome do evento entre kyc.verified/approved e
+    // variantes equivalentes. Processamos somente eventos claramente KYC.
+    const normalizedEvent = eventType.toLowerCase().replace(/_/g, ".");
+    const isKycEvent =
+      normalizedEvent.includes("kyc") &&
+      (normalizedEvent.includes("verified") ||
+        normalizedEvent.includes("approved") ||
+        normalizedEvent.includes("rejected") ||
+        normalizedEvent.includes("failed"));
+
+    if (isKycEvent) {
+      const verification = payload.verification;
+      const providerVerificationId =
+        payload.verification_id ||
+        verification?.id ||
+        (typeof (payload as any).id === "string" ? (payload as any).id : undefined);
+      const externalId =
+        verification?.external_id ||
+        payload.external_id ||
+        (typeof (payload as any).external_id === "string" ? (payload as any).external_id : undefined);
+
+      if (!providerVerificationId && !externalId) {
+        res.status(200).json({ received: true, warning: "KYC sem id de verificacao." });
+        return;
+      }
+
+      const providerEventId = `kyc:${eventType}:${providerVerificationId || externalId}`;
+      const { data: eventRow, error: eventError } = await supabaseAdmin
+        .from("provider_events")
+        .insert({
+          provider: "nexuspag",
+          provider_event_id: providerEventId,
+          event_type: eventType,
+          payload: payload as unknown as Record<string, unknown>,
+          signature_valid: true,
+        })
+        .select("id, processed_at")
+        .maybeSingle();
+
+      if (eventError?.code === "23505") {
+        const { data: previous } = await supabaseAdmin
+          .from("provider_events")
+          .select("id, processed_at")
+          .eq("provider", "nexuspag")
+          .eq("provider_event_id", providerEventId)
+          .maybeSingle();
+        if (previous?.processed_at) {
+          res.status(200).json({ received: true, duplicate: true });
+          return;
+        }
+      } else if (eventError) {
+        throw eventError;
+      }
+
+      const rejected = normalizedEvent.includes("rejected") || normalizedEvent.includes("failed");
+      const result = await syncKycFromProvider({
+        providerVerificationId: providerVerificationId || externalId!,
+        eventStatus: rejected ? "rejected" : "approved",
+        rejectionReason:
+          verification?.rejection_reason ||
+          payload.rejection_reason ||
+          (typeof (payload as any).reason === "string" ? (payload as any).reason : null),
+        payerName: verification?.payer_name || payload.payer_name || null,
+        providerResponse: payload,
+      });
+
+      const update = {
+        processed_at: new Date().toISOString(),
+        processing_error: result.matched ? null : "Verificacao KYC ainda nao encontrada no FluxPay.",
+        organization_id: result.organizationId ?? null,
+      };
+      await supabaseAdmin
+        .from("provider_events")
+        .update(update)
+        .eq("provider", "nexuspag")
+        .eq("provider_event_id", providerEventId);
+
+      res.status(200).json({
+        received: true,
+        matched: result.matched,
+        pending_reconciliation: !result.matched,
+      });
+      return;
+    }
+
+
     const eventType =
       payload.event || (req.headers["x-webhook-event"] as string | undefined) || "unknown";
     const txid = payload.txid;
