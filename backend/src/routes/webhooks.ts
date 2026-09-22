@@ -143,12 +143,16 @@ router.post("/nexuspag", async (req, res, next) => {
     // NexusPag KYC pode variar o nome do evento entre kyc.verified/approved e
     // variantes equivalentes. Processamos somente eventos claramente KYC.
     const normalizedEvent = eventType.toLowerCase().replace(/_/g, ".");
+    const providerStatus = String(payload.status || payload.verification?.status || "").toLowerCase();
     const isKycEvent =
       normalizedEvent.includes("kyc") &&
       (normalizedEvent.includes("verified") ||
         normalizedEvent.includes("approved") ||
         normalizedEvent.includes("rejected") ||
-        normalizedEvent.includes("failed"));
+        normalizedEvent.includes("failed") ||
+        providerStatus === "approved" ||
+        providerStatus === "verified" ||
+        providerStatus === "rejected");
 
     if (isKycEvent) {
       const verification = payload.verification;
