@@ -13,14 +13,16 @@ function getCookie(name: string): string | undefined {
   }
 }
 
+function resolveApiBase(): string {
+  const configured = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    if (!configured || configured === window.location.origin) return "";
+  }
+  return configured;
+}
+
 /**
- * Chama uma rota do backend em /dashboard-api/*, que exige uma acao com
- * logica de servidor (gerar chave/segredo, chamar o adquirente) — tudo que
- * a RLS sozinha nao pode proteger (ver migration 010 e routes/dashboard.ts).
- *
- * Envia o access_token da sessao atual e a organizacao/ambiente selecionados
- * no painel via headers; o backend confere se o usuario realmente pertence
- * aquela organizacao antes de fazer qualquer coisa.
+ * Chama uma rota do backend em /dashboard-api/*.
  */
 export async function dashboardFetch<T = unknown>(
   path: string,
@@ -37,22 +39,34 @@ export async function dashboardFetch<T = unknown>(
 
   const orgId = getCookie("fluxpay_org_id");
   const environment = getCookie("fluxpay_env") || "test";
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+  const apiUrl = resolveApiBase();
 
   if (!orgId) {
     throw new Error("Organizacao nao selecionada. Recarregue a pagina ou escolha a empresa.");
   }
 
-  const response = await fetch(`${apiUrl}/dashboard-api${path}`, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-      "X-Organization-Id": orgId,
-      "X-Environment": environment,
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  const url = `${apiUrl}/dashboard-api${path.startsWith("/") ? path : `/${path}`}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+        "X-Organization-Id": orgId,
+        "X-Environment": environment,
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    throw new Error(
+      `Falha de rede ao chamar ${url}. ` +
+        (apiUrl
+          ? `NEXT_PUBLIC_API_URL=${apiUrl} pode estar errada ou bloqueada por CORS.`
+          : "Confirme que /dashboard-api responde no mesmo dominio.")
+    );
+  }
 
   const json = await response.json().catch(() => null);
 

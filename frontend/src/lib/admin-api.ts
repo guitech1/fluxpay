@@ -8,6 +8,15 @@ function getCookie(name: string): string | undefined {
     ?.split("=")[1];
 }
 
+/** Base da API no browser: vazio = same-origin (evita CORS no Netlify). */
+function resolveApiBase(): string {
+  const configured = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    if (!configured || configured === window.location.origin) return "";
+  }
+  return configured;
+}
+
 /**
  * Chama /admin-api/*. Diferente do dashboardFetch, nao manda
  * X-Organization-Id: o ADM opera sobre a plataforma inteira. Manda o ambiente
@@ -28,8 +37,7 @@ export async function adminFetch<T = unknown>(
   if (!session) throw new Error("Sessão expirada. Faça login novamente.");
 
   const environment = getCookie("fluxpay_env") || "test";
-  // Em producao fica vazio de proposito (mesmo host do painel via redirects Netlify).
-  const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  const apiUrl = resolveApiBase();
   const url = `${apiUrl}/admin-api${path.startsWith("/") ? path : `/${path}`}`;
 
   let response: Response;
@@ -47,7 +55,7 @@ export async function adminFetch<T = unknown>(
     throw new Error(
       `Falha de rede ao chamar ${url}. ` +
         (apiUrl
-          ? `NEXT_PUBLIC_API_URL=${apiUrl} pode estar errada ou bloqueada por CORS.`
+          ? `NEXT_PUBLIC_API_URL=${apiUrl} pode estar errada ou bloqueada por CORS. Prefira deixar vazio em producao.`
           : "Confirme que /admin-api responde no mesmo dominio do painel.")
     );
   }

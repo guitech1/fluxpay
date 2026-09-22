@@ -25,10 +25,30 @@ const app = express();
 
 app.set("trust proxy", 1);
 
-app.use(helmet());
+app.use(
+  helmet({
+    // API e painel no mesmo host Netlify; evita bloqueio de fetch same-site estranho
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+const allowedOrigins = new Set<string>([
+  env.FRONTEND_URL,
+  "http://localhost:3000",
+  "https://fluxpay-sohn.netlify.app",
+]);
+
 app.use(
   cors({
-    origin: [env.FRONTEND_URL, "http://localhost:3000"],
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      // Deploy previews: https://deploy-id--fluxpay-sohn.netlify.app
+      if (/^https:\/\/[a-z0-9-]+--fluxpay-sohn\.netlify\.app$/i.test(origin)) {
+        return callback(null, true);
+      }
+      callback(null, false);
+    },
     credentials: true,
   })
 );
