@@ -247,7 +247,9 @@ export async function syncKycFromProvider(params: {
   if (!matchedVerification) return { matched: false, organizationId: null };
 
   const finalStatus = params.eventStatus;
-  if (matchedVerification.status === finalStatus) return { matched: true, duplicate: true, organizationId: matchedVerification.organization_id };
+  if (["approved", "rejected", "expired"].includes(matchedVerification.status)) {
+    return { matched: true, duplicate: true, organizationId: matchedVerification.organization_id };
+  }
 
   const now = new Date().toISOString();
   const { data: updated, error: updateError } = await supabaseAdmin
