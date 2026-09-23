@@ -3,6 +3,8 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 
+export const dynamic = "force-dynamic";
+
 /** Texto para o lojista — nunca o status cru do banco ("suspended", "banned"). */
 function blockedAccountMessage(status: string): string {
   switch (status) {
@@ -23,8 +25,10 @@ export default async function DashboardLayout({
   const { organization, environment, user, role, isPlatformAdmin } =
     await requireDashboardContext();
 
-  // KYC obrigatório e ainda não verified → só a página /verificar-identidade
-  if (organization.kyc_required && organization.kyc_status !== "verified") {
+  // Fonte da obrigação: SOMENTE organizations.kyc_required === true.
+  // Status/histórico (pending, rejected, verification antiga) NÃO obrigam KYC
+  // quando o admin desmarcou a exigência.
+  if (organization.kyc_required === true && organization.kyc_status !== "verified") {
     redirect("/verificar-identidade");
   }
 

@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 export default async function VerificarIdentidadePage() {
   const { organization, role } = await requireDashboardContext();
 
-  if (!organization.kyc_required || organization.kyc_status === "verified") {
+  // Obrigação só com kyc_required === true. Status/histórico não seguram o usuário
+  // aqui depois que o admin desativou a exigência.
+  if (organization.kyc_required !== true || organization.kyc_status === "verified") {
     redirect("/dashboard");
   }
 
