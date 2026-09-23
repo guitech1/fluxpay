@@ -31,6 +31,11 @@ function assertDocument(type: "CPF" | "CNPJ", doc: string): string {
   return digits;
 }
 
+/** Obrigação atual de KYC depende SOMENTE de organizations.kyc_required. */
+export function isKycObligatory(org: { kyc_required?: boolean | null }): boolean {
+  return org.kyc_required === true;
+}
+
 export async function getOrganizationKyc(organizationId: string) {
   const { data, error } = await supabaseAdmin
     .from("organizations")
@@ -59,14 +64,45 @@ export async function getLatestVerification(organizationId: string) {
   return data;
 }
 
+/** Uso interno: inclui document_number para comparar reinícios. */
+async function getLatestVerificationInternal(organizationId: string) {
+  const { data } = await supabaseAdmin
+    .from("kyc_verifications")
+    .select(
+      "id, status, document_type, document_number, document_masked, qr_code, qr_code_image, amount_cents, expires_at, rejection_reason, payer_name, verified_at, approved_via, created_at, external_id, provider_verification_id"
+    )
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
+/**
+ * Marca verificação pending como expired (preserva histórico).
+ * Não apaga linhas — só fecha a tentativa anterior.
+ */
+async function expirePendingVerification(verificationId: string, reason: string) {
+  await supabaseAdmin
+    .from("kyc_verifications")
+    .update({
+      status: "expired",
+      rejection_reason: reason,
+    })
+    .eq("id", verificationId)
+    .eq("status", "pending");
+}
+
 export async function startKycVerification(params: {
   organizationId: string;
   userId: string;
   document: string;
   documentType: "CPF" | "CNPJ";
+  /** Força nova tentativa mesmo com pending ainda válido. */
+  forceNew?: boolean;
 }) {
   const org = await getOrganizationKyc(params.organizationId);
-  if (!org.kyc_required) {
+  if (!isKycObligatory(org)) {
     throw new AppError(
       400,
       "invalid_request",
@@ -81,11 +117,28 @@ export async function startKycVerification(params: {
   const documentMasked = maskDocument(documentNumber);
   const externalId = `kyc-${params.organizationId}-${documentNumber.slice(-4)}-${uuidv4().slice(0, 8)}`;
 
-  const latest = await getLatestVerification(params.organizationId);
+  const latest = await getLatestVerificationInternal(params.organizationId);
   if (latest && latest.status === "pending" && latest.expires_at) {
     const exp = new Date(latest.expires_at).getTime();
-    if (exp > Date.now() + 30_000) {
-      return { organization: org, verification: latest, reused: true as const };
+    const stillValid = exp > Date.now() + 30_000;
+    const sameDocument =
+      normalizeDocument(latest.document_number || "") === documentNumber &&
+      latest.document_type === params.documentType;
+
+    // Reutiliza SOMENTE se o mesmo documento ainda estiver pendente e válido.
+    // Documento diferente → encerra a tentativa anterior e cria outra (preserva histórico).
+    if (stillValid && sameDocument && !params.forceNew) {
+      const publicLatest = await getLatestVerification(params.organizationId);
+      return { organization: org, verification: publicLatest!, reused: true as const };
+    }
+
+    if (stillValid && (!sameDocument || params.forceNew)) {
+      await expirePendingVerification(
+        latest.id,
+        sameDocument
+          ? "Reinicio solicitado pelo usuario"
+          : "Documento alterado pelo usuario — tentativa anterior encerrada"
+      );
     }
   }
 
@@ -183,7 +236,7 @@ export async function refreshKycFromProvider(organizationId: string) {
   };
 }
 
-export async function applyKycApproved(params: {
+async function applyKycApproved(params: {
   organizationId: string;
   providerVerificationId?: string | null;
   externalId?: string | null;
@@ -195,28 +248,20 @@ export async function applyKycApproved(params: {
 }) {
   const now = params.verifiedAt || new Date().toISOString();
 
-  let q = supabaseAdmin
-    .from("kyc_verifications")
-    .update({
+  if (params.providerVerificationId || params.externalId) {
+    let q = supabaseAdmin.from("kyc_verifications").update({
       status: "approved",
-      payer_name: params.payerName ?? null,
+      payer_name: params.payerName || null,
       verified_at: now,
       approved_via: params.via,
-      reviewed_by: params.reviewedBy ?? null,
-      reviewed_at: params.via === "admin" ? now : null,
-      review_note: params.reviewNote ?? null,
-      rejection_reason: null,
-    })
-    .eq("organization_id", params.organizationId);
-
-  if (params.providerVerificationId) {
-    q = q.eq("provider_verification_id", params.providerVerificationId);
-  } else if (params.externalId) {
-    q = q.eq("external_id", params.externalId);
-  } else {
-    q = q.eq("status", "pending");
+    });
+    if (params.providerVerificationId) {
+      q = q.eq("provider_verification_id", params.providerVerificationId);
+    } else if (params.externalId) {
+      q = q.eq("external_id", params.externalId);
+    }
+    await q.eq("organization_id", params.organizationId);
   }
-  await q;
 
   await supabaseAdmin
     .from("organizations")
@@ -228,53 +273,54 @@ export async function applyKycApproved(params: {
     .eq("id", params.organizationId);
 }
 
-export async function applyKycRejected(params: {
+async function applyKycRejected(params: {
   organizationId: string;
   providerVerificationId?: string | null;
   externalId?: string | null;
   reason: string;
   reviewedBy?: string;
 }) {
-  const now = new Date().toISOString();
-  let q = supabaseAdmin
-    .from("kyc_verifications")
-    .update({
+  if (params.providerVerificationId || params.externalId) {
+    let q = supabaseAdmin.from("kyc_verifications").update({
       status: "rejected",
       rejection_reason: params.reason,
-      reviewed_by: params.reviewedBy ?? null,
-      reviewed_at: params.reviewedBy ? now : null,
-    })
-    .eq("organization_id", params.organizationId);
-
-  if (params.providerVerificationId) {
-    q = q.eq("provider_verification_id", params.providerVerificationId);
-  } else if (params.externalId) {
-    q = q.eq("external_id", params.externalId);
-  } else {
-    q = q.eq("status", "pending");
+    });
+    if (params.providerVerificationId) {
+      q = q.eq("provider_verification_id", params.providerVerificationId);
+    } else if (params.externalId) {
+      q = q.eq("external_id", params.externalId);
+    }
+    await q.eq("organization_id", params.organizationId);
   }
-  await q;
 
   await supabaseAdmin
     .from("organizations")
     .update({
       kyc_status: "rejected",
       kyc_rejection_reason: params.reason,
-      kyc_verified_at: null,
     })
     .eq("id", params.organizationId);
 }
 
+/**
+ * Liga/desliga a OBRIGAÇÃO de KYC.
+ * Fonte da verdade: organizations.kyc_required.
+ * Histórico em kyc_verifications NÃO é apagado nem usado como obrigação.
+ */
 export async function adminSetKycRequired(params: {
   organizationId: string;
   required: boolean;
   adminUserId: string;
 }) {
   const updates: Record<string, unknown> = {
-    kyc_required: params.required,
+    kyc_required: params.required === true,
     kyc_required_at: params.required ? new Date().toISOString() : null,
     kyc_required_by: params.required ? params.adminUserId : null,
   };
+
+  // Ao passar a exigir de novo, zera status só se ainda não estiver verified.
+  // NÃO apaga kyc_verifications. Ao desligar (false), não mexe em kyc_status:
+  // os guards usam apenas kyc_required === true.
   if (params.required) {
     const org = await getOrganizationKyc(params.organizationId);
     if (org.kyc_status !== "verified") updates.kyc_status = "none";
