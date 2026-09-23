@@ -1,7 +1,5 @@
 /**
  * Contratos da obrigação de KYC e da reutilização de PIX.
- * Não importa o serviço completo (ele puxa env/Supabase); espelha a regra
- * implementada em services/kyc.ts para regressão sem dependências.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -29,7 +27,7 @@ test("kyc_required=false → usuário NÃO é obrigado", () => {
   assert.equal(isKycObligatory({ kyc_required: false }), false);
 });
 
-test("true → false: obrigação desaparece (strict === true)", () => {
+test("true → false: obrigação desaparece", () => {
   assert.equal(isKycObligatory({ kyc_required: true }), true);
   assert.equal(isKycObligatory({ kyc_required: false }), false);
 });
@@ -49,34 +47,17 @@ test("null/undefined kyc_required NÃO obriga", () => {
 });
 
 test("mesmo documento pending válido → reutiliza PIX", () => {
-  assert.equal(
-    shouldReusePending({ pending: true, stillValid: true, sameDocument: true }),
-    true
-  );
+  assert.equal(shouldReusePending({ pending: true, stillValid: true, sameDocument: true }), true);
 });
 
 test("documento alterado → NÃO reutiliza PIX antigo", () => {
-  assert.equal(
-    shouldReusePending({ pending: true, stillValid: true, sameDocument: false }),
-    false
-  );
+  assert.equal(shouldReusePending({ pending: true, stillValid: true, sameDocument: false }), false);
 });
 
 test("forceNew → NÃO reutiliza", () => {
-  assert.equal(
-    shouldReusePending({
-      pending: true,
-      stillValid: true,
-      sameDocument: true,
-      forceNew: true,
-    }),
-    false
-  );
+  assert.equal(shouldReusePending({ pending: true, stillValid: true, sameDocument: true, forceNew: true }), false);
 });
 
 test("pending expirado → NÃO reutiliza", () => {
-  assert.equal(
-    shouldReusePending({ pending: true, stillValid: false, sameDocument: true }),
-    false
-  );
+  assert.equal(shouldReusePending({ pending: true, stillValid: false, sameDocument: true }), false);
 });
