@@ -25,6 +25,7 @@ const NAV = [
   { href: "/admin/users", label: "Usuários", icon: Users },
   { href: "/admin/payments", label: "Pagamentos", icon: CreditCard },
   { href: "/admin/withdrawals", label: "Saques", icon: Banknote },
+  { href: "/admin/fluxpay-card", label: "FluxPay Card", icon: CreditCard },
   { href: "/admin/support", label: "Suporte", icon: Headphones },
   { href: "/admin/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/admin/security", label: "Segurança", icon: Activity },
