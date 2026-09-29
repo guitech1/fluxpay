@@ -14,6 +14,7 @@ import {
   Building2,
   FileText,
   Wallet,
+  Banknote,
   Menu,
   X,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const NAV_GROUPS: {
     items: [
       { href: "/dashboard/payments", label: "Pagamentos", icon: CreditCard },
       { href: "/dashboard/wallet", label: "Carteira", icon: Wallet },
+      { href: "/dashboard/fluxpay-card", label: "FluxPay Card", icon: Banknote },
       { href: "/dashboard/customers", label: "Clientes", icon: Users },
     ],
   },
