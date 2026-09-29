@@ -22,6 +22,8 @@ import kycDashboardRouter from "./routes/kyc-dashboard.js";
 import adminKycRouter from "./routes/admin-kyc.js";
 import supportDashboardRouter from "./routes/support-dashboard.js";
 import supportAdminRouter from "./routes/support-admin.js";
+import fluxpayCardDashboardRouter from "./routes/fluxpay-card-dashboard.js";
+import fluxpayCardAdminRouter from "./routes/fluxpay-card-admin.js";
 
 const app = express();
 
@@ -106,12 +108,14 @@ app.use("/dashboard-api", dashboardRouter);
 app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
 app.use("/dashboard-api/support", supportDashboardRouter);
+app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
 app.use("/admin-api", adminKycRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 app.use("/admin-api", supportAdminRouter);
+app.use("/admin-api/fluxpay-card", fluxpayCardAdminRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
