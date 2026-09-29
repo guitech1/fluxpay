@@ -20,6 +20,8 @@ import withdrawalsAdminRouter from "./routes/withdrawals-admin.js";
 import adminBalanceReleaseRouter from "./routes/admin-balance-release.js";
 import kycDashboardRouter from "./routes/kyc-dashboard.js";
 import adminKycRouter from "./routes/admin-kyc.js";
+import supportDashboardRouter from "./routes/support-dashboard.js";
+import supportAdminRouter from "./routes/support-admin.js";
 
 const app = express();
 
@@ -103,11 +105,13 @@ app.use("/v1/webhooks", webhooksRouter);
 app.use("/dashboard-api", dashboardRouter);
 app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
+app.use("/dashboard-api/support", supportDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
 app.use("/admin-api", adminKycRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
+app.use("/admin-api", supportAdminRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
