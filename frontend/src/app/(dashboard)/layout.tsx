@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
+import { SupportWidget } from "@/components/support/SupportWidget";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,7 @@ export default async function DashboardLayout({
           <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">{children}</div>
         </main>
       </div>
+      <SupportWidget />
     </div>
   );
 }
