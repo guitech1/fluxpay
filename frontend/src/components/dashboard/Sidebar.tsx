@@ -24,11 +24,6 @@ import { useEffect, useState } from "react";
 import { FluxMark } from "@/components/brand/FluxLogo";
 import { environmentLabel } from "@/lib/labels";
 
-/**
- * Navegação do painel, agrupada por responsabilidade em vez de uma lista
- * corrida de dez itens. A ordem segue o que a pessoa faz no dia a dia:
- * receber, depois operar, depois integrar, depois configurar.
- */
 const NAV_GROUPS: {
   label?: string;
   items: { href: string; label: string; icon: React.ElementType }[];
@@ -143,7 +138,7 @@ export function Sidebar({
                     )}
                   >
                     <Icon className="w-[18px] h-[18px] shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className={cn("truncate")}>{item.label}</span>
                   </Link>
                 );
               })}
@@ -153,7 +148,9 @@ export function Sidebar({
 
         <div className="p-4 border-t border-flux-border shrink-0">
           <div className="text-xs">
-            <div className="font-medium truncate">{organizationName || "FluxPay"}</div>
+            <div className={cn("font-medium", "truncate")}>
+              {organizationName || "FluxPay"}
+            </div>
             <div className="text-flux-muted mt-0.5">
               Ambiente de {environmentLabel(environment).toLowerCase()}
             </div>
