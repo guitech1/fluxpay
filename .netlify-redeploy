@@ -1,3 +1,3 @@
-redeploy-trigger=2026-09-30T20:53Z
-# Empty marker to force production rebuild after env var update.
+redeploy-trigger=2026-09-30T21:00Z
+# Trigger production rebuild so Functions receive updated env.
 # Safe to delete. Does not contain secrets.
