@@ -24,6 +24,7 @@ import supportDashboardRouter from "./routes/support-dashboard.js";
 import supportAdminRouter from "./routes/support-admin.js";
 import fluxpayCardDashboardRouter from "./routes/fluxpay-card-dashboard.js";
 import fluxpayCardAdminRouter from "./routes/fluxpay-card-admin.js";
+import paymentLinksDashboardRouter from "./routes/payment-links-dashboard.js";
 
 const app = express();
 
@@ -31,7 +32,6 @@ app.set("trust proxy", 1);
 
 app.use(
   helmet({
-    // API e painel no mesmo host Netlify; evita bloqueio de fetch same-site estranho
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
@@ -47,7 +47,6 @@ app.use(
     origin(origin, callback) {
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
-      // Deploy previews: https://deploy-id--fluxpay-sohn.netlify.app
       if (/^https:\/\/[a-z0-9-]+--fluxpay-sohn\.netlify\.app$/i.test(origin)) {
         return callback(null, true);
       }
@@ -109,6 +108,7 @@ app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
 app.use("/dashboard-api/support", supportDashboardRouter);
 app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
+app.use("/dashboard-api", paymentLinksDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
