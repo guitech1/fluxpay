@@ -85,8 +85,6 @@ export function Sidebar({
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Navegou: fecha a gaveta. Sem isso, no mobile, a sidebar fica por cima da
-  // página que o usuário acabou de abrir.
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
