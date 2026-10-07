@@ -91,9 +91,9 @@ router.get("/organizations/:id", async (req, res, next) => {
     const environment = req.platformAdmin!.environment;
     const orgId = req.params.id;
 
-    // Schema KYC (migration 019) já aplicado — sempre seleciona as colunas.
+    // Inclui perfil público (migration 021) além do KYC / cadastro.
     const detailSelect =
-      "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, created_at, kyc_required, kyc_status, kyc_verified_at, kyc_document_type, kyc_document_masked, kyc_rejection_reason";
+      "id, name, slug, legal_name, document, email, phone, website, country, timezone, default_currency, status, status_reason, status_changed_at, created_at, kyc_required, kyc_status, kyc_verified_at, kyc_document_type, kyc_document_masked, kyc_rejection_reason, public_bio, public_work, public_avatar_url, public_profile_enabled, public_display_name";
 
     const { data: organization, error } = await supabaseAdmin
       .from("organizations")
