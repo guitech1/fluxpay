@@ -7,7 +7,7 @@ import { ApiDocs } from "@/components/dashboard/ApiDocs";
 import { DownloadDocsButton } from "@/components/dashboard/DownloadDocsButton";
 import { ApiExplorer } from "@/components/dashboard/ApiExplorer";
 import type { ApiKey } from "@/lib/types";
-import { buildCompleteApiMarkdown } from "@/lib/api-docs-content";
+import { buildProfessionalHtmlDoc } from "@/lib/api-docs-content";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export default async function ApiPage() {
     .order("created_at", { ascending: false });
 
   const apiBaseUrl = await getPublicBaseUrl();
-  const markdown = buildCompleteApiMarkdown(apiBaseUrl, environment);
+  const htmlDoc = buildProfessionalHtmlDoc(apiBaseUrl, environment);
 
   return (
     <div className="space-y-10">
@@ -32,7 +32,12 @@ export default async function ApiPage() {
             environment
           ).toLowerCase()}.`}
         />
-        <DownloadDocsButton markdown={markdown} filename={`fluxpay-api-${environment}.html`} />
+        <DownloadDocsButton
+          markdown={htmlDoc}
+          filename={`fluxpay-api-${environment}.html`}
+          apiBaseUrl={apiBaseUrl}
+          environment={environment}
+        />
       </div>
 
       <section className="space-y-3">
