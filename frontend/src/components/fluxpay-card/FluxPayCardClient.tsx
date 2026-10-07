@@ -414,7 +414,8 @@ export function FluxPayCardClient() {
               type="button"
               className="btn-primary flex-1"
               onClick={() => {
-                setReceipt(null);
+                // Mantem receipt em memoria para "Reabrir ultimo recibo".
+                // Nao limpar aqui — so muda a view.
                 setDestNumber("");
                 setDestInfo(null);
                 setAmountStr("");
@@ -594,14 +595,10 @@ export function FluxPayCardClient() {
               className="btn-primary"
               onClick={() => {
                 setError(null);
-                setDestNumber("");
-                setDestInfo(null);
-                setAmountStr("");
-                setTransferPassword("");
                 setView("transfer");
               }}
             >
-              Transferir
+              Fazer transferencia
             </button>
             {!confirmBlock ? (
               <button
@@ -660,9 +657,7 @@ function Row({
   return (
     <div className="flex justify-between gap-4">
       <span className="text-flux-muted shrink-0">{label}</span>
-      <span className={cn("text-right break-all", mono && "font-mono text-xs")}>
-        {value}
-      </span>
+      <span className={cn("text-right break-all", mono && "font-mono text-xs")}>{value}</span>
     </div>
   );
 }
