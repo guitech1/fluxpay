@@ -2,6 +2,7 @@ import { ScoreBadge } from "@/components/score/ScoreBadge";
 import { FluxMark } from "@/components/brand/FluxLogo";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -55,18 +56,27 @@ export default async function PublicProfilePage({
   return (
     <div className="min-h-screen bg-flux-black text-white">
       <header className="border-b border-flux-border">
-        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <FluxMark className="w-6 h-6" />
-            <span className="font-semibold tracking-tight">FluxPay</span>
-          </Link>
-          <Link href="/ranking" className="text-xs text-flux-muted hover:text-white">
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 text-sm text-flux-muted hover:text-white shrink-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Voltar</span>
+            </Link>
+            <Link href="/" className="flex items-center gap-2 min-w-0">
+              <FluxMark className="w-6 h-6 shrink-0" />
+              <span className="font-semibold tracking-tight truncate">FluxPay</span>
+            </Link>
+          </div>
+          <Link href="/ranking" className="text-xs text-flux-muted hover:text-white shrink-0">
             Ranking
           </Link>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-12">
+      <main className="max-w-3xl mx-auto px-4 py-12 space-y-6">
         <div className="relative overflow-hidden rounded-2xl border border-flux-border bg-gradient-to-b from-flux-gray to-flux-dark p-8 sm:p-10">
           <div className="pointer-events-none absolute -top-24 -right-24 w-64 h-64 rounded-full bg-flux-accent/10 blur-3xl" />
 
@@ -136,6 +146,14 @@ export default async function PublicProfilePage({
             </div>
           </div>
         </div>
+
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-2 text-sm text-flux-muted hover:text-white"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Voltar ao painel
+        </Link>
       </main>
     </div>
   );
