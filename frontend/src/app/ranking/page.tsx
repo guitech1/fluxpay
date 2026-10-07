@@ -1,6 +1,7 @@
 import { RankingPodium, RankingTable, type RankingRow } from "@/components/ranking/RankingPodium";
 import { FluxMark } from "@/components/brand/FluxLogo";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +28,21 @@ export default async function RankingPage() {
   return (
     <div className="min-h-screen bg-flux-black text-white">
       <header className="border-b border-flux-border">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <FluxMark className="w-6 h-6" />
-            <span className="font-semibold tracking-tight">FluxPay</span>
-          </Link>
-          <span className="text-xs uppercase tracking-[0.2em] text-flux-muted">Ranking</span>
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 text-sm text-flux-muted hover:text-white shrink-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Voltar</span>
+            </Link>
+            <Link href="/" className="flex items-center gap-2 min-w-0">
+              <FluxMark className="w-6 h-6 shrink-0" />
+              <span className="font-semibold tracking-tight truncate">FluxPay</span>
+            </Link>
+          </div>
+          <span className="text-xs uppercase tracking-[0.2em] text-flux-muted shrink-0">Ranking</span>
         </div>
       </header>
 
@@ -55,6 +65,16 @@ export default async function RankingPage() {
             <RankingTable rows={rows} />
           </>
         )}
+
+        <div className="text-center pt-2">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 text-sm text-flux-muted hover:text-white"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Voltar ao painel
+          </Link>
+        </div>
       </main>
     </div>
   );
