@@ -15,20 +15,22 @@ import {
   Activity,
   ArrowLeft,
   Headphones,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FluxMark } from "@/components/brand/FluxLogo";
 
 const NAV = [
-  { href: "/admin", label: "Visão geral", icon: ShieldCheck },
+  { href: "/admin", label: "Visao geral", icon: ShieldCheck },
   { href: "/admin/organizations", label: "Contas", icon: Building2 },
-  { href: "/admin/users", label: "Usuários", icon: Users },
+  { href: "/admin/users", label: "Usuarios", icon: Users },
   { href: "/admin/payments", label: "Pagamentos", icon: CreditCard },
   { href: "/admin/withdrawals", label: "Saques", icon: Banknote },
   { href: "/admin/fluxpay-card", label: "FluxPay Card", icon: CreditCard },
+  { href: "/admin/ranking", label: "Ranking", icon: Trophy },
   { href: "/admin/support", label: "Suporte", icon: Headphones },
   { href: "/admin/webhooks", label: "Webhooks", icon: Webhook },
-  { href: "/admin/security", label: "Segurança", icon: Activity },
+  { href: "/admin/security", label: "Seguranca", icon: Activity },
   { href: "/admin/audit", label: "Auditoria", icon: ScrollText },
   { href: "/admin/settings", label: "Plataforma", icon: Settings },
 ];
@@ -82,7 +84,7 @@ export function AdminShell({
                       : "text-flux-muted hover:text-white"
                   )}
                 >
-                  {env === "test" ? "Teste" : "Produção"}
+                  {env === "test" ? "Teste" : "Producao"}
                 </button>
               ))}
             </div>
@@ -126,7 +128,7 @@ export function AdminShell({
 
       {environment === "live" && (
         <div className="bg-flux-red/10 border-b border-flux-red/20 px-4 lg:px-8 py-1.5 text-xs text-flux-red-light text-center">
-          Dados de <strong>produção</strong>. Ações aqui afetam contas e dinheiro reais.
+          Dados de <strong>producao</strong>. Acoes aqui afetam contas e dinheiro reais.
         </div>
       )}
 
