@@ -17,6 +17,13 @@ const EXPIRY_OPTIONS = [
   { minutes: 10080, label: "7 dias" },
 ];
 
+const THEME_OPTIONS = [
+  { value: "default", label: "Padrao FluxPay" },
+  { value: "dark", label: "Escuro" },
+  { value: "light", label: "Claro" },
+  { value: "brand", label: "Marca (cor primaria)" },
+];
+
 function parseAmountToCents(value: string): number | null {
   const cleaned = value.replace(/[^\d,.-]/g, "").trim();
   if (!cleaned) return null;
@@ -41,6 +48,7 @@ type PaymentLinkResult = {
   pix_copy_paste: string | null;
   pix_qr_code_base64: string | null;
   simulated?: boolean;
+  appearance?: { color?: string | null; theme?: string; message?: string | null };
 };
 
 type PaymentLinkListItem = {
@@ -59,6 +67,9 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [expiry, setExpiry] = useState(1440);
+  const [color, setColor] = useState("#EF4444");
+  const [theme, setTheme] = useState("default");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PaymentLinkResult | null>(null);
@@ -67,6 +78,7 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
 
   const cents = useMemo(() => parseAmountToCents(amount), [amount]);
   const amountValid = cents !== null && cents >= 100;
+  const colorValid = /^#[0-9A-Fa-f]{6}$/.test(color);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -94,6 +106,10 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
       setError("Informe um valor de pelo menos R$ 1,00.");
       return;
     }
+    if (!colorValid) {
+      setError("Cor invalida. Use o formato #RRGGBB.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await dashboardFetch<{ data: PaymentLinkResult }>("/payment-links", {
@@ -102,11 +118,15 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
           amount: cents,
           description: description.trim() || undefined,
           expires_in_minutes: expiry,
+          color,
+          theme,
+          message: message.trim() || undefined,
         },
       });
       setResult(res.data);
       setAmount("");
       setDescription("");
+      setMessage("");
       void loadHistory();
     } catch (err) {
       setError(friendlyError(err, "Nao foi possivel gerar o link. Tente novamente."));
@@ -127,7 +147,7 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
           <div>
             <h2 className="font-medium">Novo link</h2>
             <p className="text-sm text-flux-muted mt-1">
-              Informe o valor e envie o link com QR Code e PIX copia e cola.
+              Informe o valor e personalize a aparencia do checkout.
             </p>
           </div>
           {error && <Alert tone="error">{error}</Alert>}
@@ -174,7 +194,61 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
               ))}
             </select>
           </div>
-          <SubmitButton type="submit" loading={loading} disabled={!canWrite || !amountValid} className="w-full">
+
+          <div className="border-t border-flux-border pt-4 space-y-4">
+            <p className="text-xs uppercase tracking-wider text-flux-muted">Aparencia do checkout</p>
+            <div>
+              <label htmlFor="pl-theme" className="label">Tema</label>
+              <select
+                id="pl-theme"
+                className="input"
+                value={theme}
+                onChange={(e) => setTheme(e.target.value)}
+                disabled={!canWrite || loading}
+              >
+                {THEME_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="pl-color" className="label">Cor de destaque</label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value.toUpperCase())}
+                  className="h-10 w-12 rounded border border-flux-border bg-transparent cursor-pointer"
+                  disabled={!canWrite || loading}
+                  aria-label="Selecionar cor"
+                />
+                <input
+                  id="pl-color"
+                  className="input font-mono text-sm flex-1"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value.toUpperCase())}
+                  maxLength={7}
+                  pattern="#[0-9A-Fa-f]{6}"
+                  disabled={!canWrite || loading}
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="pl-msg" className="label">Mensagem personalizada</label>
+              <input
+                id="pl-msg"
+                className="input"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Ex.: Obrigado pela preferencia"
+                maxLength={200}
+                disabled={!canWrite || loading}
+              />
+              <p className="text-xs text-flux-muted mt-1">Texto simples. HTML e scripts nao sao aceitos.</p>
+            </div>
+          </div>
+
+          <SubmitButton type="submit" loading={loading} disabled={!canWrite || !amountValid || !colorValid} className="w-full">
             <Link2 className="w-4 h-4" />
             Gerar link de pagamento
           </SubmitButton>
@@ -201,6 +275,21 @@ export function PaymentLinksClient({ canWrite }: { canWrite: boolean }) {
                 </div>
                 <StatusBadge status={result.payment_status === "succeeded" ? "succeeded" : result.status} />
               </div>
+              {result.appearance && (
+                <div className="text-xs text-flux-muted flex flex-wrap gap-3">
+                  <span>Tema: {result.appearance.theme || "default"}</span>
+                  {result.appearance.color && (
+                    <span className="inline-flex items-center gap-1.5">
+                      Cor:
+                      <span
+                        className="inline-block w-3 h-3 rounded-full border border-white/20"
+                        style={{ background: result.appearance.color }}
+                      />
+                      {result.appearance.color}
+                    </span>
+                  )}
+                </div>
+              )}
               <div>
                 <p className="label">Link para enviar</p>
                 <div className="flex flex-col sm:flex-row gap-2">
