@@ -19,7 +19,7 @@
  *   - MONGODB_URI presente e conexão FALHA → erro explícito (503), sem fallback silencioso
  */
 
-import { MongoClient, type Db } from "mongodb";
+import { MongoClient, type Db, type ObjectId } from "mongodb";
 import { AppError } from "../middleware/error.js";
 
 let client: MongoClient | null = null;
@@ -155,7 +155,8 @@ export async function requireMongoDb(): Promise<Db> {
 }
 
 export type RankingParticipantDoc = {
-  _id?: unknown;
+  /** Mongo ObjectId — opcional no insert (driver gera). Nunca use unknown. */
+  _id?: ObjectId;
   id: string;
   organization_id: string | null;
   display_name: string;
