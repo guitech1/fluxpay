@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { apiLogger } from "./middleware/api-log.js";
 import { maintenanceGuard } from "./middleware/maintenance.js";
+import { getMongoStatus } from "./config/mongo.js";
 
 import paymentsRouter from "./routes/payments.js";
 import customersRouter from "./routes/customers.js";
@@ -97,7 +98,28 @@ app.use(
 );
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "fluxpay-api", version: "0.2.0" });
+  const mongo = getMongoStatus();
+  res.json({
+    status: "ok",
+    service: "fluxpay-api",
+    version: "0.3.0",
+    stores: {
+      financial: "supabase",
+      ranking_participants: mongo.configured
+        ? mongo.ready
+          ? "mongodb"
+          : mongo.connectionFailed
+            ? "mongodb_unavailable"
+            : "mongodb_configured"
+        : "supabase",
+      mongo: {
+        configured: mongo.configured,
+        ready: mongo.ready,
+        // Nunca expor URI, senha ou host completo com credenciais
+        database: mongo.configured ? mongo.database : null,
+      },
+    },
+  });
 });
 
 app.use(maintenanceGuard);
@@ -110,7 +132,6 @@ app.use("/v1/checkout", checkoutRouter);
 app.use("/v1/balance", balanceRouter);
 app.use("/v1/webhooks", webhooksRouter);
 
-// Public (no session) endpoints
 app.use("/v1", rankingPublicRouter);
 app.use("/v1", profilePublicRouter);
 

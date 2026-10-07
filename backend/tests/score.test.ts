@@ -2,8 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 /**
- * Unit-level checks for score level thresholds (pure logic mirrored from service).
- * Full computeFluxPayScore requires DB — marked as integration.
+ * Testes unitarios das regras de nivel do Score (sem I/O).
+ * A funcao completa computeFluxPayScore exige Supabase — testada em integracao.
  */
 
 type ScoreLevel = "bronze" | "silver" | "gold" | "elite";
@@ -23,7 +23,7 @@ function levelFromScore(score: number): ScoreLevel {
 }
 
 describe("FluxPay Score levels", () => {
-  it("maps thresholds correctly", () => {
+  it("maps thresholds", () => {
     assert.equal(levelFromScore(0), "bronze");
     assert.equal(levelFromScore(29), "bronze");
     assert.equal(levelFromScore(30), "silver");
@@ -32,5 +32,9 @@ describe("FluxPay Score levels", () => {
     assert.equal(levelFromScore(79), "gold");
     assert.equal(levelFromScore(80), "elite");
     assert.equal(levelFromScore(100), "elite");
+  });
+
+  it("clamps conceptually to 0–100 domain", () => {
+    assert.equal(levelFromScore(-1), "bronze");
   });
 });
