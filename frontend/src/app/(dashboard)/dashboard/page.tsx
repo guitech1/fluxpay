@@ -4,17 +4,9 @@ import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { OverviewCharts, type DailyPoint } from "@/components/dashboard/OverviewCharts";
 import { PageHeader, StatusBadge, Table, Mono, EmptyState } from "@/components/dashboard/ui";
+import { ScoreOverviewCard } from "@/components/dashboard/ScoreOverviewCard";
 import type { Payment } from "@/lib/types";
 
-/**
- * Visao geral. Le direto do Supabase pelo Server Component — a RLS ja filtra
- * por organizacao; o unico filtro explicito e o ambiente selecionado.
- *
- * O saldo vem do RPC get_organization_balance (SECURITY INVOKER, respeita RLS),
- * que agrega balance_transactions no banco em vez de trazer linha a linha.
- */
-
-// Sempre dinamico: o painel depende de cookies (sessao, empresa, ambiente).
 export const dynamic = "force-dynamic";
 
 function startOfDayUTC(daysAgo: number): Date {
@@ -90,7 +82,6 @@ export default async function OverviewPage() {
   const approvedTotal = approved.reduce((sum, p) => sum + p.amount, 0);
   const approvalRate = rows.length ? Math.round((approved.length / rows.length) * 100) : 0;
 
-  // Serie diaria dos ultimos 14 dias, incluindo dias sem movimento.
   const series: DailyPoint[] = Array.from({ length: 14 }, (_, i) => {
     const day = startOfDayUTC(13 - i);
     const key = day.toISOString().slice(0, 10);
@@ -108,13 +99,13 @@ export default async function OverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Visão geral"
-        description={`${organization.name} · ambiente ${environment === "live" ? "de produção" : "de testes"}`}
+        title="Visao geral"
+        description={`${organization.name} · ambiente ${environment === "live" ? "de producao" : "de testes"}`}
         action={
           write ? (
             <Link href="/dashboard/payments/new" className="btn-primary">
               <Plus className="w-4 h-4" />
-              Criar cobrança
+              Criar cobranca
             </Link>
           ) : undefined
         }
@@ -122,15 +113,15 @@ export default async function OverviewPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
-          label="Saldo disponível"
+          label="Saldo disponivel"
           value={primary ? formatCurrency(primary.available, primary.currency) : formatCurrency(0)}
-          hint={primary ? `${formatCurrency(primary.pending, primary.currency)} a liberar` : "Sem movimentações"}
+          hint={primary ? `${formatCurrency(primary.pending, primary.currency)} a liberar` : "Sem movimentacoes"}
           icon={Wallet}
         />
         <MetricCard
           label="Aprovado (14 dias)"
           value={formatCurrency(approvedTotal)}
-          hint={`${approved.length} transações`}
+          hint={`${approved.length} transacoes`}
           icon={CheckCircle}
           tone="success"
         />
@@ -142,19 +133,27 @@ export default async function OverviewPage() {
           tone="warning"
         />
         <MetricCard
-          label="Taxa de aprovação"
+          label="Taxa de aprovacao"
           value={`${approvalRate}%`}
-          hint={`${failed.length} não concluídas`}
+          hint={`${failed.length} nao concluidas`}
           icon={XCircle}
           tone={approvalRate >= 80 ? "success" : "danger"}
         />
       </div>
 
-      <OverviewCharts data={series} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <OverviewCharts data={series} />
+        </div>
+        <div>
+          <h2 className="font-medium mb-3">FluxPay Score</h2>
+          <ScoreOverviewCard />
+        </div>
+      </div>
 
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-medium">Últimas transações</h2>
+          <h2 className="font-medium">Ultimas transacoes</h2>
           <Link href="/dashboard/payments" className="text-sm text-flux-red hover:underline">
             Ver todas
           </Link>
@@ -163,19 +162,19 @@ export default async function OverviewPage() {
         {(recent || []).length === 0 ? (
           <EmptyState
             icon={CreditCard}
-            title="Nenhuma transação ainda"
-            description="Assim que você gerar a primeira cobrança PIX, ela aparece aqui com o status atualizado automaticamente."
+            title="Nenhuma transacao ainda"
+            description="Assim que voce gerar a primeira cobranca PIX, ela aparece aqui com o status atualizado automaticamente."
             action={
               write ? (
                 <Link href="/dashboard/payments/new" className="btn-primary">
                   <Plus className="w-4 h-4" />
-                  Criar cobrança
+                  Criar cobranca
                 </Link>
               ) : undefined
             }
           />
         ) : (
-          <Table headers={["ID", "Cliente", "Valor", "Método", "Status", "Data"]}>
+          <Table headers={["ID", "Cliente", "Valor", "Metodo", "Status", "Data"]}>
             {((recent || []) as unknown as Payment[]).map((p) => (
               <tr key={p.id} className="hover:bg-flux-gray/40">
                 <td className="px-6 py-4">
