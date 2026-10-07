@@ -12,6 +12,9 @@ router.post("/payment-links", requireRole("owner", "admin", "developer"), async 
       amount: z.number().int().min(100, "O valor minimo e R$ 1,00."),
       description: z.string().max(200).optional(),
       expires_in_minutes: z.number().int().min(5).max(10080).optional(),
+      color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+      theme: z.enum(["default", "dark", "light", "brand"]).optional(),
+      message: z.string().max(200).optional(),
     });
     const body = schema.parse(req.body);
     const link = await createPaymentLink(

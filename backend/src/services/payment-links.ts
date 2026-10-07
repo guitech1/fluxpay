@@ -4,9 +4,32 @@ import { AppError } from "../middleware/error.js";
 import type { Environment } from "../types/index.js";
 import { createCheckoutSession, payCheckoutSessionWithPix } from "./checkout.js";
 
+const ALLOWED_THEMES = ["default", "dark", "light", "brand"] as const;
+const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+export type PaymentLinkTheme = (typeof ALLOWED_THEMES)[number];
+
+function sanitizeTheme(input?: {
+  color?: string;
+  theme?: string;
+  message?: string;
+}) {
+  const color =
+    input?.color && COLOR_RE.test(input.color) ? input.color : undefined;
+  const theme = ALLOWED_THEMES.includes(input?.theme as PaymentLinkTheme)
+    ? (input!.theme as PaymentLinkTheme)
+    : "default";
+  // Plain text only — strip angle brackets to avoid HTML injection
+  const message = input?.message
+    ? input.message.replace(/[<>]/g, "").trim().slice(0, 200) || undefined
+    : undefined;
+  return { color, theme, message };
+}
+
 /**
  * Link de pagamento estilo banco: valor + descricao -> URL publica + QR + copia e cola.
  * Reutiliza checkout_sessions + createPayment (mesmo caminho NexusPag/sandbox).
+ * Personalizacao (cor, tema, mensagem) fica em metadata — sem tabela nova.
  */
 export async function createPaymentLink(
   organizationId: string,
@@ -15,6 +38,9 @@ export async function createPaymentLink(
     amount: number;
     description?: string;
     expires_in_minutes?: number;
+    color?: string;
+    theme?: string;
+    message?: string;
   }
 ) {
   if (!input.amount || input.amount < 100) {
@@ -23,6 +49,7 @@ export async function createPaymentLink(
 
   const description = (input.description || "Link de pagamento").trim().slice(0, 200);
   const expiresMinutes = input.expires_in_minutes ?? 1440;
+  const appearance = sanitizeTheme(input);
 
   const base = env.FRONTEND_URL.replace(/\/$/, "");
   const session = await createCheckoutSession(organizationId, environment, {
@@ -34,6 +61,9 @@ export async function createPaymentLink(
     metadata: {
       created_from: "payment_link",
       description,
+      appearance_color: appearance.color || null,
+      appearance_theme: appearance.theme,
+      appearance_message: appearance.message || null,
     },
     expires_in_minutes: expiresMinutes,
   });
@@ -53,6 +83,7 @@ export async function createPaymentLink(
     pix_copy_paste: payment.pix_copy_paste ?? null,
     pix_qr_code_base64: payment.pix_qr_code_base64 ?? null,
     simulated: payment.provider === "sandbox",
+    appearance,
   };
 }
 
@@ -118,6 +149,12 @@ export async function listPaymentLinks(
       payment_status: payStatus,
       expires_at: row.expires_at,
       created_at: row.created_at,
+      appearance: {
+        color: typeof meta.appearance_color === "string" ? meta.appearance_color : null,
+        theme: typeof meta.appearance_theme === "string" ? meta.appearance_theme : "default",
+        message:
+          typeof meta.appearance_message === "string" ? meta.appearance_message : null,
+      },
     };
   });
 }
