@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "../config/supabase.js";
-import { getMongoDb, type RankingParticipantDoc } from "../config/mongo.js";
+import { getMongoDb, isMongoConfigured, type RankingParticipantDoc } from "../config/mongo.js";
 import { AppError } from "../middleware/error.js";
 import { computeFluxPayScore, type FluxPayScore } from "./score.js";
 
@@ -17,6 +17,14 @@ export interface RankingEntry {
   source: "organization" | "manual";
   is_active: boolean;
 }
+
+/**
+ * Fonte de verdade por campo:
+ * - amount_cents (org): Supabase payments succeeded + live
+ * - amount_cents (manual): Mongo/Supabase manual_amount_cents (ADM)
+ * - score: computeFluxPayScore (Supabase payments) salvo score_override ADM
+ * - display_name / is_active / organization_id: store de participantes (Mongo se configurado)
+ */
 
 function compareEntries(
   a: { amount_cents: number; score: number; created_at: string; id: string },
@@ -44,7 +52,9 @@ type ParticipantRow = {
 };
 
 async function loadParticipantsActive(): Promise<ParticipantRow[]> {
+  // getMongoDb: null = não configurado; throw 503 = configurado e offline
   const mongo = await getMongoDb();
+
   if (mongo) {
     const docs = await mongo
       .collection<RankingParticipantDoc>("ranking_participants")
@@ -77,10 +87,6 @@ async function loadParticipantsActive(): Promise<ParticipantRow[]> {
   return (data || []) as ParticipantRow[];
 }
 
-/**
- * Volume e Score SEMPRE do Supabase (payments succeeded live).
- * Metadados de participantes: MongoDB se configurado, senao Supabase.
- */
 export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
   const rows = await loadParticipantsActive();
   const orgIds = [
@@ -91,6 +97,7 @@ export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
   const scoreMap = new Map<string, FluxPayScore>();
 
   if (orgIds.length > 0) {
+    // Somente succeeded + live — nunca pending/canceled/expired/failed
     const { data: payments } = await supabaseAdmin
       .from("payments")
       .select("organization_id, amount")
@@ -188,6 +195,34 @@ export async function listRankingParticipantsAdmin() {
   return data || [];
 }
 
+export async function getRankingParticipantById(id: string): Promise<ParticipantRow | null> {
+  const mongo = await getMongoDb();
+  if (mongo) {
+    const doc = await mongo.collection<RankingParticipantDoc>("ranking_participants").findOne({ id });
+    if (!doc) return null;
+    return {
+      id: doc.id,
+      organization_id: doc.organization_id,
+      display_name: doc.display_name,
+      avatar_url: doc.avatar_url,
+      manual_amount_cents: doc.manual_amount_cents,
+      score_override: doc.score_override,
+      is_active: doc.is_active,
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+    };
+  }
+
+  const { data } = await supabaseAdmin
+    .from("ranking_participants")
+    .select(
+      "id, organization_id, display_name, avatar_url, manual_amount_cents, score_override, is_active, created_at, updated_at"
+    )
+    .eq("id", id)
+    .maybeSingle();
+  return (data as ParticipantRow) || null;
+}
+
 export async function upsertRankingParticipant(input: {
   id?: string;
   organization_id?: string | null;
@@ -264,11 +299,24 @@ export async function upsertRankingParticipant(input: {
       created_at: now,
       updated_at: now,
     };
-    await col.insertOne(doc);
+    try {
+      await col.insertOne(doc);
+    } catch (err: unknown) {
+      const code = (err as { code?: number })?.code;
+      if (code === 11000) {
+        throw new AppError(409, "invalid_request", "Esta organizacao ja esta no ranking.");
+      }
+      throw err;
+    }
     return doc;
   }
 
-  // Fallback Supabase
+  // Store Supabase (Mongo nao configurado)
+  if (isMongoConfigured()) {
+    // URI definida mas getMongoDb deveria ter lancado — defesa em profundidade
+    throw new AppError(503, "service_unavailable", "MongoDB indisponivel.");
+  }
+
   const payload: Record<string, unknown> = {
     display_name: name,
     avatar_url: input.avatar_url ?? null,
