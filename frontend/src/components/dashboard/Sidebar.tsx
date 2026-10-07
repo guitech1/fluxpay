@@ -18,6 +18,12 @@ import {
   Link2,
   Menu,
   X,
+  Trophy,
+  UserCircle,
+  Vault,
+  Radar,
+  FlaskConical,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -29,7 +35,7 @@ const NAV_GROUPS: {
   items: { href: string; label: string; icon: React.ElementType }[];
 }[] = [
   {
-    items: [{ href: "/dashboard", label: "Visão geral", icon: LayoutDashboard }],
+    items: [{ href: "/dashboard", label: "Visao geral", icon: LayoutDashboard }],
   },
   {
     label: "Receber",
@@ -38,29 +44,36 @@ const NAV_GROUPS: {
       { href: "/dashboard/payment-links", label: "Link de pagamento", icon: Link2 },
       { href: "/dashboard/wallet", label: "Carteira", icon: Wallet },
       { href: "/dashboard/fluxpay-card", label: "FluxPay Card", icon: Banknote },
+      { href: "/dashboard/vaults", label: "Cofres", icon: Vault },
       { href: "/dashboard/customers", label: "Clientes", icon: Users },
     ],
   },
   {
-    label: "Operação",
+    label: "Operacao",
     items: [
       { href: "/dashboard/refunds", label: "Reembolsos", icon: RefreshCcw },
       { href: "/dashboard/disputes", label: "Disputas", icon: AlertTriangle },
+      { href: "/dashboard/risk", label: "Risk Radar", icon: Radar },
     ],
   },
   {
-    label: "Desenvolvedores",
+    label: "Developer Center",
     items: [
-      { href: "/dashboard/api", label: "API e documentação", icon: Code2 },
+      { href: "/dashboard/developers", label: "Visao geral", icon: Code2 },
+      { href: "/dashboard/api-keys", label: "API Keys", icon: KeyRound },
       { href: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
-      { href: "/dashboard/logs", label: "Registro de chamadas", icon: FileText },
+      { href: "/dashboard/logs", label: "API Logs", icon: FileText },
+      { href: "/dashboard/api", label: "Documentacao", icon: FileText },
     ],
   },
   {
     label: "Conta",
     items: [
+      { href: "/dashboard/profile", label: "Perfil publico", icon: UserCircle },
       { href: "/dashboard/company", label: "Empresa", icon: Building2 },
-      { href: "/dashboard/settings", label: "Configurações", icon: Settings },
+      { href: "/dashboard/settings", label: "Configuracoes", icon: Settings },
+      { href: "/ranking", label: "Ranking", icon: Trophy },
+      { href: "/labs", label: "Labs", icon: FlaskConical },
     ],
   },
 ];
@@ -138,7 +151,7 @@ export function Sidebar({
                     )}
                   >
                     <Icon className="w-[18px] h-[18px] shrink-0" />
-                    <span className={cn("truncate")}>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
                   </Link>
                 );
               })}
@@ -148,9 +161,7 @@ export function Sidebar({
 
         <div className="p-4 border-t border-flux-border shrink-0">
           <div className="text-xs">
-            <div className={cn("font-medium", "truncate")}>
-              {organizationName || "FluxPay"}
-            </div>
+            <div className="font-medium truncate">{organizationName || "FluxPay"}</div>
             <div className="text-flux-muted mt-0.5">
               Ambiente de {environmentLabel(environment).toLowerCase()}
             </div>
