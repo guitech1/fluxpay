@@ -25,6 +25,13 @@ import supportAdminRouter from "./routes/support-admin.js";
 import fluxpayCardDashboardRouter from "./routes/fluxpay-card-dashboard.js";
 import fluxpayCardAdminRouter from "./routes/fluxpay-card-admin.js";
 import paymentLinksDashboardRouter from "./routes/payment-links-dashboard.js";
+import scoreDashboardRouter from "./routes/score-dashboard.js";
+import rankingPublicRouter from "./routes/ranking-public.js";
+import rankingAdminRouter from "./routes/ranking-admin.js";
+import profileDashboardRouter from "./routes/profile-dashboard.js";
+import profilePublicRouter from "./routes/profile-public.js";
+import vaultsDashboardRouter from "./routes/vaults-dashboard.js";
+import riskDashboardRouter from "./routes/risk-dashboard.js";
 
 const app = express();
 
@@ -90,7 +97,7 @@ app.use(
 );
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "fluxpay-api", version: "0.1.0" });
+  res.json({ status: "ok", service: "fluxpay-api", version: "0.2.0" });
 });
 
 app.use(maintenanceGuard);
@@ -103,12 +110,20 @@ app.use("/v1/checkout", checkoutRouter);
 app.use("/v1/balance", balanceRouter);
 app.use("/v1/webhooks", webhooksRouter);
 
+// Public (no session) endpoints
+app.use("/v1", rankingPublicRouter);
+app.use("/v1", profilePublicRouter);
+
 app.use("/dashboard-api", dashboardRouter);
 app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
 app.use("/dashboard-api/support", supportDashboardRouter);
 app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
 app.use("/dashboard-api", paymentLinksDashboardRouter);
+app.use("/dashboard-api", scoreDashboardRouter);
+app.use("/dashboard-api", profileDashboardRouter);
+app.use("/dashboard-api", vaultsDashboardRouter);
+app.use("/dashboard-api", riskDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
@@ -116,6 +131,7 @@ app.use("/admin-api", adminKycRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 app.use("/admin-api", supportAdminRouter);
 app.use("/admin-api/fluxpay-card", fluxpayCardAdminRouter);
+app.use("/admin-api", rankingAdminRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
