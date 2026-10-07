@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { adminFetch } from "@/lib/admin-api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
@@ -30,7 +32,14 @@ interface OrgDetail {
     id: string;
     name: string;
     slug: string;
+    legal_name?: string | null;
+    document?: string | null;
     email: string;
+    phone?: string | null;
+    website?: string | null;
+    country?: string | null;
+    timezone?: string | null;
+    default_currency?: string | null;
     status: string;
     status_reason: string | null;
     status_changed_at: string | null;
@@ -38,10 +47,22 @@ interface OrgDetail {
     kyc_required?: boolean;
     kyc_status?: string;
     kyc_verified_at?: string | null;
+    kyc_document_type?: string | null;
     kyc_document_masked?: string | null;
     kyc_rejection_reason?: string | null;
+    public_bio?: string | null;
+    public_work?: string | null;
+    public_avatar_url?: string | null;
+    public_profile_enabled?: boolean | null;
+    public_display_name?: string | null;
   };
-  members: { id: string; role: string; created_at: string; users?: { email: string } | null }[];
+  environment?: "test" | "live";
+  members: {
+    id: string;
+    role: string;
+    created_at: string;
+    users?: { id?: string; email: string; full_name?: string | null } | null;
+  }[];
   payments: {
     id: string;
     amount: number;
@@ -61,6 +82,51 @@ interface OrgDetail {
     created_at: string;
   }[];
   balance_by_currency: Record<string, number>;
+  api_keys?: {
+    id: string;
+    name: string;
+    key_type: string;
+    environment: string;
+    key_prefix: string;
+    last_used_at: string | null;
+    revoked_at: string | null;
+    created_at: string;
+  }[];
+  webhook_endpoints?: {
+    id: string;
+    url: string;
+    events: string[] | null;
+    description: string | null;
+    enabled: boolean;
+    created_at: string;
+  }[];
+  api_logs?: {
+    id: string;
+    method: string;
+    path: string;
+    status_code: number;
+    duration_ms: number | null;
+    ip_address: string | null;
+    created_at: string;
+  }[];
+  refunds?: {
+    id: string;
+    payment_id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    reason: string | null;
+    created_at: string;
+  }[];
+  disputes?: {
+    id: string;
+    payment_id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    reason: string | null;
+    created_at: string;
+  }[];
   admin_history: {
     id: string;
     admin_email: string | null;
@@ -83,6 +149,15 @@ function kycLabel(status?: string) {
   }
 }
 
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 py-2 border-b border-flux-border/60 last:border-0">
+      <dt className="text-xs uppercase tracking-wider text-flux-muted sm:w-40 shrink-0">{label}</dt>
+      <dd className="text-sm break-all font-mono sm:font-sans">{value ?? "—"}</dd>
+    </div>
+  );
+}
+
 export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: boolean }) {
   const { data, loading, error, reload } = useAdminData<OrgDetail>(`/organizations/${id}`);
   const [action, setAction] = useState<(typeof ACTIONS)[number] | null>(null);
@@ -94,6 +169,7 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
   if (!data) return null;
 
   const org = data.organization;
+  const env = data.environment || "live";
 
   async function changeStatus(status: string, reason: string) {
     await adminFetch(`/organizations/${id}/status`, {
@@ -118,6 +194,14 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
 
   return (
     <div className="space-y-8">
+      <Link
+        href="/admin/organizations"
+        className="inline-flex items-center gap-1.5 text-sm text-flux-muted hover:text-white"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        Voltar para contas
+      </Link>
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -144,6 +228,62 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card space-y-1">
+        <h2 className="font-medium mb-3">Identificadores e cadastro</h2>
+        <dl>
+          <InfoRow label="ID da organização" value={<span className="font-mono text-xs">{org.id}</span>} />
+          <InfoRow label="Slug" value={org.slug} />
+          <InfoRow label="Nome fantasia" value={org.name} />
+          <InfoRow label="Razão social" value={org.legal_name || "—"} />
+          <InfoRow label="Documento" value={org.document || "—"} />
+          <InfoRow label="E-mail" value={org.email} />
+          <InfoRow label="Telefone" value={org.phone || "—"} />
+          <InfoRow label="Website" value={org.website || "—"} />
+          <InfoRow label="País" value={org.country || "—"} />
+          <InfoRow label="Fuso" value={org.timezone || "—"} />
+          <InfoRow label="Moeda padrão" value={org.default_currency || "—"} />
+          <InfoRow label="Ambiente ADM" value={env} />
+          <InfoRow label="Criada em" value={formatDate(org.created_at)} />
+        </dl>
+      </div>
+
+      <div className="card space-y-1">
+        <h2 className="font-medium mb-3">Perfil público</h2>
+        <dl>
+          <InfoRow
+            label="Perfil ativo"
+            value={org.public_profile_enabled ? "Sim" : "Não"}
+          />
+          <InfoRow label="Nome público" value={org.public_display_name || "—"} />
+          <InfoRow label="Trabalho" value={org.public_work || "—"} />
+          <InfoRow label="Bio" value={org.public_bio || "—"} />
+          <InfoRow
+            label="Avatar URL"
+            value={
+              org.public_avatar_url ? (
+                <a href={org.public_avatar_url} className="text-flux-red hover:underline break-all" target="_blank" rel="noreferrer">
+                  {org.public_avatar_url}
+                </a>
+              ) : (
+                "—"
+              )
+            }
+          />
+          <InfoRow
+            label="Link público"
+            value={
+              org.public_profile_enabled && org.slug ? (
+                <Link href={`/u/${org.slug}`} className="text-flux-red hover:underline">
+                  /u/{org.slug}
+                </Link>
+              ) : (
+                "—"
+              )
+            }
+          />
+        </dl>
       </div>
 
       <div className="card space-y-4">
@@ -226,13 +366,17 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
           Object.entries(data.balance_by_currency).map(([currency, net]) => (
             <Metric
               key={currency}
-              label={`Saldo líquido (${currency})`}
+              label={`Saldo líquido (${currency}) · ${env}`}
               value={formatCurrency(Number(net), currency)}
-              hint="Soma das movimentações do ambiente"
+              hint="Soma das movimentações do ambiente selecionado no ADM"
             />
           ))
         ) : (
-          <Metric label="Saldo líquido" value={formatCurrency(0)} hint="Sem movimentações" />
+          <Metric
+            label={`Saldo líquido · ${env}`}
+            value={formatCurrency(0)}
+            hint="Sem movimentações neste ambiente"
+          />
         )}
         <Metric label="Pagamentos (recentes)" value={String(data.payments.length)} />
         <Metric label="Membros" value={String(data.members.length)} />
@@ -240,11 +384,14 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
 
       <div className="space-y-3">
         <h2 className="font-medium">Membros</h2>
-        <AdminTable headers={["Usuário", "Papel", "Desde"]}>
+        <AdminTable headers={["User ID", "E-mail", "Nome", "Papel", "Membership ID", "Desde"]}>
           {data.members.map((m) => (
             <tr key={m.id}>
+              <td className="px-5 py-3 font-mono text-xs text-flux-muted">{m.users?.id || "—"}</td>
               <td className="px-5 py-3">{m.users?.email || "—"}</td>
+              <td className="px-5 py-3 text-flux-muted">{m.users?.full_name || "—"}</td>
               <td className="px-5 py-3 capitalize text-flux-muted">{m.role}</td>
+              <td className="px-5 py-3 font-mono text-xs text-flux-muted">{m.id}</td>
               <td className="px-5 py-3 text-flux-muted">{formatDate(m.created_at)}</td>
             </tr>
           ))}
@@ -256,7 +403,7 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
         <AdminTable headers={["ID", "Valor", "Taxa", "Método", "Status", "Data"]}>
           {data.payments.map((p) => (
             <tr key={p.id}>
-              <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(p.id)}</td>
+              <td className="px-5 py-3 font-mono text-xs text-flux-muted">{p.id}</td>
               <td className="px-5 py-3">{formatCurrency(p.amount, p.currency)}</td>
               <td className="px-5 py-3 text-flux-muted">
                 {p.fee_amount ? formatCurrency(p.fee_amount, p.currency) : "—"}
@@ -272,10 +419,11 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
       </div>
 
       <div className="space-y-3">
-        <h2 className="font-medium">Movimentações</h2>
-        <AdminTable headers={["Tipo", "Valor", "Líquido", "Descrição", "Data"]}>
+        <h2 className="font-medium">Movimentações (ledger)</h2>
+        <AdminTable headers={["ID", "Tipo", "Valor", "Líquido", "Descrição", "Data"]}>
           {data.balance_transactions.map((t) => (
             <tr key={t.id}>
+              <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(t.id)}</td>
               <td className="px-5 py-3 capitalize">{t.type}</td>
               <td className="px-5 py-3">{formatCurrency(t.amount, t.currency)}</td>
               <td className="px-5 py-3 text-flux-muted">{formatCurrency(t.net, t.currency)}</td>
@@ -285,6 +433,90 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
           ))}
         </AdminTable>
       </div>
+
+      {(data.api_keys?.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          <h2 className="font-medium">API Keys (prefixos — sem segredo)</h2>
+          <AdminTable headers={["ID", "Nome", "Tipo", "Prefixo", "Revogada", "Criada"]}>
+            {(data.api_keys || []).map((k) => (
+              <tr key={k.id}>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(k.id)}</td>
+                <td className="px-5 py-3">{k.name}</td>
+                <td className="px-5 py-3 text-flux-muted">{k.key_type}</td>
+                <td className="px-5 py-3 font-mono text-xs">{k.key_prefix}</td>
+                <td className="px-5 py-3 text-flux-muted">{k.revoked_at ? formatDate(k.revoked_at) : "—"}</td>
+                <td className="px-5 py-3 text-flux-muted">{formatDate(k.created_at)}</td>
+              </tr>
+            ))}
+          </AdminTable>
+        </div>
+      )}
+
+      {(data.webhook_endpoints?.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          <h2 className="font-medium">Webhooks</h2>
+          <AdminTable headers={["ID", "URL", "Ativo", "Criado"]}>
+            {(data.webhook_endpoints || []).map((w) => (
+              <tr key={w.id}>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(w.id)}</td>
+                <td className="px-5 py-3 text-xs break-all">{w.url}</td>
+                <td className="px-5 py-3">{w.enabled ? "Sim" : "Não"}</td>
+                <td className="px-5 py-3 text-flux-muted">{formatDate(w.created_at)}</td>
+              </tr>
+            ))}
+          </AdminTable>
+        </div>
+      )}
+
+      {(data.refunds?.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          <h2 className="font-medium">Reembolsos</h2>
+          <AdminTable headers={["ID", "Payment", "Valor", "Status", "Data"]}>
+            {(data.refunds || []).map((r) => (
+              <tr key={r.id}>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(r.id)}</td>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(r.payment_id)}</td>
+                <td className="px-5 py-3">{formatCurrency(r.amount, r.currency)}</td>
+                <td className="px-5 py-3">{r.status}</td>
+                <td className="px-5 py-3 text-flux-muted">{formatDate(r.created_at)}</td>
+              </tr>
+            ))}
+          </AdminTable>
+        </div>
+      )}
+
+      {(data.disputes?.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          <h2 className="font-medium">Disputas</h2>
+          <AdminTable headers={["ID", "Payment", "Valor", "Status", "Data"]}>
+            {(data.disputes || []).map((d) => (
+              <tr key={d.id}>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(d.id)}</td>
+                <td className="px-5 py-3 font-mono text-xs text-flux-muted">{short(d.payment_id)}</td>
+                <td className="px-5 py-3">{formatCurrency(d.amount, d.currency)}</td>
+                <td className="px-5 py-3">{d.status}</td>
+                <td className="px-5 py-3 text-flux-muted">{formatDate(d.created_at)}</td>
+              </tr>
+            ))}
+          </AdminTable>
+        </div>
+      )}
+
+      {(data.admin_history?.length ?? 0) > 0 && (
+        <div className="space-y-3">
+          <h2 className="font-medium">Histórico administrativo</h2>
+          <AdminTable headers={["Ação", "Admin", "Motivo", "Quando"]}>
+            {data.admin_history.map((h) => (
+              <tr key={h.id}>
+                <td className="px-5 py-3 font-mono text-xs">{h.action}</td>
+                <td className="px-5 py-3 text-flux-muted">{h.admin_email || "—"}</td>
+                <td className="px-5 py-3 text-flux-muted max-w-[240px] truncate">{h.reason || "—"}</td>
+                <td className="px-5 py-3 text-flux-muted whitespace-nowrap">{formatDate(h.created_at)}</td>
+              </tr>
+            ))}
+          </AdminTable>
+        </div>
+      )}
 
       {action && (
         <ReasonDialog
