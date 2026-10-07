@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "../config/supabase.js";
+import { getMongoDb, type RankingParticipantDoc } from "../config/mongo.js";
 import { AppError } from "../middleware/error.js";
 import { computeFluxPayScore, type FluxPayScore } from "./score.js";
 
@@ -16,9 +18,6 @@ export interface RankingEntry {
   is_active: boolean;
 }
 
-/**
- * Deterministic tie-break: higher amount → higher score → older created_at → id ASC.
- */
 function compareEntries(
   a: { amount_cents: number; score: number; created_at: string; id: string },
   b: { amount_cents: number; score: number; created_at: string; id: string }
@@ -31,9 +30,40 @@ function compareEntries(
   return a.id.localeCompare(b.id);
 }
 
-export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
-  // Active org-linked participants + manual participants
-  const { data: participants, error } = await supabaseAdmin
+type ParticipantRow = {
+  id: string;
+  organization_id: string | null;
+  display_name: string;
+  avatar_url: string | null;
+  manual_amount_cents: number | null;
+  score_override: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string;
+  sort_priority?: number;
+};
+
+async function loadParticipantsActive(): Promise<ParticipantRow[]> {
+  const mongo = await getMongoDb();
+  if (mongo) {
+    const docs = await mongo
+      .collection<RankingParticipantDoc>("ranking_participants")
+      .find({ is_active: true })
+      .sort({ created_at: 1 })
+      .toArray();
+    return docs.map((d) => ({
+      id: d.id,
+      organization_id: d.organization_id,
+      display_name: d.display_name,
+      avatar_url: d.avatar_url,
+      manual_amount_cents: d.manual_amount_cents,
+      score_override: d.score_override,
+      is_active: d.is_active,
+      created_at: d.created_at,
+    }));
+  }
+
+  const { data, error } = await supabaseAdmin
     .from("ranking_participants")
     .select(
       "id, organization_id, display_name, avatar_url, manual_amount_cents, score_override, is_active, created_at, sort_priority"
@@ -44,17 +74,18 @@ export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
   if (error) {
     throw new AppError(500, "api_error", "Nao foi possivel carregar o ranking.");
   }
+  return (data || []) as ParticipantRow[];
+}
 
-  const rows = participants || [];
+/**
+ * Volume e Score SEMPRE do Supabase (payments succeeded live).
+ * Metadados de participantes: MongoDB se configurado, senao Supabase.
+ */
+export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
+  const rows = await loadParticipantsActive();
   const orgIds = [
-    ...new Set(
-      rows.map((r) => r.organization_id).filter(Boolean) as string[]
-    ),
+    ...new Set(rows.map((r) => r.organization_id).filter(Boolean) as string[]),
   ];
-
-  // Also include active organizations that have succeeded live payments even if not manually added,
-  // but only if they are already in ranking_participants OR we auto-include top sellers.
-  // Spec: ADM selects participants. So we only use ranking_participants table.
 
   const volumeMap = new Map<string, number>();
   const scoreMap = new Map<string, FluxPayScore>();
@@ -84,26 +115,24 @@ export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
     const amount = isOrg
       ? volumeMap.get(r.organization_id as string) || 0
       : r.manual_amount_cents || 0;
-    const scoreData = isOrg
-      ? scoreMap.get(r.organization_id as string)
-      : null;
+    const scoreData = isOrg ? scoreMap.get(r.organization_id as string) : null;
     const score =
       typeof r.score_override === "number"
         ? r.score_override
         : scoreData?.score ?? 0;
 
     return {
-      id: r.id as string,
-      organization_id: (r.organization_id as string) || null,
-      display_name: r.display_name as string,
-      avatar_url: (r.avatar_url as string) || null,
+      id: r.id,
+      organization_id: r.organization_id,
+      display_name: r.display_name,
+      avatar_url: r.avatar_url,
       amount_cents: amount,
       score,
       score_level: scoreData?.level ?? "bronze",
       score_level_label: scoreData?.level_label ?? "Bronze",
       source: isOrg ? ("organization" as const) : ("manual" as const),
       is_active: true,
-      created_at: r.created_at as string,
+      created_at: r.created_at,
     };
   });
 
@@ -125,6 +154,27 @@ export async function getRankingBoard(limit = 50): Promise<RankingEntry[]> {
 }
 
 export async function listRankingParticipantsAdmin() {
+  const mongo = await getMongoDb();
+  if (mongo) {
+    const docs = await mongo
+      .collection<RankingParticipantDoc>("ranking_participants")
+      .find({})
+      .sort({ created_at: -1 })
+      .toArray();
+    return docs.map((d) => ({
+      id: d.id,
+      organization_id: d.organization_id,
+      display_name: d.display_name,
+      avatar_url: d.avatar_url,
+      manual_amount_cents: d.manual_amount_cents,
+      score_override: d.score_override,
+      is_active: d.is_active,
+      created_at: d.created_at,
+      updated_at: d.updated_at,
+      sort_priority: d.sort_priority,
+    }));
+  }
+
   const { data, error } = await supabaseAdmin
     .from("ranking_participants")
     .select(
@@ -154,7 +204,6 @@ export async function upsertRankingParticipant(input: {
   }
 
   if (input.organization_id) {
-    // Ensure org exists
     const { data: org } = await supabaseAdmin
       .from("organizations")
       .select("id, name, logo_url")
@@ -165,17 +214,70 @@ export async function upsertRankingParticipant(input: {
     }
   }
 
+  const now = new Date().toISOString();
+  const mongo = await getMongoDb();
+
+  if (mongo) {
+    const col = mongo.collection<RankingParticipantDoc>("ranking_participants");
+
+    if (input.id) {
+      const update: Partial<RankingParticipantDoc> = {
+        display_name: name,
+        avatar_url: input.avatar_url ?? null,
+        organization_id: input.organization_id ?? null,
+        manual_amount_cents:
+          input.organization_id != null ? null : input.manual_amount_cents ?? 0,
+        score_override: input.score_override ?? null,
+        is_active: input.is_active ?? true,
+        updated_at: now,
+      };
+      const result = await col.findOneAndUpdate(
+        { id: input.id },
+        { $set: update },
+        { returnDocument: "after" }
+      );
+      if (!result) throw new AppError(404, "not_found", "Participante nao encontrado.");
+      return result;
+    }
+
+    if (input.organization_id) {
+      const existing = await col.findOne({
+        organization_id: input.organization_id,
+        is_active: true,
+      });
+      if (existing) {
+        throw new AppError(409, "invalid_request", "Esta organizacao ja esta no ranking.");
+      }
+    }
+
+    const doc: RankingParticipantDoc = {
+      id: randomUUID(),
+      display_name: name,
+      avatar_url: input.avatar_url ?? null,
+      organization_id: input.organization_id ?? null,
+      manual_amount_cents:
+        input.organization_id != null ? null : input.manual_amount_cents ?? 0,
+      score_override: input.score_override ?? null,
+      is_active: input.is_active ?? true,
+      sort_priority: 0,
+      created_by: input.created_by ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+    await col.insertOne(doc);
+    return doc;
+  }
+
+  // Fallback Supabase
   const payload: Record<string, unknown> = {
     display_name: name,
     avatar_url: input.avatar_url ?? null,
     organization_id: input.organization_id ?? null,
     manual_amount_cents:
-      input.organization_id != null
-        ? null
-        : input.manual_amount_cents ?? 0,
+      input.organization_id != null ? null : input.manual_amount_cents ?? 0,
     score_override: input.score_override ?? null,
     is_active: input.is_active ?? true,
-    updated_at: new Date().toISOString(),
+    updated_at: now,
   };
 
   if (input.id) {
@@ -197,11 +299,7 @@ export async function upsertRankingParticipant(input: {
     .single();
   if (error) {
     if (error.code === "23505") {
-      throw new AppError(
-        409,
-        "invalid_request",
-        "Esta organizacao ja esta no ranking."
-      );
+      throw new AppError(409, "invalid_request", "Esta organizacao ja esta no ranking.");
     }
     throw new AppError(500, "api_error", error.message);
   }
@@ -209,10 +307,16 @@ export async function upsertRankingParticipant(input: {
 }
 
 export async function removeRankingParticipant(id: string) {
-  const { error } = await supabaseAdmin
-    .from("ranking_participants")
-    .delete()
-    .eq("id", id);
+  const mongo = await getMongoDb();
+  if (mongo) {
+    const result = await mongo.collection("ranking_participants").deleteOne({ id });
+    if (result.deletedCount === 0) {
+      throw new AppError(404, "not_found", "Participante nao encontrado.");
+    }
+    return { id, deleted: true };
+  }
+
+  const { error } = await supabaseAdmin.from("ranking_participants").delete().eq("id", id);
   if (error) throw new AppError(500, "api_error", error.message);
   return { id, deleted: true };
 }
