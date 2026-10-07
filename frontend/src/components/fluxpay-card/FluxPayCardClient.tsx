@@ -82,20 +82,24 @@ export function FluxPayCardClient() {
   const [copied, setCopied] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { preserveView?: boolean }) => {
     try {
       setError(null);
       const data = await dashboardFetch<ApiState>("/fluxpay-card");
       setState(data);
-      setView("main");
+      if (!opts?.preserveView) {
+        setView("main");
+      }
     } catch (e) {
       setError((e as Error).message);
-      setView("error");
+      if (!opts?.preserveView) {
+        setView("error");
+      }
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   function amountToCents(str: string): number {
@@ -183,7 +187,7 @@ export function FluxPayCardClient() {
       setReceipt(data.transaction);
       setTransferPassword("");
       setView("receipt");
-      await load();
+      await load({ preserveView: true });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -261,7 +265,7 @@ export function FluxPayCardClient() {
     return (
       <div className="card max-w-md mx-auto text-center space-y-4">
         <p className="text-sm text-red-400">{error || "Erro ao carregar."}</p>
-        <button type="button" className="btn-primary" onClick={load}>
+        <button type="button" className="btn-primary" onClick={() => void load()}>
           Tentar novamente
         </button>
       </div>
@@ -605,12 +609,12 @@ export function FluxPayCardClient() {
                 className="btn-secondary"
                 onClick={() => setConfirmBlock(true)}
               >
-                Bloquear cartao
+                Bloquear carteira
               </button>
             ) : (
               <button
                 type="button"
-                className="btn-secondary border-red-500/40 text-red-300"
+                className="btn-primary bg-red-600 hover:bg-red-500"
                 disabled={busy}
                 onClick={handleBlock}
               >
@@ -626,25 +630,19 @@ export function FluxPayCardClient() {
             disabled={busy}
             onClick={handleUnblock}
           >
-            {busy ? "Desbloqueando..." : "Desbloquear cartao"}
+            {busy ? "Desbloqueando..." : "Solicitar desbloqueio"}
           </button>
         )}
       </div>
 
-      {card && (
-        <div className="card space-y-2 text-sm">
-          <div className="text-xs uppercase tracking-wider text-flux-muted mb-2">
-            Informacoes da carteira
-          </div>
-          <Row label="Titular" value={card.full_name} />
-          <Row
-            label="Status"
-            value={status === "blocked" ? "Bloqueado" : "Aprovado"}
-          />
-          {card.card_number_display && (
-            <Row label="Numero" value={card.card_number_display} mono />
-          )}
-        </div>
+      {receipt && view === "main" && (
+        <button
+          type="button"
+          className="btn-secondary w-full text-sm"
+          onClick={() => setView("receipt")}
+        >
+          Reabrir ultimo recibo
+        </button>
       )}
     </div>
   );
