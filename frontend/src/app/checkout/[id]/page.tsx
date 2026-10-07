@@ -5,20 +5,13 @@ import { Copy, Check, Loader2, QrCode, CheckCircle2, XCircle, ShieldCheck } from
 import { formatCurrency } from "@/lib/utils";
 import { FluxLogo } from "@/components/brand/FluxLogo";
 
-/**
- * Pagina publica de checkout — quem abre e o cliente final do lojista, sem
- * login e sem API key. Por isso ela nao usa o Supabase client (a RLS bloqueia
- * anon em checkout_sessions, de proposito) e fala so com as rotas publicas do
- * backend:
- *   GET  /v1/checkout/sessions/:id         -> dados publicos da sessao
- *   POST /v1/checkout/sessions/:id/pay     -> gera (ou reaproveita) o PIX
- *   GET  /v1/checkout/sessions/:id/status  -> polling ate o webhook confirmar
- *
- * PIX nao confirma de forma sincrona: quem muda o status e o webhook da
- * NexusPag chegando no backend. Daqui, so resta perguntar de tempos em tempos.
- */
-
 const API = process.env.NEXT_PUBLIC_API_URL || "";
+
+interface Appearance {
+  color: string | null;
+  theme: string;
+  message: string | null;
+}
 
 interface SessionData {
   id: string;
@@ -27,6 +20,7 @@ interface SessionData {
   status: "open" | "complete" | "expired";
   line_items: { name: string; amount: number; quantity?: number }[];
   expires_at: string | null;
+  appearance?: Appearance;
 }
 
 interface PixData {
@@ -35,8 +29,40 @@ interface PixData {
   pix_copy_paste: string | null;
   pix_qr_code_base64: string | null;
   expires_at: string | null;
-  /** true quando a cobranca foi criada pelo provider sandbox (ambiente de teste). */
   simulated?: boolean;
+}
+
+function themeClasses(theme: string) {
+  switch (theme) {
+    case "light":
+      return {
+        page: "min-h-screen bg-zinc-100 flex items-center justify-center px-4 py-8 sm:py-12",
+        card: "rounded-2xl border border-zinc-200 bg-white shadow-sm space-y-6 p-6 text-zinc-900",
+        muted: "text-zinc-500",
+        border: "border-zinc-200",
+      };
+    case "dark":
+      return {
+        page: "min-h-screen bg-black flex items-center justify-center px-4 py-8 sm:py-12",
+        card: "rounded-2xl border border-zinc-800 bg-zinc-950 space-y-6 p-6 text-white",
+        muted: "text-zinc-400",
+        border: "border-zinc-800",
+      };
+    case "brand":
+      return {
+        page: "min-h-screen bg-flux-black surface-grid flex items-center justify-center px-4 py-8 sm:py-12",
+        card: "card space-y-6",
+        muted: "text-flux-muted",
+        border: "border-flux-border",
+      };
+    default:
+      return {
+        page: "min-h-screen bg-flux-black surface-grid flex items-center justify-center px-4 py-8 sm:py-12",
+        card: "card space-y-6",
+        muted: "text-flux-muted",
+        border: "border-flux-border",
+      };
+  }
 }
 
 export default function CheckoutPage({ params }: { params: Promise<{ id: string }> }) {
@@ -51,20 +77,20 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
   const [simulating, setSimulating] = useState(false);
   const successUrl = useRef<string | null>(null);
 
-  /**
-   * Le o status publico da sessao e guarda o success_url.
-   *
-   * Antes, o success_url so era capturado dentro do polling: quem recarregava
-   * a pagina depois de pagar, ou confirmava pelo botao de simulacao, ficava
-   * preso na tela de "pagamento confirmado" sem nunca voltar para a loja.
-   */
+  const appearance = session?.appearance;
+  const accent = appearance?.color && /^#[0-9A-Fa-f]{6}$/.test(appearance.color)
+    ? appearance.color
+    : "#EF4444";
+  const theme = appearance?.theme || "default";
+  const tc = themeClasses(theme);
+
   const captureSuccessUrl = useCallback(async () => {
     try {
       const res = await fetch(`${API}/v1/checkout/sessions/${id}/status`);
       const json = await res.json();
       if (res.ok) successUrl.current = json.data.success_url ?? null;
     } catch {
-      // Sem success_url a tela apenas nao redireciona — nada quebra.
+      // ignore
     }
   }, [id]);
 
@@ -72,7 +98,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
     try {
       const res = await fetch(`${API}/v1/checkout/sessions/${id}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error?.message || "Sessão não encontrada.");
+      if (!res.ok) throw new Error(json?.error?.message || "Sessao nao encontrada.");
 
       setSession(json.data);
       if (json.data.status === "complete") {
@@ -85,7 +111,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
       }
     } catch (err) {
       setStatus("error");
-      setMessage(err instanceof Error ? err.message : "Não foi possível carregar o pagamento.");
+      setMessage(err instanceof Error ? err.message : "Nao foi possivel carregar o pagamento.");
     }
   }, [id, captureSuccessUrl]);
 
@@ -93,7 +119,6 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
     loadSession();
   }, [loadSession]);
 
-  // Polling: o PIX so vira "pago" quando o webhook da NexusPag chega no backend.
   useEffect(() => {
     if (!pix || status !== "ready") return;
 
@@ -110,14 +135,13 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
           setStatus("expired");
         }
       } catch {
-        // Falha de rede no polling nao muda nada: tenta de novo no proximo tick.
+        // retry
       }
     }, 4000);
 
     return () => clearInterval(timer);
   }, [pix, status, id]);
 
-  // Redireciona para o success_url do lojista, quando houver.
   useEffect(() => {
     if (status !== "paid" || !successUrl.current) return;
     const timer = setTimeout(() => {
@@ -132,7 +156,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
     try {
       const res = await fetch(`${API}/v1/checkout/sessions/${id}/pay`, { method: "POST" });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error?.message || "Não foi possível gerar o PIX.");
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel gerar o PIX.");
       setPix(json.data);
       if (json.data.status === "succeeded") setStatus("paid");
     } catch (err) {
@@ -142,11 +166,6 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
     }
   }
 
-  /**
-   * So aparece quando o backend marca a cobranca como simulada (ambiente de
-   * teste). Em producao o botao nao existe e a rota devolve 404 — quem
-   * confirma um PIX de verdade e o webhook da NexusPag.
-   */
   async function simulatePayment() {
     setSimulating(true);
     setMessage(null);
@@ -155,7 +174,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
         method: "POST",
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error?.message || "Não foi possível simular.");
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel simular.");
       await captureSuccessUrl();
       setStatus("paid");
     } catch (err) {
@@ -173,30 +192,37 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
   }
 
   return (
-    <div className="min-h-screen bg-flux-black surface-grid flex items-center justify-center px-4 py-8 sm:py-12">
+    <div className={tc.page}>
       <div className="w-full max-w-md">
         <FluxLogo className="justify-center w-full mb-6" markClassName="w-8 h-8" textClassName="text-lg" />
 
-        <div className="card space-y-6">
+        <div
+          className={tc.card}
+          style={
+            theme === "brand" || theme === "default"
+              ? { boxShadow: `0 0 0 1px ${accent}22, 0 20px 50px ${accent}15` }
+              : undefined
+          }
+        >
           {status === "loading" && (
             <div className="py-12 flex justify-center">
-              <Loader2 className="w-6 h-6 animate-spin text-flux-muted" />
+              <Loader2 className="w-6 h-6 animate-spin" style={{ color: accent }} />
             </div>
           )}
 
           {status === "error" && (
             <div className="py-8 text-center space-y-2">
               <XCircle className="w-8 h-8 text-red-400 mx-auto" />
-              <p className="text-sm text-flux-muted">{message}</p>
+              <p className={`text-sm ${tc.muted}`}>{message}</p>
             </div>
           )}
 
           {status === "expired" && (
             <div className="py-8 text-center space-y-2">
               <XCircle className="w-8 h-8 text-orange-400 mx-auto" />
-              <h1 className="font-medium">Cobrança expirada</h1>
-              <p className="text-sm text-flux-muted">
-                Peça um novo link ao vendedor para concluir o pagamento.
+              <h1 className="font-medium">Cobranca expirada</h1>
+              <p className={`text-sm ${tc.muted}`}>
+                Peca um novo link ao vendedor para concluir o pagamento.
               </p>
             </div>
           )}
@@ -205,30 +231,36 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
             <div className="py-8 text-center space-y-2">
               <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
               <h1 className="font-medium text-lg">Pagamento confirmado</h1>
-              <p className="text-sm text-flux-muted">
+              <p className={`text-sm ${tc.muted}`}>
                 {successUrl.current
                   ? "Redirecionando de volta para a loja..."
-                  : "Você já pode fechar esta página."}
+                  : "Voce ja pode fechar esta pagina."}
               </p>
             </div>
           )}
 
           {status === "ready" && session && (
             <>
+              {appearance?.message && (
+                <p className={`text-sm text-center ${tc.muted} leading-relaxed`}>
+                  {appearance.message}
+                </p>
+              )}
+
               <div className="text-center">
-                <p className="text-sm text-flux-muted">Total a pagar</p>
+                <p className={`text-sm ${tc.muted}`}>Total a pagar</p>
                 <p className="text-3xl font-semibold tracking-tight mt-1">
                   {formatCurrency(session.amount, session.currency)}
                 </p>
               </div>
 
               {session.line_items?.length > 0 && (
-                <ul className="divide-y divide-flux-border border-y border-flux-border">
+                <ul className={`divide-y ${tc.border} border-y ${tc.border}`}>
                   {session.line_items.map((item, i) => (
                     <li key={i} className="flex justify-between py-2.5 text-sm">
-                      <span className="text-flux-muted">
+                      <span className={tc.muted}>
                         {item.name}
-                        {item.quantity && item.quantity > 1 ? ` × ${item.quantity}` : ""}
+                        {item.quantity && item.quantity > 1 ? ` x ${item.quantity}` : ""}
                       </span>
                       <span>{formatCurrency(item.amount, session.currency)}</span>
                     </li>
@@ -238,7 +270,8 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
 
               {!pix ? (
                 <button
-                  className="btn-primary w-full flex items-center justify-center gap-2"
+                  className="w-full flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                  style={{ backgroundColor: accent }}
                   onClick={generatePix}
                   disabled={generating}
                 >
@@ -265,14 +298,14 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
                   {pix.pix_copy_paste && (
                     <div>
                       <p className="text-sm font-medium mb-1.5">PIX copia e cola</p>
-                      <div className="flex items-center gap-2 bg-flux-gray border border-flux-border rounded-lg px-3 py-2">
+                      <div className={`flex items-center gap-2 rounded-lg px-3 py-2 border ${tc.border}`}>
                         <code className="flex-1 min-w-0 font-mono text-[11px] break-all line-clamp-3">
                           {pix.pix_copy_paste}
                         </code>
                         <button
-                          className="text-flux-muted hover:text-white shrink-0 p-2 -m-1"
+                          className={`${tc.muted} hover:opacity-80 shrink-0 p-2 -m-1`}
                           onClick={copyCode}
-                          aria-label="Copiar código PIX"
+                          aria-label="Copiar codigo PIX"
                         >
                           {copied ? (
                             <Check className="w-4 h-4 text-emerald-400" />
@@ -284,16 +317,16 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
                     </div>
                   )}
 
-                  <div className="flex items-center justify-center gap-2 text-sm text-flux-muted">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Aguardando confirmação do pagamento...
+                  <div className={`flex items-center justify-center gap-2 text-sm ${tc.muted}`}>
+                    <Loader2 className="w-4 h-4 animate-spin" style={{ color: accent }} />
+                    Aguardando confirmacao do pagamento...
                   </div>
 
                   {pix.simulated && (
                     <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3.5 space-y-3">
                       <p className="text-xs text-amber-200/90 leading-relaxed">
-                        Ambiente de teste: este QR Code não é válido em nenhum banco e
-                        nenhum dinheiro é movimentado.
+                        Ambiente de teste: este QR Code nao e valido em nenhum banco e
+                        nenhum dinheiro e movimentado.
                       </p>
                       <button
                         className="btn-secondary w-full"
@@ -305,7 +338,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
                         ) : (
                           <Check className="w-4 h-4" />
                         )}
-                        Simular confirmação do pagamento
+                        Simular confirmacao do pagamento
                       </button>
                     </div>
                   )}
@@ -321,9 +354,9 @@ export default function CheckoutPage({ params }: { params: Promise<{ id: string 
           )}
         </div>
 
-        <p className="flex items-center justify-center gap-1.5 text-center text-xs text-flux-muted mt-6">
+        <p className={`flex items-center justify-center gap-1.5 text-center text-xs ${tc.muted} mt-6`}>
           <ShieldCheck className="w-3.5 h-3.5" />
-          Pagamento processado com segurança pelo FluxPay
+          Pagamento processado com seguranca pelo FluxPay
         </p>
       </div>
     </div>

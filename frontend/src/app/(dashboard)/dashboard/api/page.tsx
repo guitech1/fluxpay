@@ -5,90 +5,11 @@ import { PageHeader, SectionTitle, ErrorState } from "@/components/dashboard/ui"
 import { ApiKeysManager } from "@/components/dashboard/ApiKeysManager";
 import { ApiDocs } from "@/components/dashboard/ApiDocs";
 import { DownloadDocsButton } from "@/components/dashboard/DownloadDocsButton";
+import { ApiExplorer } from "@/components/dashboard/ApiExplorer";
 import type { ApiKey } from "@/lib/types";
+import { buildCompleteApiMarkdown } from "@/lib/api-docs-content";
 
 export const dynamic = "force-dynamic";
-
-function buildApiMarkdown(apiBaseUrl: string, environment: string): string {
-  const keyExample = "sk_" + environment + "_...";
-  const fence = "```";
-  const lines = [
-    "# FluxPay API",
-    "",
-    "Base: " + apiBaseUrl,
-    "Ambiente dos exemplos: " + environment,
-    "",
-    "## Autenticacao",
-    "",
-    fence,
-    "Authorization: Bearer " + keyExample,
-    "Content-Type: application/json",
-    fence,
-    "",
-    "A chave determina o ambiente (sk_test_ / sk_live_). Nao existe parametro de ambiente na requisicao.",
-    "",
-    "## Criar cobranca PIX",
-    "",
-    "POST " + apiBaseUrl + "/v1/payments",
-    "",
-    fence + "bash",
-    "curl -X POST " + apiBaseUrl + "/v1/payments \\",
-    '  -H "Authorization: Bearer ' + keyExample + '" \\',
-    '  -H "Content-Type: application/json" \\',
-    '  -H "Idempotency-Key: pedido-1042" \\',
-    "  -d '{",
-    '    "amount": 4990,',
-    '    "currency": "BRL",',
-    '    "description": "Pedido 1042",',
-    '    "payment_method": { "type": "pix" }',
-    "  }'",
-    fence,
-    "",
-    "Valores sempre em centavos. R$ 49,90 = 4990.",
-    "",
-    "## Endpoints",
-    "",
-    "- POST /v1/payments — cria cobranca",
-    "- GET /v1/payments — lista",
-    "- GET /v1/payments/:id — consulta",
-    "- POST /v1/payments/:id/cancel — cancela pendente",
-    "- POST /v1/payments/:id/refund — reembolso (quando suportado)",
-    "- POST /v1/customers — cadastra cliente",
-    "- GET /v1/customers — lista clientes",
-    "- GET /v1/customers/:id — consulta cliente",
-    "- POST /v1/checkout/sessions — checkout hospedado",
-    "- GET /v1/checkout/sessions/:id — consulta sessao",
-    "- GET /v1/balance — saldo",
-    "- POST /v1/webhooks/endpoints — cadastra webhook",
-    "- GET /v1/webhooks/endpoints — lista webhooks",
-    "",
-    "## Webhooks de saida",
-    "",
-    "Cabecalho FluxPay-Signature: t=<unix>,v1=<hmac>",
-    'HMAC-SHA256 de "<timestamp>.<corpo_bruto>" com o segredo do endpoint.',
-    "",
-    "## Webhook de entrada do adquirente",
-    "",
-    "Configure no painel do adquirente:",
-    "",
-    apiBaseUrl + "/v1/webhooks/nexuspag",
-    "",
-    "## Erros",
-    "",
-    fence + "json",
-    "{",
-    '  "error": {',
-    '    "type": "validation_error",',
-    '    "message": "Informe um valor valido para a cobranca."',
-    "  }",
-    "}",
-    fence,
-    "",
-    "400 validacao · 401 chave · 403 permissao · 404 nao encontrado · 429 rate limit · 502 adquirente",
-    "",
-  ];
-  return lines.join("\n");
-}
 
 export default async function ApiPage() {
   const { supabase, environment, role } = await requireDashboardContext();
@@ -100,18 +21,18 @@ export default async function ApiPage() {
     .order("created_at", { ascending: false });
 
   const apiBaseUrl = await getPublicBaseUrl();
-  const markdown = buildApiMarkdown(apiBaseUrl, environment);
+  const markdown = buildCompleteApiMarkdown(apiBaseUrl, environment);
 
   return (
     <div className="space-y-10">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader
           title="API e documentacao"
-          description={`Chaves, endpoints e exemplos. Voce esta no ambiente de ${environmentLabel(
+          description={`Chaves, explorer, endpoints e exemplos. Ambiente de ${environmentLabel(
             environment
           ).toLowerCase()}.`}
         />
-        <DownloadDocsButton markdown={markdown} filename={`fluxpay-api-${environment}.md`} />
+        <DownloadDocsButton markdown={markdown} filename={`fluxpay-api-${environment}.html`} />
       </div>
 
       <section className="space-y-3">
@@ -119,7 +40,7 @@ export default async function ApiPage() {
           title="Chaves de API"
           description={`Credenciais do ambiente de ${environmentLabel(
             environment
-          ).toLowerCase()}. Para o outro ambiente, troque no cabecalho.`}
+          ).toLowerCase()}.`}
         />
         {error ? (
           <ErrorState detail={error.message} />
@@ -130,6 +51,14 @@ export default async function ApiPage() {
             canWrite={canWrite(role)}
           />
         )}
+      </section>
+
+      <section className="space-y-3">
+        <SectionTitle
+          title="API Explorer"
+          description="Teste endpoints reais da FluxPay. A chave permanece apenas no navegador."
+        />
+        <ApiExplorer apiBaseUrl={apiBaseUrl} />
       </section>
 
       <ApiDocs
