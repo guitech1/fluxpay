@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../config/supabase.js";
+import { getMongoDb, type OrgScoreDoc } from "../config/mongo.js";
 import type { Environment } from "../types/index.js";
 
 export type ScoreLevel = "bronze" | "silver" | "gold" | "elite";
@@ -33,6 +34,9 @@ const LEVEL_THRESHOLDS: { level: ScoreLevel; min: number }[] = [
   { level: "bronze", min: 0 },
 ];
 
+/** Cache auxiliar válido por 5 minutos. Sempre recalcula a partir de payments se expirado/ausente. */
+const SCORE_CACHE_TTL_MS = 5 * 60 * 1000;
+
 function levelFromScore(score: number): ScoreLevel {
   for (const t of LEVEL_THRESHOLDS) {
     if (score >= t.min) return t.level;
@@ -57,13 +61,25 @@ function progressToNext(score: number, level: ScoreLevel): number {
   return Math.min(100, Math.max(0, Math.round(((score - currentMin) / span) * 100)));
 }
 
+function docToScore(doc: OrgScoreDoc): FluxPayScore {
+  return {
+    score: doc.score,
+    level: doc.level as ScoreLevel,
+    level_label: doc.level_label,
+    factors: { ...doc.factors },
+    next_level: (doc.next_level as ScoreLevel | null) ?? null,
+    progress_to_next: doc.progress_to_next,
+    explanation: doc.explanation,
+  };
+}
+
 /**
- * FluxPay Score — calculated only from real platform data.
- * Never user-editable. Never invents metrics.
+ * Calcula Score SOMENTE a partir de payments no Supabase.
+ * Nunca usa valor do frontend. Nunca usa score_override do Ranking.
  */
-export async function computeFluxPayScore(
+async function calculateFromPayments(
   organizationId: string,
-  environment: Environment = "live"
+  environment: Environment
 ): Promise<FluxPayScore> {
   const { data: payments } = await supabaseAdmin
     .from("payments")
@@ -97,7 +113,6 @@ export async function computeFluxPayScore(
         ? 1
         : 0;
 
-  // Consistency: payments spread across weeks (0–1)
   let consistency = 0;
   if (paymentCount >= 2 && firstAt && lastAt) {
     const weeks = Math.max(1, daysActive / 7);
@@ -107,22 +122,13 @@ export async function computeFluxPayScore(
     consistency = 0.15;
   }
 
-  // Volume score 0–40 (log scale up to R$ 100k)
   const volumeScore =
     volumeCents <= 0
       ? 0
       : Math.min(40, (Math.log10(volumeCents / 100 + 1) / Math.log10(100001)) * 40);
-
-  // Count score 0–25
   const countScore = Math.min(25, (Math.log10(paymentCount + 1) / Math.log10(501)) * 25);
-
-  // Approval 0–20
   const approvalScore = approvalRate * 20;
-
-  // Tenure 0–10 (up to ~180 days)
   const tenureScore = Math.min(10, (daysActive / 180) * 10);
-
-  // Consistency 0–5
   const consistencyScore = consistency * 5;
 
   const raw =
@@ -150,6 +156,87 @@ export async function computeFluxPayScore(
     progress_to_next: progressToNext(score, level),
     explanation,
   };
+}
+
+async function persistScoreCache(
+  organizationId: string,
+  environment: Environment,
+  result: FluxPayScore
+): Promise<void> {
+  try {
+    const mongo = await getMongoDb();
+    if (!mongo) return;
+    const now = new Date().toISOString();
+    const col = mongo.collection<OrgScoreDoc>("org_scores");
+    await col.updateOne(
+      { organization_id: organizationId, environment },
+      {
+        $set: {
+          organization_id: organizationId,
+          environment,
+          score: result.score,
+          level: result.level,
+          level_label: result.level_label,
+          factors: result.factors,
+          next_level: result.next_level,
+          progress_to_next: result.progress_to_next,
+          explanation: result.explanation,
+          calculated_at: now,
+          updated_at: now,
+        },
+      },
+      { upsert: true }
+    );
+  } catch {
+    // Cache é auxiliar — falha de escrita não quebra o Score
+  }
+}
+
+async function readScoreCache(
+  organizationId: string,
+  environment: Environment
+): Promise<FluxPayScore | null> {
+  try {
+    const mongo = await getMongoDb();
+    if (!mongo) return null;
+    const doc = await mongo.collection<OrgScoreDoc>("org_scores").findOne({
+      organization_id: organizationId,
+      environment,
+    });
+    if (!doc?.calculated_at) return null;
+    const age = Date.now() - new Date(doc.calculated_at).getTime();
+    if (age > SCORE_CACHE_TTL_MS || age < 0) return null;
+    return docToScore(doc);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * FluxPay Score — calculado apenas de payments reais (Supabase).
+ * Persistência auxiliar em Mongo org_scores (cache). Nunca editável pelo usuário.
+ * score_override do Ranking NÃO é o Score oficial.
+ */
+export async function computeFluxPayScore(
+  organizationId: string,
+  environment: Environment = "live"
+): Promise<FluxPayScore> {
+  const cached = await readScoreCache(organizationId, environment);
+  if (cached) return cached;
+
+  const result = await calculateFromPayments(organizationId, environment);
+  await persistScoreCache(organizationId, environment, result);
+  return result;
+}
+
+/** Força recálculo a partir de payments e atualiza o cache Mongo. */
+export async function recalculateFluxPayScore(
+  organizationId: string,
+  environment: Environment = "live"
+): Promise<FluxPayScore> {
+  const result = await calculateFromPayments(organizationId, environment);
+  await persistScoreCache(organizationId, environment, result);
+  return result;
 }
 
 export { LEVEL_LABELS };

@@ -1,22 +1,22 @@
 /**
- * MongoDB Atlas — dados auxiliares (Ranking).
+ * MongoDB Atlas — dados auxiliares (Score cache, Ranking, Perfil Público).
  *
  * FONTE DE VERDADE:
  *   MongoDB (quando MONGODB_URI configurada):
- *     - ranking_participants: display_name, avatar_url, is_active,
- *       organization_id (ref), manual_amount_cents (só sem org), metadados ADM
+ *     - ranking_participants: metadados ADM (display_name, avatar, is_active, org ref)
+ *     - org_scores: cache do FluxPay Score (resultado calculado; NÃO fonte financeira)
+ *     - public_profiles: dados públicos (slug, bio, work, avatar, enabled)
  *   Supabase (sempre):
  *     - payments / balance_transactions / ledger / saldo / PIX financeiro
  *     - volume do ranking de org = SUM(payments.amount) status=succeeded env=live
- *     - FluxPay Score = computeFluxPayScore (payments)
- *     - perfil público (bio, work, slug) = organizations
+ *     - cálculo do Score = computeFluxPayScore sobre payments
  *
- * NUNCA usar Mongo para saldo, ledger, payments ou Score oficial.
+ * NUNCA usar Mongo para saldo, ledger, payments ou valores financeiros.
  *
- * Comportamento de disponibilidade:
- *   - MONGODB_URI ausente → store Supabase (Mongo não configurado)
- *   - MONGODB_URI presente e conexão OK → Mongo é a store de ranking_participants
- *   - MONGODB_URI presente e conexão FALHA → erro explícito (503), sem fallback silencioso
+ * Disponibilidade:
+ *   - MONGODB_URI ausente → ranking/perfil/score-cache usam fallback documentado
+ *   - MONGODB_URI presente e OK → Mongo é store principal auxiliar
+ *   - MONGODB_URI presente e FALHA → 503 explícito (sem fallback silencioso)
  */
 
 import { MongoClient, type Db, type ObjectId } from "mongodb";
@@ -24,9 +24,7 @@ import { AppError } from "../middleware/error.js";
 
 let client: MongoClient | null = null;
 let db: Db | null = null;
-/** true após tentativa bem-sucedida de connect+indexes */
 let ready = false;
-/** true se URI definida e a última tentativa de conexão falhou */
 let connectionFailed = false;
 let lastErrorMessage: string | null = null;
 let connectPromise: Promise<Db | null> | null = null;
@@ -51,15 +49,9 @@ export function getMongoStatus(): {
   };
 }
 
-/**
- * Garante índices alinhados ao Atlas + código.
- * uq_org_active: unique parcial — no máximo um participante ATIVO por organization_id;
- * vários docs com organization_id=null são permitidos.
- */
-export async function ensureRankingIndexes(database: Db): Promise<void> {
-  const col = database.collection("ranking_participants");
-
-  await col.createIndexes([
+export async function ensureMongoIndexes(database: Db): Promise<void> {
+  const ranking = database.collection("ranking_participants");
+  await ranking.createIndexes([
     { key: { id: 1 }, name: "uq_id", unique: true },
     { key: { organization_id: 1, is_active: 1 }, name: "org_active" },
     { key: { is_active: 1, created_at: 1 }, name: "active_created" },
@@ -67,13 +59,34 @@ export async function ensureRankingIndexes(database: Db): Promise<void> {
       key: { organization_id: 1 },
       name: "uq_org_active",
       unique: true,
-      // Só documentos com organization_id string e is_active true
       partialFilterExpression: {
         organization_id: { $type: "string" },
         is_active: true,
       },
     },
   ]);
+
+  const scores = database.collection("org_scores");
+  await scores.createIndexes([
+    {
+      key: { organization_id: 1, environment: 1 },
+      name: "uq_org_env",
+      unique: true,
+    },
+    { key: { calculated_at: 1 }, name: "calculated_at" },
+  ]);
+
+  const profiles = database.collection("public_profiles");
+  await profiles.createIndexes([
+    { key: { organization_id: 1 }, name: "uq_organization_id", unique: true },
+    { key: { slug: 1 }, name: "uq_slug", unique: true },
+    { key: { enabled: 1, slug: 1 }, name: "enabled_slug" },
+  ]);
+}
+
+/** @deprecated use ensureMongoIndexes */
+export async function ensureRankingIndexes(database: Db): Promise<void> {
+  await ensureMongoIndexes(database);
 }
 
 async function connectOnce(): Promise<Db | null> {
@@ -85,8 +98,6 @@ async function connectOnce(): Promise<Db | null> {
 
   const uri = process.env.MONGODB_URI!.trim();
   const dbName = (process.env.MONGODB_DB || "fluxpay").trim();
-
-  // Nunca logar a URI completa (contém senha)
   const hostHint = uri.includes("@") ? uri.split("@").pop()?.split("/")[0] : "(host)";
 
   try {
@@ -96,7 +107,7 @@ async function connectOnce(): Promise<Db | null> {
     });
     await next.connect();
     const nextDb = next.db(dbName);
-    await ensureRankingIndexes(nextDb);
+    await ensureMongoIndexes(nextDb);
 
     client = next;
     db = nextDb;
@@ -108,7 +119,6 @@ async function connectOnce(): Promise<Db | null> {
   } catch (err) {
     connectionFailed = true;
     lastErrorMessage = (err as Error).message || "MongoDB connection failed";
-    // Mensagem sem URI/senha
     console.error(`[mongo] connection failed db=${dbName}:`, lastErrorMessage);
     client = null;
     db = null;
@@ -116,16 +126,11 @@ async function connectOnce(): Promise<Db | null> {
     throw new AppError(
       503,
       "service_unavailable",
-      "MongoDB configurado (MONGODB_URI) mas indisponivel. Ranking nao pode ser servido ate a conexao ser restabelecida."
+      "MongoDB configurado (MONGODB_URI) mas indisponivel. Score cache, Ranking e Perfil Publico nao podem ser servidos ate a conexao ser restabelecida."
     );
   }
 }
 
-/**
- * Retorna Db quando Mongo está configurado e online.
- * Retorna null quando MONGODB_URI não está definida (store Supabase).
- * Lança AppError 503 quando URI está definida mas a conexão falhou.
- */
 export async function getMongoDb(): Promise<Db | null> {
   if (!isMongoConfigured()) return null;
 
@@ -139,9 +144,6 @@ export async function getMongoDb(): Promise<Db | null> {
   return connectPromise;
 }
 
-/**
- * Exige Mongo online. Use nas rotas de ranking quando a store ativa é Mongo.
- */
 export async function requireMongoDb(): Promise<Db> {
   const database = await getMongoDb();
   if (!database) {
@@ -155,7 +157,6 @@ export async function requireMongoDb(): Promise<Db> {
 }
 
 export type RankingParticipantDoc = {
-  /** Mongo ObjectId — opcional no insert (driver gera). Nunca use unknown. */
   _id?: ObjectId;
   id: string;
   organization_id: string | null;
@@ -167,6 +168,44 @@ export type RankingParticipantDoc = {
   sort_priority: number;
   season_id?: string | null;
   created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Cache auxiliar do Score — NUNCA fonte financeira. Recalcular de payments. */
+export type OrgScoreDoc = {
+  _id?: ObjectId;
+  organization_id: string;
+  environment: string;
+  score: number;
+  level: string;
+  level_label: string;
+  factors: {
+    volume_cents: number;
+    payment_count: number;
+    approval_rate: number;
+    days_active: number;
+    consistency: number;
+  };
+  next_level: string | null;
+  progress_to_next: number;
+  explanation: string;
+  calculated_at: string;
+  updated_at: string;
+};
+
+/** Dados públicos do perfil — sem valores financeiros como verdade. */
+export type PublicProfileDoc = {
+  _id?: ObjectId;
+  organization_id: string;
+  slug: string;
+  display_name: string | null;
+  bio: string | null;
+  work: string | null;
+  avatar_url: string | null;
+  enabled: boolean;
+  /** member_since derivado da org no Supabase no seed; não é dado financeiro */
+  member_since: string | null;
   created_at: string;
   updated_at: string;
 };
