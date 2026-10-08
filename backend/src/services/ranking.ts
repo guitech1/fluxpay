@@ -21,9 +21,11 @@ export interface RankingEntry {
 /**
  * Fonte de verdade por campo:
  * - amount_cents (org): Supabase payments succeeded + live
- * - amount_cents (manual): Mongo/Supabase manual_amount_cents (ADM)
- * - score: computeFluxPayScore (Supabase payments) salvo score_override ADM
- * - display_name / is_active / organization_id: store de participantes (Mongo se configurado)
+ * - amount_cents (manual): Mongo manual_amount_cents (ADM)
+ * - score: computeFluxPayScore (payments) salvo score_override ADM no ranking
+ * - participantes: Mongo ranking_participants (principal).
+ *   Fallback Supabase somente se MONGODB_URI ausente (dev/compat documentado).
+ * - score_override NÃO é o Score oficial da organização
  */
 
 function compareEntries(
@@ -52,7 +54,6 @@ type ParticipantRow = {
 };
 
 async function loadParticipantsActive(): Promise<ParticipantRow[]> {
-  // getMongoDb: null = não configurado; throw 503 = configurado e offline
   const mongo = await getMongoDb();
 
   if (mongo) {
@@ -73,6 +74,7 @@ async function loadParticipantsActive(): Promise<ParticipantRow[]> {
     }));
   }
 
+  // Fallback explícito: Mongo não configurado (dev). Produção deve definir MONGODB_URI.
   const { data, error } = await supabaseAdmin
     .from("ranking_participants")
     .select(
@@ -311,9 +313,7 @@ export async function upsertRankingParticipant(input: {
     return doc;
   }
 
-  // Store Supabase (Mongo nao configurado)
   if (isMongoConfigured()) {
-    // URI definida mas getMongoDb deveria ter lancado — defesa em profundidade
     throw new AppError(503, "service_unavailable", "MongoDB indisponivel.");
   }
 
