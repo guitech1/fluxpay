@@ -97,25 +97,28 @@ app.use(
   })
 );
 
+function mongoStoreLabel(mongo: ReturnType<typeof getMongoStatus>): string {
+  if (!mongo.configured) return "supabase_fallback";
+  if (mongo.ready) return "mongodb";
+  if (mongo.connectionFailed) return "mongodb_unavailable";
+  return "mongodb_configured";
+}
+
 app.get("/health", (_req, res) => {
   const mongo = getMongoStatus();
+  const label = mongoStoreLabel(mongo);
   res.json({
     status: "ok",
     service: "fluxpay-api",
-    version: "0.3.0",
+    version: "0.4.0",
     stores: {
       financial: "supabase",
-      ranking_participants: mongo.configured
-        ? mongo.ready
-          ? "mongodb"
-          : mongo.connectionFailed
-            ? "mongodb_unavailable"
-            : "mongodb_configured"
-        : "supabase",
+      ranking_participants: label,
+      org_scores: label === "supabase_fallback" ? "none" : label,
+      public_profiles: label,
       mongo: {
         configured: mongo.configured,
         ready: mongo.ready,
-        // Nunca expor URI, senha ou host completo com credenciais
         database: mongo.configured ? mongo.database : null,
       },
     },
