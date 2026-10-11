@@ -135,7 +135,14 @@ export class NexusPagProvider implements PaymentProvider {
     };
   }
 
-  async refundPayment() {
+  async refundPayment(_params: {
+    providerPaymentId: string;
+    amount: number;
+  }): Promise<{
+    providerRefundId: string;
+    status: import("../types/index.js").RefundStatus;
+    rawResponse?: unknown;
+  }> {
     throw new Error("Reembolso PIX nao suportado via API NexusPag");
   }
 }
