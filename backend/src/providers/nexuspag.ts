@@ -167,10 +167,15 @@ export async function createNexusPagWithdrawal(params: {
     method: "POST",
     headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    // A timeout is an uncertain provider outcome; the caller leaves the
+    // withdrawal in processing and must reconcile it instead of resubmitting.
+    signal: AbortSignal.timeout(25000),
   });
   const data = (await res.json().catch(() => null)) as any;
   if (!res.ok || !data) {
-    throw new Error(`NexusPag saque HTTP ${res.status}: ${JSON.stringify(data)}`);
+    const error = new Error(`NexusPag saque HTTP ${res.status}: ${JSON.stringify(data)}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
   return { id: data.id || data.withdrawal?.id || "", status: data.status || data.withdrawal?.status || "pending", rawResponse: data };
 }
