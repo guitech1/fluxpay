@@ -51,7 +51,7 @@ BEGIN
   -- Amount above the remaining 400 must be rejected while the payment is partially refunded.
   BEGIN
     PERFORM public.fluxpay_reserve_refund(
-      payment_id, org_id, 'test', 1, 'refund-024-over', 'over refund', '{}'::jsonb
+      payment_id, org_id, 'test', 401, 'refund-024-over', 'over refund', '{}'::jsonb
     );
     RAISE EXCEPTION 'expected over-refund limit to reject';
   EXCEPTION WHEN check_violation THEN
