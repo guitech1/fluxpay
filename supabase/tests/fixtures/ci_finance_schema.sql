@@ -1,4 +1,6 @@
 -- Disposable PostgreSQL fixture for CI only. Never used against Supabase/live.
+-- Shapes the minimal live-compatible finance schema so migrations 023–027
+-- and SQL regressions can run without stubs of the functions under test.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$ BEGIN
   CREATE ROLE anon NOLOGIN;
@@ -11,11 +13,14 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TYPE public.environment_type AS ENUM ('test', 'live');
-CREATE TYPE public.payment_status AS ENUM ('pending','processing','succeeded','failed','canceled','expired','refunded','partially_refunded');
+CREATE TYPE public.payment_status AS ENUM (
+  'pending','processing','succeeded','failed','canceled','expired','refunded','partially_refunded'
+);
 CREATE TYPE public.refund_status AS ENUM ('pending','succeeded','failed','canceled');
 
 CREATE TABLE public.organizations (id uuid PRIMARY KEY, name text);
-INSERT INTO public.organizations(id,name) VALUES ('00000000-0000-0000-0000-000000000000','synthetic CI organization');
+INSERT INTO public.organizations(id, name)
+VALUES ('00000000-0000-0000-0000-000000000000', 'synthetic CI organization');
 
 CREATE TABLE public.payments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,9 +52,26 @@ CREATE TABLE public.balance_transactions (
   available_on timestamptz
 );
 
+CREATE TABLE public.refunds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES public.organizations(id),
+  payment_id uuid NOT NULL REFERENCES public.payments(id),
+  environment public.environment_type NOT NULL DEFAULT 'test',
+  amount bigint NOT NULL,
+  currency text NOT NULL DEFAULT 'BRL',
+  status public.refund_status NOT NULL DEFAULT 'pending',
+  reason text,
+  provider_refund_id text,
+  provider_response jsonb,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE public.provider_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.webhook_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.users (id uuid PRIMARY KEY);
+
 CREATE TABLE public.withdrawal_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id uuid NOT NULL REFERENCES public.organizations(id),
@@ -75,29 +97,27 @@ CREATE TABLE public.withdrawal_requests (
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (organization_id, environment, correlation_id)
 );
-ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.balance_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.withdrawal_requests ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE public.platform_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.organization_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.acquirer_cost_config (acquirer_id text PRIMARY KEY);
 CREATE TABLE public.fee_rule_audit (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
-CREATE TABLE public.withdrawal_decision_audit (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
-
-CREATE TABLE public.refunds (
+CREATE TABLE public.withdrawal_decision_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES public.organizations(id),
-  payment_id uuid NOT NULL REFERENCES public.payments(id),
-  environment public.environment_type NOT NULL DEFAULT 'test',
-  amount bigint NOT NULL,
-  currency text NOT NULL DEFAULT 'BRL',
-  status public.refund_status NOT NULL DEFAULT 'pending',
+  withdrawal_id uuid NOT NULL,
+  organization_id uuid NOT NULL,
+  action text NOT NULL,
+  actor_id uuid,
   reason text,
-  provider_refund_id text,
-  provider_response jsonb,
-  metadata jsonb DEFAULT '{}'::jsonb,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  state_before text,
+  state_after text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Enable RLS after all financial tables exist (matches migration 023 intent).
+ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.balance_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.withdrawal_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.provider_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.webhook_events ENABLE ROW LEVEL SECURITY;
