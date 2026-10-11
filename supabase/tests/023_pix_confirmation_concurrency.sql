@@ -92,6 +92,20 @@ BEGIN
     RAISE EXCEPTION 'non-PIX payment state was modified by PIX RPC';
   END IF;
 
+
+  -- Verify browser-role grants match the intended read-only access model.
+  IF has_table_privilege('anon', 'public.payments', 'SELECT')
+     OR has_table_privilege('anon', 'public.balance_transactions', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.payments', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.balance_transactions', 'INSERT') THEN
+    RAISE EXCEPTION 'financial table grants are broader than intended';
+  END IF;
+
+  IF NOT has_table_privilege('authenticated', 'public.payments', 'SELECT')
+     OR NOT has_table_privilege('authenticated', 'public.balance_transactions', 'SELECT') THEN
+    RAISE EXCEPTION 'authenticated read access was not granted';
+  END IF;
+
 END
 $test$;
 
