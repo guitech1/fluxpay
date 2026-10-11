@@ -141,3 +141,34 @@ GRANT EXECUTE ON FUNCTION public.fluxpay_confirm_pix_payment(UUID, UUID, public.
 
 COMMENT ON INDEX public.balance_transactions_one_charge_per_payment IS
   'At most one charge ledger entry per payment; refund, fee, payout, adjustment and chargeback rows remain unaffected.';
+
+-- Least privilege: browser roles may read scoped financial rows, but all writes
+-- and provider-event ingestion/replay remain backend-only (service_role).
+REVOKE ALL ON TABLE
+  public.payments,
+  public.balance_transactions,
+  public.provider_events,
+  public.refunds,
+  public.webhook_events,
+  public.withdrawal_requests
+FROM PUBLIC, anon, authenticated;
+
+GRANT SELECT ON TABLE
+  public.payments,
+  public.balance_transactions,
+  public.provider_events,
+  public.refunds,
+  public.webhook_events,
+  public.withdrawal_requests
+TO authenticated;
+
+-- Sensitive configuration/audit tables have no browser-facing RLS policies;
+-- explicitly remove inherited/default table privileges as defense in depth.
+REVOKE ALL ON TABLE
+  public.platform_fee_rules,
+  public.organization_fee_rules,
+  public.acquirer_cost_config,
+  public.fee_rule_audit,
+  public.withdrawal_decision_audit
+FROM PUBLIC, anon, authenticated;
+
