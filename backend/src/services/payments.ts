@@ -464,9 +464,6 @@ export async function createRefund(
     throw new AppError(400, "invalid_request", "So e possivel reembolsar uma cobranca ja aprovada.");
   }
 
-  // NexusPag's current PIX adapter explicitly does not support refunds. Reject
-  // before any provider call or local ledger mutation instead of surfacing a
-  // generic 500 after attempting an unsupported operation.
   if (payment.payment_type === "pix" && payment.provider === "nexuspag") {
     throw new AppError(
       501,
@@ -476,11 +473,9 @@ export async function createRefund(
   }
 
   const refundAmount = input.amount ?? payment.amount;
-
   if (!Number.isSafeInteger(refundAmount) || refundAmount <= 0) {
     throw new AppError(400, "validation_error", "Valor de reembolso invalido.");
   }
-
   if (!payment.provider_payment_id) {
     throw new AppError(
       409,
@@ -489,108 +484,90 @@ export async function createRefund(
     );
   }
 
-  // Count successful and in-flight refunds so sequential requests cannot refund
-  // more than the original charge. A database-level lock/RPC is still required
-  // to make this limit race-safe for simultaneous requests.
-  const { data: priorRefunds, error: priorRefundsError } = await supabaseAdmin
-    .from("refunds")
-    .select("amount, status")
-    .eq("payment_id", paymentId)
-    .eq("organization_id", organizationId)
-    .eq("environment", payment.environment);
-
-  if (priorRefundsError || !priorRefunds) {
-    throw new AppError(503, "api_error", "Nao foi possivel validar reembolsos anteriores; tente novamente.");
-  }
-
-  const reservedRefundAmount = priorRefunds.reduce((total, refund) => {
-    return ["pending", "succeeded"].includes(refund.status)
-      ? total + Number(refund.amount || 0)
-      : total;
-  }, 0);
-  const remainingRefundAmount = payment.amount - reservedRefundAmount;
-
-  if (refundAmount > remainingRefundAmount) {
-    throw new AppError(
-      400,
-      "validation_error",
-      "O valor solicitado excede o saldo ainda disponivel para reembolso."
-    );
+  // Reserve the amount under a payment-row lock BEFORE calling the provider.
+  // An unresolved pending reservation blocks subsequent refunds; never blindly
+  // resubmit after a timeout or an uncertain provider/database outcome.
+  const { data: reserved, error: reserveError } = await supabaseAdmin.rpc(
+    "fluxpay_reserve_refund",
+    {
+      p_payment_id: paymentId,
+      p_organization_id: organizationId,
+      p_environment: payment.environment,
+      p_amount: refundAmount,
+      p_reason: input.reason || null,
+      p_metadata: input.metadata || {},
+    }
+  );
+  const reservation = Array.isArray(reserved) ? reserved[0] : reserved;
+  if (reserveError || !reservation) {
+    const code = reserveError?.code;
+    if (code === "23514") {
+      throw new AppError(400, "validation_error", "O valor solicitado excede o saldo ainda disponivel para reembolso.");
+    }
+    if (code === "55000") {
+      throw new AppError(409, "conflict", "Existe um reembolso pendente ou a cobranca exige reconciliacao. Nao repita a operacao.");
+    }
+    throw new AppError(503, "api_error", "Nao foi possivel reservar o reembolso no banco; nenhum pedido foi enviado ao adquirente.");
   }
 
   const provider = getProvider(payment.environment, payment.provider ?? undefined);
-  const providerResult = await provider.refundPayment({
-    providerPaymentId: payment.provider_payment_id,
-    amount: refundAmount,
-  });
-
-  const { data: refund, error } = await supabaseAdmin
-    .from("refunds")
-    .insert({
-      organization_id: organizationId,
-      payment_id: paymentId,
-      environment: payment.environment,
+  let providerResult;
+  try {
+    providerResult = await provider.refundPayment({
+      providerPaymentId: payment.provider_payment_id,
       amount: refundAmount,
-      currency: payment.currency,
-      status: providerResult.status,
-      reason: input.reason || null,
-      provider_refund_id: providerResult.providerRefundId,
-      provider_response: providerResult.rawResponse,
-      metadata: input.metadata || {},
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new AppError(500, "api_error", "Nao foi possivel registrar o reembolso. Tente novamente.");
+    });
+  } catch (err) {
+    // We cannot prove whether the provider executed the request. Keep the
+    // reservation pending so a retry cannot trigger a second external refund.
+    console.error("[refunds] provider result uncertain; reservation retained:", {
+      refundId: reservation.id,
+      paymentId,
+      error: err instanceof Error ? err.message : err,
+    });
+    throw new AppError(
+      502,
+      "provider_error",
+      "Resultado do adquirente incerto. O reembolso ficou reservado para reconciliacao; nao repita a solicitacao."
+    );
   }
 
-  // Pending provider refunds reserve amount but do not change payment state or
-  // the balance ledger until the provider confirms success.
+  const { data: finalized, error: finalizeError } = await supabaseAdmin.rpc(
+    "fluxpay_finalize_refund",
+    {
+      p_refund_id: reservation.id,
+      p_organization_id: organizationId,
+      p_environment: payment.environment,
+      p_status: providerResult.status,
+      p_provider_refund_id: providerResult.providerRefundId || null,
+      p_provider_response: providerResult.rawResponse ?? null,
+    }
+  );
+  const refund = Array.isArray(finalized) ? finalized[0] : finalized;
+
+  if (finalizeError || !refund) {
+    // The provider may already have acted. The pending reservation is the
+    // durable reconciliation marker and prevents another provider submission.
+    console.error("[refunds] provider result could not be finalized:", {
+      refundId: reservation.id,
+      paymentId,
+      status: providerResult.status,
+      error: finalizeError,
+    });
+    throw new AppError(
+      500,
+      "api_error",
+      "O adquirente respondeu, mas o estado local exige reconciliacao. Nao repita o reembolso."
+    );
+  }
+
   if (providerResult.status !== "succeeded") {
     return refund;
   }
 
-  const totalRefunded = reservedRefundAmount + refundAmount;
-  const newStatus = totalRefunded >= payment.amount ? "refunded" : "partially_refunded";
-  const { error: paymentUpdateError } = await supabaseAdmin
-    .from("payments")
-    .update({ status: newStatus })
-    .eq("id", paymentId)
-    .eq("organization_id", organizationId)
-    .eq("environment", environment);
-
-  if (paymentUpdateError) {
-    throw new AppError(
-      500,
-      "api_error",
-      "O adquirente confirmou o reembolso, mas o status local precisa de reconciliacao."
-    );
-  }
-
-  const { error: ledgerError } = await supabaseAdmin.from("balance_transactions").insert({
-    organization_id: organizationId,
-    environment: payment.environment,
-    type: "refund",
-    amount: -refundAmount,
-    currency: payment.currency,
-    net: -refundAmount,
-    fee: 0,
-    payment_id: paymentId,
-    refund_id: refund.id,
-    description: input.reason || "Refund",
-  });
-
-  if (ledgerError) {
-    throw new AppError(
-      500,
-      "api_error",
-      "O adquirente confirmou o reembolso, mas o lancamento no ledger precisa de reconciliacao."
-    );
-  }
-
+  const updatedPayment = await getPayment(organizationId, paymentId, payment.environment);
   dispatchWebhook(organizationId, payment.environment, "payment.refunded", {
-    payment,
+    payment: updatedPayment,
     refund,
   }).catch(console.error);
 
