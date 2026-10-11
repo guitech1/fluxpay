@@ -4,7 +4,7 @@ DO $test$
 DECLARE
   org_id uuid := '00000000-0000-0000-0000-000000000000';
   payment_id uuid;
-  refund_id uuid;
+  refund_uuid uuid;
   refund_row public.refunds%ROWTYPE;
   ledger_count integer;
 BEGIN
@@ -18,7 +18,7 @@ BEGIN
   SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
     payment_id, org_id, 'test', 600, 'first partial refund', '{}'::jsonb
   );
-  refund_id := refund_row.id;
+  refund_uuid := refund_row.id;
 
   -- A pending reservation is ambiguous/in-flight and blocks a second provider call.
   BEGIN
@@ -31,7 +31,7 @@ BEGIN
   END;
 
   PERFORM public.fluxpay_finalize_refund(
-    refund_id, org_id, 'test', 'succeeded', 'provider-refund-024', '{"status":"succeeded"}'::jsonb
+    refund_uuid, org_id, 'test', 'succeeded', 'provider-refund-024', '{"status":"succeeded"}'::jsonb
   );
   -- Repeated finalization must not create another ledger debit.
   PERFORM public.fluxpay_finalize_refund(
@@ -40,7 +40,7 @@ BEGIN
 
   SELECT count(*) INTO ledger_count
     FROM public.balance_transactions
-   WHERE refund_id = refund_id AND type = 'refund';
+   WHERE public.balance_transactions.refund_id = refund_uuid AND type = 'refund';
 
   IF ledger_count <> 1 THEN
     RAISE EXCEPTION 'expected one refund ledger entry, got %', ledger_count;
