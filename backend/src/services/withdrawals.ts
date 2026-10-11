@@ -40,7 +40,7 @@ export interface WithdrawalRequest {
 
 /**
  * Normalize a withdrawal_requests row to the application shape.
- * Live/target schema uses fee, net, approved_by, approved_at, provider_withdrawal_id.
+ * Live schema uses fee, net, approved_by, approved_at, provider_reference; legacy rows may use provider_withdrawal_id.
  * Historical migration 015 used fee_amount, net_amount, reviewed_by, reviewed_at.
  */
 function mapWithdrawalRow(row: any): WithdrawalRequest {
@@ -443,7 +443,7 @@ export async function approveAndExecuteWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider_withdrawal_id: providerRef,
+      provider_reference: providerRef,
       fee: typeof feeCents === "number" ? feeCents : w.fee,
       failure_reason: null,
       failed_at: null,
