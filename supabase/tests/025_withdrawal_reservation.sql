@@ -14,7 +14,7 @@ BEGIN
   INSERT INTO public.balance_transactions (
     organization_id, environment, type, amount, currency, net, fee, description, available_on
   ) VALUES (
-    org_id, 'test', 'charge', 10000, 'BRL', 10000, 0, 'synthetic available funds', NOW()
+    org_id, 'test', 'adjustment', 10000, 'BRL', 10000, 0, 'synthetic available funds', NOW()
   );
 
   first_request := public.fluxpay_create_withdrawal_request(
