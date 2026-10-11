@@ -1,9 +1,74 @@
+-- 025: atomic withdrawal reservation, request creation and correlation idempotency.
+-- Forward-only. Not yet applied on live at the time of this revision.
+--
+-- Migration 015 created fee_amount/net_amount/reviewed_by/reviewed_at.
+-- Application code and this RPC use fee/net/approved_by/approved_at.
+-- Ensure target columns exist before the function body references them.
+
+DO $compat$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'fee'
+  ) THEN
+    ALTER TABLE public.withdrawal_requests ADD COLUMN fee bigint NOT NULL DEFAULT 0;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'fee_amount'
+    ) THEN
+      EXECUTE 'UPDATE public.withdrawal_requests SET fee = COALESCE(fee_amount, 0)';
+    END IF;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'net'
+  ) THEN
+    ALTER TABLE public.withdrawal_requests ADD COLUMN net bigint;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'net_amount'
+    ) THEN
+      EXECUTE 'UPDATE public.withdrawal_requests SET net = net_amount WHERE net IS NULL';
+    END IF;
+    -- New requests always set net; remaining NULLs get amount as a safe fallback.
+    EXECUTE 'UPDATE public.withdrawal_requests SET net = amount WHERE net IS NULL';
+    ALTER TABLE public.withdrawal_requests ALTER COLUMN net SET NOT NULL;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'approved_by'
+  ) THEN
+    ALTER TABLE public.withdrawal_requests ADD COLUMN approved_by uuid;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'reviewed_by'
+    ) THEN
+      EXECUTE 'UPDATE public.withdrawal_requests SET approved_by = reviewed_by WHERE approved_by IS NULL';
+    END IF;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'approved_at'
+  ) THEN
+    ALTER TABLE public.withdrawal_requests ADD COLUMN approved_at timestamptz;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'withdrawal_requests' AND column_name = 'reviewed_at'
+    ) THEN
+      EXECUTE 'UPDATE public.withdrawal_requests SET approved_at = reviewed_at WHERE approved_at IS NULL';
+    END IF;
+  END IF;
+END
+$compat$;
+
 ALTER TABLE public.withdrawal_requests
   ADD COLUMN IF NOT EXISTS rejected_at timestamptz,
   ADD COLUMN IF NOT EXISTS failed_at timestamptz;
 
--- 025: atomic withdrawal reservation, request creation and correlation idempotency.
--- Forward-only. The organization row lock serializes concurrent withdrawal requests.
+-- The organization row lock serializes concurrent withdrawal requests.
 CREATE OR REPLACE FUNCTION public.fluxpay_create_withdrawal_request(
   p_organization_id uuid,
   p_environment public.environment_type,
