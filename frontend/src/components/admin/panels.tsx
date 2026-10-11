@@ -11,3 +11,4 @@ export {
   AuditPanel,
   SettingsPanel,
 } from "./panels-ops";
+export { AcquirersPanel, FeesPanel } from "./acquirers-fees-panel";
