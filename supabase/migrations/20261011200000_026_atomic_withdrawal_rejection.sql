@@ -43,9 +43,7 @@ BEGIN
   UPDATE public.withdrawal_requests
      SET status = 'rejected',
          rejection_reason = p_reason,
-         rejected_at = NOW(),
-         approved_by = p_admin_user_id,
-         approved_at = NOW()
+         rejected_at = NOW()
    WHERE id = w.id
   RETURNING * INTO w;
 
@@ -55,6 +53,12 @@ BEGIN
   ) VALUES (
     w.organization_id, w.environment, 'adjustment', w.amount, w.currency,
     w.net, 0, 'Estorno de saque rejeitado (' || left(w.id::text, 8) || ')', NOW()
+  );
+
+  INSERT INTO public.withdrawal_decision_audit (
+    withdrawal_id, organization_id, action, actor_id, reason, state_before, state_after
+  ) VALUES (
+    w.id, w.organization_id, 'reject', p_admin_user_id, p_reason, 'pending', 'rejected'
   );
 
   RETURN jsonb_build_object(
