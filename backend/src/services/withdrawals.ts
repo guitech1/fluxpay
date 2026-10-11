@@ -331,60 +331,29 @@ export async function rejectWithdrawal(params: {
   adminUserId: string;
   reason: string;
 }): Promise<WithdrawalRequest> {
-  const { data: row, error } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .select("*")
-    .eq("id", params.withdrawalId)
-    .maybeSingle();
-
-  if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  const w = mapWithdrawalRow(row);
-
-  if (w.status !== "pending") {
-    throw new AppError(
-      400,
-      "invalid_request",
-      `So e possivel rejeitar pedidos pendentes (atual: ${w.status}).`
-    );
-  }
-
-  await supabaseAdmin.from("balance_transactions").insert({
-    organization_id: w.organization_id,
-    environment: w.environment,
-    type: "adjustment",
-    amount: w.amount,
-    currency: w.currency,
-    net: w.net,
-    fee: 0,
-    description: `Estorno de saque rejeitado (${w.id.slice(0, 8)})`,
-    available_on: new Date().toISOString(),
+  const { data, error } = await supabaseAdmin.rpc("fluxpay_reject_withdrawal", {
+    p_withdrawal_id: params.withdrawalId,
+    p_admin_user_id: params.adminUserId,
+    p_reason: params.reason,
   });
-
-  const { data: updated, error: upErr } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .update({
-      status: "rejected",
-      rejection_reason: params.reason,
-      rejected_at: new Date().toISOString(),
-    })
-    .eq("id", w.id)
-    .eq("status", "pending")
-    .select("*")
-    .single();
-
-  if (upErr || !updated) {
-    throw new AppError(500, "api_error", "Nao foi possivel rejeitar o saque.");
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) {
+    if (error?.code === "P0002") throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
+    if (error?.code === "55000") throw new AppError(409, "conflict", "O saque nao esta pendente e nao pode ser rejeitado.");
+    console.error("[withdrawals] atomic rejection failed:", error);
+    throw new AppError(503, "api_error", "Nao foi possivel rejeitar e liberar o saldo atomicamente.");
   }
+
   await recordWithdrawalDecision({
-    withdrawalId: w.id,
-    organizationId: w.organization_id,
+    withdrawalId: row.id,
+    organizationId: row.organization_id,
     action: "reject",
     actorId: params.adminUserId,
-    reason: params.reason ?? null,
+    reason: params.reason,
     stateBefore: "pending",
     stateAfter: "rejected",
   });
-  return mapWithdrawalRow(updated);
+  return mapWithdrawalRow(row);
 }
 
 export async function approveAndExecuteWithdrawal(params: {
