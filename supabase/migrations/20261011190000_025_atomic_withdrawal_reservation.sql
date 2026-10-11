@@ -1,3 +1,7 @@
+ALTER TABLE public.withdrawal_requests
+  ADD COLUMN IF NOT EXISTS rejected_at timestamptz,
+  ADD COLUMN IF NOT EXISTS failed_at timestamptz;
+
 -- 025: atomic withdrawal reservation, request creation and correlation idempotency.
 -- Forward-only. The organization row lock serializes concurrent withdrawal requests.
 CREATE OR REPLACE FUNCTION public.fluxpay_create_withdrawal_request(
