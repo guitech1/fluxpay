@@ -81,7 +81,9 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
         pix: data.txid ? { txid: data.txid, copyPaste: data.pix_copia_cola ?? "", qrCodeBase64: data.qr_code_base64 ?? "", expiresAt: data.expires_at ?? "", feeAmountCents: reaisToCents(data.fee ?? 0), netAmountCents: reaisToCents(data.net_amount ?? 0) } : undefined,
       };
     },
-    async refundPayment() { throw new Error("não suportado"); },
+    async refundPayment(_params: { providerPaymentId: string; amount: number; }): Promise<{ providerRefundId: string; status: import("../types/index.js").RefundStatus; rawResponse?: unknown; }> {
+      throw new Error("não suportado");
+    },
   };
   return adapter;
 }
