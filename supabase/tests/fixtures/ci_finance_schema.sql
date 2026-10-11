@@ -75,6 +75,11 @@ CREATE TABLE public.withdrawal_requests (
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (organization_id, environment, correlation_id)
 );
+ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.balance_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.withdrawal_requests ENABLE ROW LEVEL SECURITY;
+
 CREATE TABLE public.platform_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.organization_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.acquirer_cost_config (acquirer_id text PRIMARY KEY);
