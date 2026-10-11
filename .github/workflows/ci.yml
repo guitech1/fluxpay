@@ -85,6 +85,7 @@ jobs:
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/025_withdrawal_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/026_withdrawal_rejection.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/027_refund_idempotency.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/028_rls_grants.sql
       - name: Execute real concurrent-session regressions
         env:
           PGPASSWORD: postgres
