@@ -1,27 +1,85 @@
--- FluxPay 023 integration regression checklist (run only on disposable/dev DB).
--- This script is intentionally a transaction and rolls back all fixtures.
--- It expects pgTAP to be installed and an existing organization fixture to be supplied.
--- Set test_org_id to a disposable organization UUID before running.
+-- FluxPay 023 regression test for PIX RPC and ledger idempotency.
+-- Run only against a disposable/dev database after migration 023 is applied.
+-- Replace the UUID below with an existing disposable organization in that DB.
 BEGIN;
-CREATE EXTENSION IF NOT EXISTS pgtap;
-SELECT plan(5);
+SET LOCAL fluxpay.test_org_id = '00000000-0000-0000-0000-000000000000';
 
--- Preflight the fixture organization. Do not run against a production dataset.
-DO $$
+DO $test$
+DECLARE
+  org_id uuid := current_setting('fluxpay.test_org_id')::uuid;
+  pending_id uuid;
+  terminal_id uuid;
+  charge_count integer;
 BEGIN
-  IF current_setting('fluxpay.test_org_id', true) IS NULL THEN
-    RAISE EXCEPTION 'Set fluxpay.test_org_id to a disposable organization UUID before running';
+  IF NOT EXISTS (SELECT 1 FROM public.organizations WHERE id = org_id) THEN
+    RAISE EXCEPTION 'test organization % does not exist; use a disposable organization', org_id;
   END IF;
-END $$;
 
--- Test harness must create a pending test-environment PIX payment using the
--- required columns for the current schema, then call the RPC concurrently from
--- two independent sessions with the same payment/org/environment.
--- Assertions to execute after both sessions complete:
--- 1) exactly one balance_transactions row where type='charge' and payment_id=<fixture>
--- 2) payment status='succeeded'
--- 3) repeated RPC call leaves charge count at one
--- 4) RPC against wrong organization/environment raises insufficient_privilege
--- 5) failed/canceled/expired fixture raises object_not_in_prerequisite_state and remains unchanged.
-SELECT * FROM finish();
+  INSERT INTO public.payments (
+    organization_id, environment, amount, currency, status, payment_type,
+    fee_amount, net_amount, description
+  ) VALUES (
+    org_id, 'test', 1000, 'BRL', 'pending', 'pix', 0, 1000, 'synthetic test 023'
+  ) RETURNING id INTO pending_id;
+
+  -- First confirmation and repeated confirmation are idempotent.
+  PERFORM public.fluxpay_confirm_pix_payment(pending_id, org_id, 'test');
+  PERFORM public.fluxpay_confirm_pix_payment(pending_id, org_id, 'test');
+
+  SELECT count(*) INTO charge_count
+    FROM public.balance_transactions
+   WHERE payment_id = pending_id AND type = 'charge';
+
+  IF charge_count <> 1 THEN
+    RAISE EXCEPTION 'expected exactly one charge after duplicate confirmation; found %', charge_count;
+  END IF;
+
+  IF (SELECT status::text FROM public.payments WHERE id = pending_id) <> 'succeeded' THEN
+    RAISE EXCEPTION 'pending payment was not transitioned to succeeded';
+  END IF;
+
+  -- A mismatched organization must be rejected.
+  BEGIN
+    PERFORM public.fluxpay_confirm_pix_payment(
+      pending_id, gen_random_uuid(), 'test'
+    );
+    RAISE EXCEPTION 'expected organization-scope rejection';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  INSERT INTO public.payments (
+    organization_id, environment, amount, currency, status, payment_type,
+    fee_amount, net_amount, description
+  ) VALUES (
+    org_id, 'test', 1000, 'BRL', 'failed', 'pix', 0, 1000, 'synthetic terminal test 023'
+  ) RETURNING id INTO terminal_id;
+
+  BEGIN
+    PERFORM public.fluxpay_confirm_pix_payment(terminal_id, org_id, 'test');
+    RAISE EXCEPTION 'expected terminal-state rejection';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    NULL;
+  END;
+
+  IF (SELECT status::text FROM public.payments WHERE id = terminal_id) <> 'failed' THEN
+    RAISE EXCEPTION 'terminal payment state was modified';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.balance_transactions
+    WHERE payment_id = terminal_id AND type = 'charge'
+  ) THEN
+    RAISE EXCEPTION 'terminal payment unexpectedly received a charge ledger entry';
+  END IF;
+END
+$test$;
+
 ROLLBACK;
+
+-- Concurrency test (must run with two independent DB sessions on the same disposable
+-- pending PIX fixture, after migration 023):
+-- Session A: SELECT public.fluxpay_confirm_pix_payment(:payment_id, :org_id, 'test');
+-- Session B: execute the same call concurrently before Session A commits.
+-- After both commit, assert count(*) for (payment_id, type='charge') is exactly 1
+-- and payment status is succeeded. The partial unique index is the database backstop.
