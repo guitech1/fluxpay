@@ -215,7 +215,13 @@ export async function createPayment(
   const feeSnapshot: FeeRuleSnapshot = feeCalc.snapshot;
 
   const nowIso = new Date().toISOString();
-  const status = attemptResult.status || "pending";
+  const providerStatus = attemptResult.status || "pending";
+  // A provider's successful PIX response must not mark the payment paid before
+  // the database RPC atomically changes status and inserts the ledger credit.
+  const status =
+    paymentType === "pix" && providerStatus === "succeeded"
+      ? "processing"
+      : providerStatus;
 
   const { data: payment, error: updateError } = await supabaseAdmin
     .from("payments")
@@ -255,10 +261,12 @@ export async function createPayment(
     );
   }
 
-  if (payment.status === "succeeded") {
+  let finalPayment = payment as Payment;
+
+  if (providerStatus === "succeeded") {
     if (payment.payment_type === "pix") {
-      // Keep PIX status confirmation and its charge ledger entry in one DB transaction.
-      const { error: ledgerError } = await supabaseAdmin.rpc(
+      // The RPC owns the succeeded transition and charge ledger insert in one transaction.
+      const { data: confirmed, error: ledgerError } = await supabaseAdmin.rpc(
         "fluxpay_confirm_pix_payment",
         {
           p_payment_id: payment.id,
@@ -267,7 +275,8 @@ export async function createPayment(
         }
       );
 
-      if (ledgerError) {
+      const confirmedPayment = Array.isArray(confirmed) ? confirmed[0] : confirmed;
+      if (ledgerError || !confirmedPayment) {
         console.error("Atomic PIX ledger confirmation failed:", {
           paymentId: payment.id,
           error: ledgerError,
@@ -278,6 +287,7 @@ export async function createPayment(
           "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
         );
       }
+      finalPayment = confirmedPayment as Payment;
     } else {
       // Non-PIX flows are not covered by the PIX-specific RPC.
       const { error: ledgerError } = await supabaseAdmin
@@ -306,17 +316,17 @@ export async function createPayment(
   }
 
   const eventType =
-    payment.status === "succeeded"
+    finalPayment.status === "succeeded"
       ? "payment.succeeded"
-      : payment.status === "failed"
+      : finalPayment.status === "failed"
         ? "payment.failed"
-        : payment.status === "pending"
+        : finalPayment.status === "pending"
           ? "payment.pending"
           : "payment.created";
 
-  dispatchWebhook(organizationId, environment, eventType, payment).catch(console.error);
+  dispatchWebhook(organizationId, environment, eventType, finalPayment).catch(console.error);
 
-  return payment as Payment;
+  return finalPayment;
 }
 
 export function buildProviderExternalId(paymentId: string): string {
