@@ -63,15 +63,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify PostgreSQL availability
+      - name: Apply migrations to disposable PostgreSQL
         env:
           PGPASSWORD: postgres
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -c 'SELECT version();'
-      - name: Check migration 023 invariants statically
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/fixtures/ci_finance_schema.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
+      - name: Run SQL regression tests
+        env:
+          PGPASSWORD: postgres
         run: |
-          grep -q "CREATE UNIQUE INDEX.*balance_transactions_one_charge_per_payment" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
-          grep -q "FOR UPDATE" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
-          grep -q "GRANT EXECUTE.*service_role" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/023_pix_confirmation_concurrency.sql
+      - name: Check migration invariants
+        run: |
+          grep -q "FOR UPDATE" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
+          grep -q "fluxpay_reserve_refund" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
+          grep -q "balance_transactions_one_refund_per_refund" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
