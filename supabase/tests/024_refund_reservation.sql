@@ -7,6 +7,7 @@ DECLARE
   refund_uuid uuid;
   refund_row public.refunds%ROWTYPE;
   ledger_count integer;
+  reservation jsonb;
 BEGIN
   INSERT INTO public.payments (
     organization_id, environment, amount, currency, status, payment_type,
@@ -15,9 +16,10 @@ BEGIN
     org_id, 'test', 1000, 'BRL', 'succeeded', 'card', 0, 1000, 'synthetic refund 024'
   ) RETURNING id INTO payment_id;
 
-  SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
+  reservation := public.fluxpay_reserve_refund(
     payment_id, org_id, 'test', 600, 'refund-024-1', 'first partial refund', '{}'::jsonb
   );
+  refund_row := jsonb_populate_record(NULL::public.refunds, reservation->'refund');
   refund_uuid := refund_row.id;
 
   -- A pending reservation is ambiguous/in-flight and blocks a second provider call.
@@ -57,9 +59,10 @@ BEGIN
   END;
 
   -- Now that the first refund is finalized, the remaining 400 can be reserved.
-  SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
+  reservation := public.fluxpay_reserve_refund(
     payment_id, org_id, 'test', 400, 'refund-024-2', 'final partial refund', '{}'::jsonb
   );
+  refund_row := jsonb_populate_record(NULL::public.refunds, reservation->'refund');
   PERFORM public.fluxpay_finalize_refund(
     refund_row.id, org_id, 'test', 'succeeded', 'provider-refund-025', '{"status":"succeeded"}'::jsonb
   );
