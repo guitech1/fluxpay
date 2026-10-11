@@ -19,11 +19,11 @@ BEGIN
 
   first_request := public.fluxpay_create_withdrawal_request(
     org_id, 'test', user_id, 4000, 0, 4000, 'ci@example.test', 'email',
-    'ci-withdrawal-idempotency-001', 'synthetic test withdrawal'
+    '00000000-0000-4000-8000-000000000251', 'synthetic test withdrawal'
   );
   duplicate_request := public.fluxpay_create_withdrawal_request(
     org_id, 'test', user_id, 4000, 0, 4000, 'ci@example.test', 'email',
-    'ci-withdrawal-idempotency-001', 'synthetic test withdrawal'
+    '00000000-0000-4000-8000-000000000251', 'synthetic test withdrawal'
   );
 
   IF first_request->>'id' IS DISTINCT FROM duplicate_request->>'id' THEN
@@ -49,7 +49,7 @@ BEGIN
   BEGIN
     PERFORM public.fluxpay_create_withdrawal_request(
       org_id, 'test', user_id, 7000, 0, 7000, 'other@example.test', 'email',
-      'ci-withdrawal-insufficient-002', 'should exceed available funds'
+      '00000000-0000-4000-8000-000000000252', 'should exceed available funds'
     );
     RAISE EXCEPTION 'expected insufficient balance rejection';
   EXCEPTION WHEN check_violation THEN
