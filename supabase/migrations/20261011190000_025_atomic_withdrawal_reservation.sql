@@ -131,7 +131,7 @@ BEGIN
       'requested_by', existing_row.requested_by, 'approved_by', existing_row.approved_by,
       'approved_at', existing_row.approved_at, 'rejected_at', existing_row.rejected_at,
       'rejection_reason', existing_row.rejection_reason, 'failed_at', existing_row.failed_at,
-      'correlation_id', existing_row.correlation_id, 'provider_reference', existing_row.provider_withdrawal_id,
+      'correlation_id', existing_row.correlation_id, 'provider_reference', existing_row.provider_reference,
       'failure_reason', existing_row.failure_reason, 'balance_transaction_id', existing_row.balance_transaction_id,
       'created_at', existing_row.created_at, 'updated_at', existing_row.updated_at
     );
@@ -170,7 +170,7 @@ BEGIN
     'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
     'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
     'rejected_at', NULL, 'rejection_reason', w.rejection_reason, 'failed_at', NULL,
-    'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
+    'correlation_id', w.correlation_id, 'provider_reference', w.provider_reference,
     'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
     'created_at', w.created_at, 'updated_at', w.updated_at
   );
