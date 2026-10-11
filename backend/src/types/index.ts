@@ -101,6 +101,7 @@ export interface CreateCustomerInput {
 
 export interface CreateRefundInput {
   amount?: number;
+  idempotency_key: string;
   reason?: string;
   metadata?: Record<string, unknown>;
 }
