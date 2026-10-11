@@ -72,6 +72,26 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'terminal payment unexpectedly received a charge ledger entry';
   END IF;
+
+  -- The PIX-only RPC must not confirm a card payment.
+  INSERT INTO public.payments (
+    organization_id, environment, amount, currency, status, payment_type,
+    fee_amount, net_amount, description
+  ) VALUES (
+    org_id, 'test', 1000, 'BRL', 'pending', 'card', 0, 1000, 'synthetic non-PIX test 023'
+  ) RETURNING id INTO terminal_id;
+
+  BEGIN
+    PERFORM public.fluxpay_confirm_pix_payment(terminal_id, org_id, 'test');
+    RAISE EXCEPTION 'expected non-PIX rejection';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    NULL;
+  END;
+
+  IF (SELECT status::text FROM public.payments WHERE id = terminal_id) <> 'pending' THEN
+    RAISE EXCEPTION 'non-PIX payment state was modified by PIX RPC';
+  END IF;
+
 END
 $test$;
 
