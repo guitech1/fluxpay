@@ -38,12 +38,16 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
-
+/**
+ * Normalize a withdrawal_requests row to the application shape.
+ * Live/target schema uses fee, net, approved_by, approved_at, provider_withdrawal_id.
+ * Historical migration 015 used fee_amount, net_amount, reviewed_by, reviewed_at.
+ */
 function mapWithdrawalRow(row: any): WithdrawalRequest {
   return {
     ...row,
-    fee: row.fee ?? row.fee_amount ?? 0,
-    net: row.net ?? row.net_amount ?? 0,
+    fee: Number(row.fee ?? row.fee_amount ?? 0),
+    net: Number(row.net ?? row.net_amount ?? 0),
     approved_by: row.approved_by ?? row.reviewed_by ?? null,
     approved_at: row.approved_at ?? row.reviewed_at ?? null,
     provider_reference: row.provider_reference ?? row.provider_withdrawal_id ?? null,
@@ -122,45 +126,6 @@ function assertPixKey(type: PixKeyType, key: string): void {
       if (k.length < 20) throw new AppError(400, "validation_error", "PIX copia-e-cola invalido.");
       break;
   }
-}
-
-function mapWithdrawalInsertError(err: {
-  code?: string;
-  message?: string;
-  details?: string;
-}): AppError {
-  const code = err.code || "";
-  const msg = `${err.message || ""} ${err.details || ""}`;
-
-  if (
-    code === "42P01" ||
-    code === "PGRST205" ||
-    (/withdrawal_requests/i.test(msg) && /does not exist|not find|schema cache/i.test(msg))
-  ) {
-    return new AppError(
-      503,
-      "api_error",
-      "Tabela de saques ainda nao esta disponivel no banco. Aplique a migration 015_withdrawal_requests e tente de novo."
-    );
-  }
-
-  if (code === "23503") {
-    return new AppError(
-      500,
-      "api_error",
-      "Nao foi possivel vincular o pedido ao usuario. Tente novamente em instantes."
-    );
-  }
-
-  if (code === "23514") {
-    return new AppError(
-      400,
-      "validation_error",
-      "Dados do saque invalidos. Confira valor e chave PIX."
-    );
-  }
-
-  return new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
 }
 
 export async function requestWithdrawal(params: {
@@ -331,6 +296,7 @@ export async function rejectWithdrawal(params: {
   adminUserId: string;
   reason: string;
 }): Promise<WithdrawalRequest> {
+  // RPC owns status transition, ledger release, and decision audit in one transaction.
   const { data, error } = await supabaseAdmin.rpc("fluxpay_reject_withdrawal", {
     p_withdrawal_id: params.withdrawalId,
     p_admin_user_id: params.adminUserId,
@@ -344,15 +310,6 @@ export async function rejectWithdrawal(params: {
     throw new AppError(503, "api_error", "Nao foi possivel rejeitar e liberar o saldo atomicamente.");
   }
 
-  await recordWithdrawalDecision({
-    withdrawalId: row.id,
-    organizationId: row.organization_id,
-    action: "reject",
-    actorId: params.adminUserId,
-    reason: params.reason,
-    stateBefore: "pending",
-    stateAfter: "rejected",
-  });
   return mapWithdrawalRow(row);
 }
 
@@ -368,7 +325,8 @@ export async function approveAndExecuteWithdrawal(params: {
     .maybeSingle();
 
   if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  const w = row as WithdrawalRequest;
+  // Always normalize so net/fee/approved_* are present regardless of historical column names.
+  let w = mapWithdrawalRow(row);
 
   if (w.status !== "pending" && w.status !== "approved") {
     throw new AppError(
@@ -378,17 +336,25 @@ export async function approveAndExecuteWithdrawal(params: {
     );
   }
 
+  if (!Number.isFinite(w.net) || w.net <= 0) {
+    throw new AppError(
+      500,
+      "api_error",
+      "Pedido de saque sem valor liquido valido; reconcilie antes de enviar ao adquirente."
+    );
+  }
+
   const stateBeforeApprove = w.status;
 
-  // Claim the approval with a compare-and-set update. A concurrent admin request
-  // must not execute the same payout merely because it read the same pending row.
+  // Claim pending -> approved with compare-and-set. Column names match the
+  // target/live schema used by fluxpay_create_withdrawal_request (approved_*).
   if (w.status === "pending") {
     const { data: approved, error: approveError } = await supabaseAdmin
       .from("withdrawal_requests")
       .update({
         status: "approved",
-        reviewed_by: params.adminUserId,
-        reviewed_at: new Date().toISOString(),
+        approved_by: params.adminUserId,
+        approved_at: new Date().toISOString(),
       })
       .eq("id", w.id)
       .eq("status", "pending")
@@ -396,13 +362,17 @@ export async function approveAndExecuteWithdrawal(params: {
       .maybeSingle();
 
     if (approveError || !approved) {
-      throw new AppError(409, "conflict", "O pedido de saque foi alterado por outra operação. Atualize o estado antes de tentar novamente.");
+      throw new AppError(
+        409,
+        "conflict",
+        "O pedido de saque foi alterado por outra operação. Atualize o estado antes de tentar novamente."
+      );
     }
+    w = mapWithdrawalRow(approved);
   }
 
-  // Move approved -> processing atomically before contacting the provider.
-  // Only the caller that wins this transition may submit the payout. If the
-  // provider result is ambiguous, reconciliation—not a blind retry—is required.
+  // approved -> processing before any provider call. Only the winner may submit.
+  // Ambiguous provider outcomes stay processing; never blind-retry.
   const { data: claimed, error: claimError } = await supabaseAdmin
     .from("withdrawal_requests")
     .update({ status: "processing" })
@@ -412,8 +382,13 @@ export async function approveAndExecuteWithdrawal(params: {
     .maybeSingle();
 
   if (claimError || !claimed) {
-    throw new AppError(409, "conflict", "O pedido de saque já foi assumido por outra operação ou precisa de reconciliação.");
+    throw new AppError(
+      409,
+      "conflict",
+      "O pedido de saque já foi assumido por outra operação ou precisa de reconciliação."
+    );
   }
+  w = mapWithdrawalRow(claimed);
 
   await recordWithdrawalDecision({
     withdrawalId: w.id,
@@ -431,9 +406,7 @@ export async function approveAndExecuteWithdrawal(params: {
       amountCents: w.net,
       pixKey: w.pix_key,
       pixKeyType: w.pix_key_type as PixKeyType,
-      // Stable operation identifier is sent as external_id for provider-side
-      // deduplication/reconciliation where NexusPag supports it. A timeout
-      // remains processing and must never be blindly resubmitted.
+      // Stable external id for provider-side dedup; timeout stays processing.
       externalId: w.id,
     });
   } catch (err) {
@@ -460,13 +433,17 @@ export async function approveAndExecuteWithdrawal(params: {
   }
 
   const finalStatus = providerResult.status === "completed" ? "completed" : "processing";
+  const providerRef =
+    (providerResult as any).providerWithdrawalId || (providerResult as any).id || null;
+  const feeCents = (providerResult as any).feeCents;
 
+  // Target schema columns: provider_withdrawal_id and fee (not fee_amount).
   const { data: updated, error: upErr } = await supabaseAdmin
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider_withdrawal_id: (providerResult as any).providerWithdrawalId || (providerResult as any).id || null,
-      fee_amount: (providerResult as any).feeCents ?? w.fee,
+      provider_withdrawal_id: providerRef,
+      fee: typeof feeCents === "number" ? feeCents : w.fee,
       failure_reason: null,
       failed_at: null,
     })
@@ -483,7 +460,7 @@ export async function approveAndExecuteWithdrawal(params: {
     );
   }
 
-  return updated as WithdrawalRequest;
+  return mapWithdrawalRow(updated);
 }
 
 export function publicWithdrawalView(w: WithdrawalRequest) {
