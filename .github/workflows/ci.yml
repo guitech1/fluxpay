@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - feature/multi-acquirer-fees
+  pull_request:
+    branches:
+      - feature/multi-acquirer-fees
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --workspace=backend
+      - run: npm run typecheck --workspace=backend
+      - run: npm test --workspace=backend
+      - run: npm run build --workspace=backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace=frontend
+      - run: npm run lint --workspace=frontend
+      - run: npm run build --workspace=frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+  postgres-regression:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fluxpay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fluxpay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify PostgreSQL availability
+        env:
+          PGPASSWORD: postgres
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -c 'SELECT version();'
+      - name: Check migration 023 invariants statically
+        run: |
+          grep -q "CREATE UNIQUE INDEX.*balance_transactions_one_charge_per_payment" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
+          grep -q "FOR UPDATE" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
+          grep -q "GRANT EXECUTE.*service_role" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
