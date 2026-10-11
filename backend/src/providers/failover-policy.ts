@@ -1,8 +1,8 @@
 /**
- * Política de failover multi-adquirente (pura, testável).
- * - Falha definitiva (4xx de negócio, 5xx, 429, refused): pode tentar próxima.
- * - Resultado desconhecido (timeout após request enviado, abort): NÃO avança.
- * - Orçamento total e timeout por tentativa limitam latência.
+ * Politica de failover multi-adquirente (pura, testavel).
+ * - Falha definitiva (4xx de negocio, 5xx, 429, refused): pode tentar proxima.
+ * - Resultado desconhecido (timeout apos request enviado, abort): NAO avanca.
+ * - Orcamento total e timeout por tentativa limitam latencia.
  */
 
 export type ErrorCategory =
@@ -12,7 +12,7 @@ export type ErrorCategory =
   | "circuit_open";
 
 export interface AttemptDecision {
-  /** Pode tentar a próxima adquirente? */
+  /** Pode tentar a proxima adquirente? */
   continueFailover: boolean;
   category: ErrorCategory;
   reason: string;
@@ -25,7 +25,7 @@ export function classifyProviderError(err: {
   ambiguous?: boolean;
   statusCode?: number;
 }): AttemptDecision {
-  // Timeout / abort após envio: cobrança pode ter sido criada no provedor.
+  // Timeout / abort apos envio: cobranca pode ter sido criada no provedor.
   if (err.ambiguous === true || err.name === "AbortError") {
     return {
       continueFailover: false,
@@ -43,7 +43,7 @@ export function classifyProviderError(err: {
     };
   }
 
-  // Conexão recusada / DNS: request quase certamente não chegou ao PIX.
+  // Conexao recusada / DNS: request quase certamente nao chegou ao PIX.
   if (
     msg.includes("econnrefused") ||
     msg.includes("enotfound") ||
@@ -67,7 +67,7 @@ export function classifyProviderError(err: {
         reason: `http_${code}`,
       };
     }
-    // 4xx de negócio: este provedor rejeitou; próximo pode aceitar.
+    // 4xx de negocio: este provedor rejeitou; proximo pode aceitar.
     if (code >= 400 && code < 500) {
       return {
         continueFailover: true,
@@ -77,7 +77,6 @@ export function classifyProviderError(err: {
     }
   }
 
-  // Compat: retryable=true e não ambiguous → transiente (ex. 5xx marcado no adapter).
   if (err.retryable === true) {
     return {
       continueFailover: true,
@@ -86,7 +85,6 @@ export function classifyProviderError(err: {
     };
   }
 
-  // retryable=false explícito (ex. validação): ainda pode tentar outro adquirente.
   if (err.retryable === false) {
     return {
       continueFailover: true,
@@ -95,7 +93,6 @@ export function classifyProviderError(err: {
     };
   }
 
-  // Desconhecido: não arriscar duplicar.
   return {
     continueFailover: false,
     category: "unknown",
@@ -109,7 +106,6 @@ export function computeMaxAttempts(params: {
 }): number {
   const n = Math.max(0, params.orderedLength);
   if (!n) return 0;
-  // 0 / null / undefined → todas as elegíveis (sem teto artificial de 3).
   const envMax = params.envMax;
   if (envMax == null || envMax <= 0) return n;
   return Math.min(n, envMax);
@@ -132,7 +128,7 @@ export function attemptTimeoutMs(params: {
   return Math.min(params.perAttemptTimeoutMs, params.remainingBudgetMs);
 }
 
-/** Circuit breaker em memória (por processo / instância Lambda). */
+/** Circuit breaker em memoria (por processo / instancia Lambda). */
 export class CircuitBreaker {
   private state = new Map<
     string,
@@ -149,7 +145,6 @@ export class CircuitBreaker {
     if (!s) return false;
     if (s.openUntil > now) return true;
     if (s.openUntil > 0 && s.openUntil <= now) {
-      // half-open: limpa e permite uma tentativa
       this.state.delete(id);
     }
     return false;
@@ -168,7 +163,6 @@ export class CircuitBreaker {
     this.state.set(id, s);
   }
 
-  /** Só para testes */
   _debug(id: string) {
     return this.state.get(id);
   }
@@ -182,11 +176,11 @@ export function readFailoverEnv(env: NodeJS.ProcessEnv = process.env) {
     return Number.isFinite(n) ? n : d;
   };
   return {
-    /** Timeout por tentativa de create PIX (ms). */
-    perAttemptTimeoutMs: num("FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS", 8000),
-    /** Orçamento total da operação de failover (ms). */
-    totalBudgetMs: num("FLUXPAY_ACQUIRER_TOTAL_BUDGET_MS", 22000),
-    /** 0 = todas as elegíveis. */
+    /** Timeout por tentativa de create PIX (ms). Meta de engenharia: 2000. */
+    perAttemptTimeoutMs: num("FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS", 2000),
+    /** Orcamento total da operacao de failover (ms). Meta: 5000. */
+    totalBudgetMs: num("FLUXPAY_ACQUIRER_TOTAL_BUDGET_MS", 5000),
+    /** 0 = todas as elegiveis (sem teto artificial de 3). */
     maxAttempts: num("FLUXPAY_ACQUIRER_MAX_ATTEMPTS", 0),
     circuitThreshold: num("FLUXPAY_CIRCUIT_BREAKER_THRESHOLD", 3),
     circuitOpenMs: num("FLUXPAY_CIRCUIT_BREAKER_MS", 60_000),
