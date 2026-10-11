@@ -77,6 +77,11 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
+  IF p.payment_type IS DISTINCT FROM 'pix' THEN
+    RAISE EXCEPTION 'payment % is not a PIX payment', p.id
+      USING ERRCODE = '22023';
+  END IF;
+
   -- Idempotent retry: repair a missing ledger entry only for an already-successful payment.
   IF p.status = 'succeeded' THEN
     INSERT INTO public.balance_transactions (
