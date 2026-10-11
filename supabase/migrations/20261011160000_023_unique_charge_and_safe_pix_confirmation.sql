@@ -36,9 +36,16 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE public.balance_transactions
+  ADD CONSTRAINT balance_transactions_charge_requires_payment
+  CHECK (type <> 'charge' OR payment_id IS NOT NULL) NOT VALID;
+
+ALTER TABLE public.balance_transactions
+  VALIDATE CONSTRAINT balance_transactions_charge_requires_payment;
+
 CREATE UNIQUE INDEX IF NOT EXISTS balance_transactions_one_charge_per_payment
   ON public.balance_transactions (payment_id)
-  WHERE type = 'charge' AND payment_id IS NOT NULL;
+  WHERE type = 'charge';
 
 CREATE OR REPLACE FUNCTION public.fluxpay_confirm_pix_payment(
   p_payment_id UUID,
