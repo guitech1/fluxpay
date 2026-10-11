@@ -78,6 +78,7 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/023_pix_confirmation_concurrency.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/024_refund_reservation.sql
       - name: Check migration invariants
         run: |
           grep -q "FOR UPDATE" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
