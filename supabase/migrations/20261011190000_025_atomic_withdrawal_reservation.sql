@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.fluxpay_create_withdrawal_request(
   p_net_amount bigint,
   p_pix_key text,
   p_pix_key_type text,
-  p_correlation_id text,
+  p_correlation_id uuid,
   p_description text
 )
 RETURNS jsonb
@@ -27,7 +27,7 @@ DECLARE
   ledger_id uuid;
   available_balance bigint;
 BEGIN
-  IF p_correlation_id IS NULL OR length(btrim(p_correlation_id)) = 0 THEN
+  IF p_correlation_id IS NULL THEN
     RAISE EXCEPTION 'correlation_id is required for withdrawal idempotency' USING ERRCODE = '22023';
   END IF;
   IF p_amount <= 0 OR p_net_amount <= 0 OR p_fee_amount < 0 OR p_net_amount > p_amount THEN
@@ -58,11 +58,11 @@ BEGIN
     RETURN jsonb_build_object(
       'id', existing_row.id, 'organization_id', existing_row.organization_id,
       'environment', existing_row.environment, 'amount', existing_row.amount,
-      'fee', existing_row.fee_amount, 'net', existing_row.net_amount,
+      'fee', existing_row.fee, 'net', existing_row.net,
       'currency', existing_row.currency, 'pix_key', existing_row.pix_key,
       'pix_key_type', existing_row.pix_key_type, 'status', existing_row.status,
-      'requested_by', existing_row.requested_by, 'approved_by', existing_row.reviewed_by,
-      'approved_at', existing_row.reviewed_at, 'rejected_at', NULL,
+      'requested_by', existing_row.requested_by, 'approved_by', existing_row.approved_by,
+      'approved_at', existing_row.approved_at, 'rejected_at', NULL,
       'rejection_reason', existing_row.rejection_reason, 'failed_at', NULL,
       'correlation_id', existing_row.correlation_id, 'provider_reference', existing_row.provider_withdrawal_id,
       'failure_reason', existing_row.failure_reason, 'balance_transaction_id', existing_row.balance_transaction_id,
@@ -90,7 +90,7 @@ BEGIN
   ) RETURNING id INTO ledger_id;
 
   INSERT INTO public.withdrawal_requests (
-    organization_id, environment, amount, fee_amount, net_amount, currency,
+    organization_id, environment, amount, fee, net, currency,
     pix_key, pix_key_type, status, requested_by, correlation_id, balance_transaction_id
   ) VALUES (
     p_organization_id, p_environment, p_amount, p_fee_amount, p_net_amount, 'BRL',
@@ -99,9 +99,9 @@ BEGIN
 
   RETURN jsonb_build_object(
     'id', w.id, 'organization_id', w.organization_id, 'environment', w.environment,
-    'amount', w.amount, 'fee', w.fee_amount, 'net', w.net_amount, 'currency', w.currency,
+    'amount', w.amount, 'fee', w.fee, 'net', w.net, 'currency', w.currency,
     'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
-    'requested_by', w.requested_by, 'approved_by', w.reviewed_by, 'approved_at', w.reviewed_at,
+    'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
     'rejected_at', NULL, 'rejection_reason', w.rejection_reason, 'failed_at', NULL,
     'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
     'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
@@ -110,7 +110,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, text, text) TO service_role;
 
 COMMENT ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, text, text) IS
