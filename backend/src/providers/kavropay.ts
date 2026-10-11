@@ -61,5 +61,7 @@ export const kavropayProvider: AcquirerAdapter = {
     return { status: mapStatus(data.status ?? "waiting_payment"), providerPaymentId: data.id, rawResponse: data,
       pix: { txid: data.id ?? ref, copyPaste: data.pix_copy_paste ?? "", qrCodeBase64: data.qr_code_base64 ?? "", expiresAt: data.expires_at ?? "", feeAmountCents: fee, netAmountCents: data.net != null ? Math.round(data.net * 100) : 0 } };
   },
-  async refundPayment() { throw new Error("não suportado"); },
+  async refundPayment(_params: { providerPaymentId: string; amount: number; }): Promise<{ providerRefundId: string; status: import("../types/index.js").RefundStatus; rawResponse?: unknown; }> {
+    throw new Error("não suportado");
+  },
 };
