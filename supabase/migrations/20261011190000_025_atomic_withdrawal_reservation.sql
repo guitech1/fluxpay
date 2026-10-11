@@ -51,6 +51,8 @@ BEGIN
 
   IF FOUND THEN
     IF existing_row.amount <> p_amount
+       OR existing_row.fee <> p_fee_amount
+       OR existing_row.net <> p_net_amount
        OR existing_row.pix_key IS DISTINCT FROM p_pix_key
        OR existing_row.pix_key_type IS DISTINCT FROM p_pix_key_type THEN
       RAISE EXCEPTION 'correlation_id already belongs to a different withdrawal request' USING ERRCODE = '23505';
