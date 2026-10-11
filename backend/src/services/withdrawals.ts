@@ -42,6 +42,30 @@ export interface WithdrawalRequest {
 
 const MIN_WITHDRAWAL_CENTS = 1000;
 
+async function recordWithdrawalDecision(params: {
+  withdrawalId: string;
+  organizationId: string;
+  action: "approve" | "reject" | "process" | "fail";
+  actorId?: string | null;
+  reason?: string | null;
+  stateBefore: string;
+  stateAfter: string;
+}): Promise<void> {
+  try {
+    await supabaseAdmin.from("withdrawal_decision_audit").insert({
+      withdrawal_id: params.withdrawalId,
+      organization_id: params.organizationId,
+      action: params.action,
+      actor_id: params.actorId || null,
+      reason: params.reason || null,
+      state_before: params.stateBefore,
+      state_after: params.stateAfter,
+    });
+  } catch (err) {
+    console.error("[withdrawals] audit failed:", err);
+  }
+}
+
 function maskPixKey(key: string, type: PixKeyType): string {
   if (type === "email") {
     const [user, domain] = key.split("@");
@@ -90,7 +114,6 @@ function assertPixKey(type: PixKeyType, key: string): void {
   }
 }
 
-/** Mensagens legíveis para erros comuns do insert em withdrawal_requests. */
 function mapWithdrawalInsertError(err: {
   code?: string;
   message?: string;
@@ -157,7 +180,6 @@ export async function requestWithdrawal(params: {
 
   assertPixKey(params.pixKeyType, params.pixKey);
 
-  // Gate KYC: se a conta exige e nao esta verified, bloqueia saque
   const { data: orgKyc } = await supabaseAdmin
     .from("organizations")
     .select("kyc_required, kyc_status")
@@ -397,6 +419,15 @@ export async function rejectWithdrawal(params: {
   if (upErr || !updated) {
     throw new AppError(500, "api_error", "Nao foi possivel rejeitar o saque.");
   }
+  await recordWithdrawalDecision({
+    withdrawalId: w.id,
+    organizationId: w.organization_id,
+    action: "reject",
+    actorId: params.adminUserId,
+    reason: params.reason ?? null,
+    stateBefore: "pending",
+    stateAfter: "rejected",
+  });
   return updated as WithdrawalRequest;
 }
 
@@ -422,6 +453,7 @@ export async function approveAndExecuteWithdrawal(params: {
     );
   }
 
+  const stateBeforeApprove = w.status;
   await supabaseAdmin
     .from("withdrawal_requests")
     .update({
@@ -431,6 +463,16 @@ export async function approveAndExecuteWithdrawal(params: {
     })
     .eq("id", w.id)
     .in("status", ["pending", "approved"]);
+
+  await recordWithdrawalDecision({
+    withdrawalId: w.id,
+    organizationId: w.organization_id,
+    action: "approve",
+    actorId: params.adminUserId,
+    reason: params.note ?? null,
+    stateBefore: stateBeforeApprove,
+    stateAfter: "approved",
+  });
 
   let providerResult;
   try {
@@ -468,8 +510,8 @@ export async function approveAndExecuteWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider_reference: providerResult.providerWithdrawalId,
-      fee: providerResult.feeCents,
+      provider_reference: (providerResult as any).providerWithdrawalId || (providerResult as any).id || null,
+      fee: (providerResult as any).feeCents ?? w.fee,
       failure_reason: null,
       failed_at: null,
     })
