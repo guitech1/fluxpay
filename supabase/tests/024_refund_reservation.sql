@@ -46,6 +46,16 @@ BEGIN
     RAISE EXCEPTION 'expected one refund ledger entry, got %', ledger_count;
   END IF;
 
+  -- Amount above the remaining 400 must be rejected while the payment is partially refunded.
+  BEGIN
+    PERFORM public.fluxpay_reserve_refund(
+      payment_id, org_id, 'test', 1, 'over refund', '{}'::jsonb
+    );
+    RAISE EXCEPTION 'expected over-refund limit to reject';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
   -- Now that the first refund is finalized, the remaining 400 can be reserved.
   SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
     payment_id, org_id, 'test', 400, 'final partial refund', '{}'::jsonb
@@ -58,14 +68,6 @@ BEGIN
     RAISE EXCEPTION 'payment should be fully refunded after cumulative amount reaches original amount';
   END IF;
 
-  BEGIN
-    PERFORM public.fluxpay_reserve_refund(
-      payment_id, org_id, 'test', 1, 'over refund', '{}'::jsonb
-    );
-    RAISE EXCEPTION 'expected over-refund limit to reject';
-  EXCEPTION WHEN check_violation THEN
-    NULL;
-  END;
 END
 $test$;
 ROLLBACK;
