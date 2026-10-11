@@ -34,6 +34,34 @@ BEGIN
     RAISE EXCEPTION 'expected exactly one charge after duplicate confirmation; found %', charge_count;
   END IF;
 
+  -- The partial unique index must reject a second charge for the same payment.
+  BEGIN
+    INSERT INTO public.balance_transactions (
+      organization_id, environment, type, amount, currency, net, fee,
+      payment_id, description, available_on
+    ) VALUES (
+      org_id, 'test', 'charge', 1000, 'BRL', 1000, 0,
+      pending_id, 'duplicate charge regression', NOW()
+    );
+    RAISE EXCEPTION 'expected duplicate charge rejection';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+
+  -- Charge ledger entries without a payment reference must be rejected.
+  BEGIN
+    INSERT INTO public.balance_transactions (
+      organization_id, environment, type, amount, currency, net, fee,
+      payment_id, description, available_on
+    ) VALUES (
+      org_id, 'test', 'charge', 1000, 'BRL', 1000, 0,
+      NULL, 'charge without payment regression', NOW()
+    );
+    RAISE EXCEPTION 'expected NULL payment_id rejection for charge';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
   IF (SELECT status::text FROM public.payments WHERE id = pending_id) <> 'succeeded' THEN
     RAISE EXCEPTION 'pending payment was not transitioned to succeeded';
   END IF;
