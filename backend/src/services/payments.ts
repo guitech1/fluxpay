@@ -462,6 +462,17 @@ export async function createRefund(
     throw new AppError(400, "invalid_request", "So e possivel reembolsar uma cobranca ja aprovada.");
   }
 
+  // NexusPag's current PIX adapter explicitly does not support refunds. Reject
+  // before any provider call or local ledger mutation instead of surfacing a
+  // generic 500 after attempting an unsupported operation.
+  if (payment.payment_type === "pix" && payment.provider === "nexuspag") {
+    throw new AppError(
+      501,
+      "provider_error",
+      "Reembolso de PIX pela NexusPag não é suportado pela API atual."
+    );
+  }
+
   const refundAmount = input.amount ?? payment.amount;
 
   if (refundAmount <= 0 || refundAmount > payment.amount) {
