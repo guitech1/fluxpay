@@ -256,18 +256,29 @@ export async function createPayment(
   }
 
   if (payment.status === "succeeded") {
-    await supabaseAdmin.from("balance_transactions").insert({
-      organization_id: organizationId,
-      environment,
-      type: "charge",
-      amount: input.amount,
-      currency,
-      net: netAmount,
-      fee: feeAmount,
-      payment_id: payment.id,
-      description: input.description || "Payment",
-      available_on: nowIso,
-    });
+    // Keep the status transition and charge ledger entry inside the database RPC.
+    // The RPC locks the payment and the partial unique index is the final
+    // idempotency barrier against a concurrent webhook confirmation.
+    const { error: ledgerError } = await supabaseAdmin.rpc(
+      "fluxpay_confirm_pix_payment",
+      {
+        p_payment_id: payment.id,
+        p_organization_id: organizationId,
+        p_environment: environment,
+      }
+    );
+
+    if (ledgerError) {
+      console.error("Atomic payment ledger confirmation failed:", {
+        paymentId: payment.id,
+        error: ledgerError,
+      });
+      throw new AppError(
+        500,
+        "api_error",
+        "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
+      );
+    }
   }
 
   const eventType =
