@@ -90,7 +90,7 @@ CREATE TABLE public.withdrawal_requests (
   rejected_at timestamptz,
   failed_at timestamptz,
   correlation_id uuid,
-  provider_withdrawal_id text,
+  provider_reference text,
   failure_reason text,
   balance_transaction_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
