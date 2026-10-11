@@ -423,7 +423,7 @@ export async function createRefund(
     throw new AppError(400, "validation_error", "Valor de reembolso invalido.");
   }
 
-  const provider = getProvider(payment.environment, payment.provider);
+  const provider = getProvider(payment.environment, payment.provider ?? undefined);
   const providerResult = await provider.refundPayment({
     providerPaymentId: payment.provider_payment_id!,
     amount: refundAmount,
@@ -626,7 +626,7 @@ export async function reconcileOrphanPixCharges(): Promise<{
       if (row.environment === "test") {
         providerStatus = "not_found";
       } else {
-        const provider = getProvider(row.environment, row.provider);
+        const provider = getProvider(row.environment, row.provider ?? undefined);
         const consulted = await provider.getPayment(reference);
         providerPix = consulted.pix;
         providerPaymentId = consulted.providerPaymentId;
