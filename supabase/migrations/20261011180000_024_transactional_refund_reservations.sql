@@ -1,5 +1,5 @@
 -- 024: serialize refund reservations and finalize refund ledger atomically.
--- Forward-only; apply only to a disposable database until reviewed and tested.
+-- Forward-only; apply only after disposable regression tests and approved change review.
 CREATE UNIQUE INDEX IF NOT EXISTS balance_transactions_one_refund_per_refund
   ON public.balance_transactions (refund_id)
   WHERE type = 'refund' AND refund_id IS NOT NULL;
