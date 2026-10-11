@@ -494,11 +494,13 @@ export async function createRefund(
       p_organization_id: organizationId,
       p_environment: payment.environment,
       p_amount: refundAmount,
+      p_idempotency_key: input.idempotency_key,
       p_reason: input.reason || null,
       p_metadata: input.metadata || {},
     }
   );
-  const reservation = Array.isArray(reserved) ? reserved[0] : reserved;
+  const envelope = Array.isArray(reserved) ? reserved[0] : reserved;
+  const reservation = envelope?.refund;
   if (reserveError || !reservation) {
     const code = reserveError?.code;
     if (code === "23514") {
@@ -508,6 +510,15 @@ export async function createRefund(
       throw new AppError(409, "conflict", "Existe um reembolso pendente ou a cobranca exige reconciliacao. Nao repita a operacao.");
     }
     throw new AppError(503, "api_error", "Nao foi possivel reservar o reembolso no banco; nenhum pedido foi enviado ao adquirente.");
+  }
+
+  if (envelope.created === false) {
+    // A replay with the same key returns the durable result without contacting
+    // the provider again. Pending means the original operation needs reconciliation.
+    if (reservation.status === "pending") {
+      throw new AppError(409, "conflict", "Este reembolso já está pendente de confirmação/reconciliação. Não repita a operação.");
+    }
+    return reservation;
   }
 
   const provider = getProvider(payment.environment, payment.provider ?? undefined);
