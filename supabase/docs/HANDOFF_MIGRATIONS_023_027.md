@@ -1,70 +1,42 @@
-# Handoff: migrations 023–027 (branch-pinned)
+# Handoff: migrations 023–027
 
-**Do not use `main`.** These files exist only on:
+**Status: applied to live Supabase and verified on 2026-10-11.** Do not rerun these migrations manually; they are recorded in the live migration history.
 
 - **Repository:** `guitech1/fluxpay`
 - **Branch:** `feature/multi-acquirer-fees`
-- **Commit (CI #66 green):** `0fc1818b09a613c8a392967ae127ef86823c6495`
+- **Current reviewed code head at rollout:** `245419c23ee4d00e33fe93cfe4fd73ff00176223`
+- **Supabase project:** `mrfbmndbazeajgyozhfb`
 
-## 1. Exact paths (at that SHA)
+## Migration history entries
 
-| # | Path |
-|---|------|
-| 023 | `supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql` |
-| 024 | `supabase/migrations/20261011180000_024_transactional_refund_reservations.sql` |
-| 025 | `supabase/migrations/20261011190000_025_atomic_withdrawal_reservation.sql` |
-| 026 | `supabase/migrations/20261011200000_026_atomic_withdrawal_rejection.sql` |
-| 027 | `supabase/migrations/20261011210000_027_refund_idempotency_keys.sql` |
+| Migration | Live version | Name |
+|---|---|---|
+| 023 | `20261011185317` | `023_unique_charge_and_safe_pix_confirmation` |
+| 024 | `20261011185329` | `024_transactional_refund_reservations` |
+| 025 | `20261011185336` | `025_atomic_withdrawal_reservation` |
+| 026 | `20261011185341` | `026_atomic_withdrawal_rejection` |
+| 027 | `20261011185347` | `027_refund_idempotency_keys` |
 
-Supporting artifacts:
+## What was verified after applying
 
-- Fixture: `supabase/tests/fixtures/ci_finance_schema.sql`
-- Tests: `supabase/tests/023_*.sql` … `028_rls_grants.sql`, `supabase/tests/ci_concurrency.sh`
-- Workflow: `.github/workflows/ci.yml` (job `postgres-regression`)
+- Unique charge constraint/index and refund ledger index exist.
+- PIX confirmation, refund reserve/finalize, withdrawal reserve/reject RPCs exist with expected signatures.
+- New refund idempotency column/index exist; old reserve-refund signature is gone.
+- The service-role grants for mutation RPCs exist.
+- Migration 025/026 use the live `provider_reference` column; the application write and disposable CI fixture were corrected to the same live schema.
+- Permission checks confirmed browser roles cannot write payment tables or read sensitive fee configuration; scoped SELECT access remains for authenticated users on the expected financial views.
+- No real payment, refund, or withdrawal operation was run during deployment.
 
-## 2. Raw file URLs (no branch checkout required)
+## CI and PR
 
-Replace is already pinned to the SHA:
+At the time of this update, CI run #83 is still in progress. Backend and PostgreSQL regression jobs passed; frontend build was still running. Verify the final conclusion before claiming the entire workflow is green:
+https://github.com/guitech1/fluxpay/actions/runs/38165627254
 
-```
-https://raw.githubusercontent.com/guitech1/fluxpay/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
-https://raw.githubusercontent.com/guitech1/fluxpay/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
-https://raw.githubusercontent.com/guitech1/fluxpay/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations/20261011190000_025_atomic_withdrawal_reservation.sql
-https://raw.githubusercontent.com/guitech1/fluxpay/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations/20261011200000_026_atomic_withdrawal_rejection.sql
-https://raw.githubusercontent.com/guitech1/fluxpay/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations/20261011210000_027_refund_idempotency_keys.sql
-```
+PR #5 remains open:
+https://github.com/guitech1/fluxpay/pull/5
 
-Browse tree at SHA:
+**Important:** database migrations being live does not mean application code is deployed. Do not merge or deploy the feature branch without explicit release authorization and final CI confirmation.
 
-```
-https://github.com/guitech1/fluxpay/tree/0fc1818b09a613c8a392967ae127ef86823c6495/supabase/migrations
-```
+## Historical migration reconciliation
 
-Git fetch (read-only):
-
-```bash
-git clone --branch feature/multi-acquirer-fees --single-branch https://github.com/guitech1/fluxpay.git
-cd fluxpay && git checkout 0fc1818b09a613c8a392967ae127ef86823c6495
-```
-
-## 3. What CI #66 already proved (disposable Postgres 17)
-
-Run: https://github.com/guitech1/fluxpay/actions/runs/38160192572  
-Job `postgres-regression`: **success** on SHA `0fc1818b`.
-
-Order applied:
-
-1. `ci_finance_schema.sql` (minimal live-shaped schema)
-2. Migrations **023 → 027** in filename order
-3. SQL tests 023–028 + `ci_concurrency.sh`
-
-**Covered:** unique charge index; PIX RPC idempotency + terminal/non-PIX rejection; refund reserve/finalize + concurrent fail-closed; withdrawal create/reject RPCs; refund idempotency keys; RLS enabled; `anon` no table privileges on financial tables; `authenticated` SELECT only (no INSERT/UPDATE/DELETE); sensitive RPCs EXECUTE only for `service_role`.
-
-**Not covered:** full live Supabase schema dump; real production data; applying migrations to project `mrfbmndbazeajgyozhfb`; Auth leaked-password setting; historical 021/022 provenance.
-
-## 4. Instruction for Supabase review agent
-
-1. Open the raw URLs above (or clone at the pinned SHA).
-2. Review SQL only from those files — ignore `main`.
-3. Do **not** apply to production. Rehearse only on a disposable DB or local Postgres.
-4. Privileges/grants to re-check after any future live apply: same assertions as `supabase/tests/028_rls_grants.sql`.
+Older discrepancies in migration history for 013–022 remain. Do not use a blind `supabase db push`, replay historical migrations, or edit `supabase_migrations.schema_migrations` manually to fabricate provenance.
