@@ -25,9 +25,9 @@ BEGIN
   IF w.status = 'rejected' THEN
     RETURN jsonb_build_object(
       'id', w.id, 'organization_id', w.organization_id, 'environment', w.environment,
-      'amount', w.amount, 'fee', w.fee_amount, 'net', w.net_amount, 'currency', w.currency,
+      'amount', w.amount, 'fee', w.fee, 'net', w.net, 'currency', w.currency,
       'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
-      'requested_by', w.requested_by, 'approved_by', w.reviewed_by, 'approved_at', w.reviewed_at,
+      'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
       'rejected_at', w.rejected_at, 'rejection_reason', w.rejection_reason, 'failed_at', w.failed_at,
       'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
       'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
@@ -44,8 +44,8 @@ BEGIN
      SET status = 'rejected',
          rejection_reason = p_reason,
          rejected_at = NOW(),
-         reviewed_by = p_admin_user_id,
-         reviewed_at = NOW()
+         approved_by = p_admin_user_id,
+         approved_at = NOW()
    WHERE id = w.id
   RETURNING * INTO w;
 
@@ -54,14 +54,14 @@ BEGIN
     description, available_on
   ) VALUES (
     w.organization_id, w.environment, 'adjustment', w.amount, w.currency,
-    w.net_amount, 0, 'Estorno de saque rejeitado (' || left(w.id::text, 8) || ')', NOW()
+    w.net, 0, 'Estorno de saque rejeitado (' || left(w.id::text, 8) || ')', NOW()
   );
 
   RETURN jsonb_build_object(
     'id', w.id, 'organization_id', w.organization_id, 'environment', w.environment,
-    'amount', w.amount, 'fee', w.fee_amount, 'net', w.net_amount, 'currency', w.currency,
+    'amount', w.amount, 'fee', w.fee, 'net', w.net, 'currency', w.currency,
     'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
-    'requested_by', w.requested_by, 'approved_by', w.reviewed_by, 'approved_at', w.reviewed_at,
+    'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
     'rejected_at', w.rejected_at, 'rejection_reason', w.rejection_reason, 'failed_at', w.failed_at,
     'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
     'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
