@@ -475,13 +475,50 @@ export async function createRefund(
 
   const refundAmount = input.amount ?? payment.amount;
 
-  if (refundAmount <= 0 || refundAmount > payment.amount) {
+  if (!Number.isSafeInteger(refundAmount) || refundAmount <= 0) {
     throw new AppError(400, "validation_error", "Valor de reembolso invalido.");
+  }
+
+  if (!payment.provider_payment_id) {
+    throw new AppError(
+      409,
+      "invalid_request",
+      "A cobranca nao possui referencia confirmada no adquirente; reembolso bloqueado para reconciliacao."
+    );
+  }
+
+  // Count successful and in-flight refunds so sequential requests cannot refund
+  // more than the original charge. A database-level lock/RPC is still required
+  // to make this limit race-safe for simultaneous requests.
+  const { data: priorRefunds, error: priorRefundsError } = await supabaseAdmin
+    .from("refunds")
+    .select("amount, status")
+    .eq("payment_id", paymentId)
+    .eq("organization_id", organizationId)
+    .eq("environment", payment.environment);
+
+  if (priorRefundsError || !priorRefunds) {
+    throw new AppError(503, "api_error", "Nao foi possivel validar reembolsos anteriores; tente novamente.");
+  }
+
+  const reservedRefundAmount = priorRefunds.reduce((total, refund) => {
+    return ["pending", "succeeded"].includes(refund.status)
+      ? total + Number(refund.amount || 0)
+      : total;
+  }, 0);
+  const remainingRefundAmount = payment.amount - reservedRefundAmount;
+
+  if (refundAmount > remainingRefundAmount) {
+    throw new AppError(
+      400,
+      "validation_error",
+      "O valor solicitado excede o saldo ainda disponivel para reembolso."
+    );
   }
 
   const provider = getProvider(payment.environment, payment.provider ?? undefined);
   const providerResult = await provider.refundPayment({
-    providerPaymentId: payment.provider_payment_id!,
+    providerPaymentId: payment.provider_payment_id,
     amount: refundAmount,
   });
 
@@ -506,13 +543,30 @@ export async function createRefund(
     throw new AppError(500, "api_error", "Nao foi possivel registrar o reembolso. Tente novamente.");
   }
 
-  const newStatus = refundAmount >= payment.amount ? "refunded" : "partially_refunded";
-  await supabaseAdmin
+  // Pending provider refunds reserve amount but do not change payment state or
+  // the balance ledger until the provider confirms success.
+  if (providerResult.status !== "succeeded") {
+    return refund;
+  }
+
+  const totalRefunded = reservedRefundAmount + refundAmount;
+  const newStatus = totalRefunded >= payment.amount ? "refunded" : "partially_refunded";
+  const { error: paymentUpdateError } = await supabaseAdmin
     .from("payments")
     .update({ status: newStatus })
-    .eq("id", paymentId);
+    .eq("id", paymentId)
+    .eq("organization_id", organizationId)
+    .eq("environment", environment);
 
-  await supabaseAdmin.from("balance_transactions").insert({
+  if (paymentUpdateError) {
+    throw new AppError(
+      500,
+      "api_error",
+      "O adquirente confirmou o reembolso, mas o status local precisa de reconciliacao."
+    );
+  }
+
+  const { error: ledgerError } = await supabaseAdmin.from("balance_transactions").insert({
     organization_id: organizationId,
     environment: payment.environment,
     type: "refund",
@@ -524,6 +578,14 @@ export async function createRefund(
     refund_id: refund.id,
     description: input.reason || "Refund",
   });
+
+  if (ledgerError) {
+    throw new AppError(
+      500,
+      "api_error",
+      "O adquirente confirmou o reembolso, mas o lancamento financeiro precisa de reconciliacao."
+    );
+  }
 
   dispatchWebhook(organizationId, payment.environment, "payment.refunded", {
     payment,
