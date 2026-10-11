@@ -75,6 +75,7 @@ jobs:
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011190000_025_atomic_withdrawal_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011200000_026_atomic_withdrawal_rejection.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011210000_027_refund_idempotency_keys.sql
       - name: Run SQL regression tests
         env:
           PGPASSWORD: postgres
@@ -83,6 +84,7 @@ jobs:
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/024_refund_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/025_withdrawal_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/026_withdrawal_rejection.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/027_refund_idempotency.sql
       - name: Check migration invariants
         run: |
           grep -q "FOR UPDATE" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
@@ -90,3 +92,4 @@ jobs:
           grep -q "balance_transactions_one_refund_per_refund" supabase/migrations/20261011180000_024_transactional_refund_reservations.sql
           grep -q "FOR UPDATE" supabase/migrations/20261011190000_025_atomic_withdrawal_reservation.sql
           grep -q "FOR UPDATE" supabase/migrations/20261011200000_026_atomic_withdrawal_rejection.sql
+          grep -q "refunds_org_env_idempotency_key_unique" supabase/migrations/20261011210000_027_refund_idempotency_keys.sql
