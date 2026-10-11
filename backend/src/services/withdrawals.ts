@@ -1,8 +1,6 @@
-import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
-import { getBalance } from "./balance.js";
 import type { Environment } from "../types/index.js";
 
 export type WithdrawalStatus =
@@ -194,100 +192,46 @@ export async function requestWithdrawal(params: {
     );
   }
 
-  const balance = await getBalance(params.organizationId, params.environment);
-  const brl = balance.available.find((b) => b.currency === "BRL");
-  const available = brl?.amount ?? 0;
-
-  if (params.amountCents > available) {
+  const correlationId = params.correlationId?.trim();
+  if (!correlationId) {
     throw new AppError(
       400,
-      "insufficient_funds",
-      `Saldo disponivel insuficiente. Disponivel: R$ ${(available / 100).toFixed(2).replace(".", ",")}.`
+      "validation_error",
+      "Informe correlation_id para garantir idempotencia do pedido de saque."
     );
   }
 
-  const correlationId = params.correlationId?.trim() || uuidv4();
-  const requestId = uuidv4();
   const feeAmount = 0;
   const netAmount = params.amountCents - feeAmount;
+  const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
+    p_organization_id: params.organizationId,
+    p_environment: params.environment,
+    p_user_id: params.userId,
+    p_amount: params.amountCents,
+    p_fee_amount: feeAmount,
+    p_net_amount: netAmount,
+    p_pix_key: params.pixKey.trim(),
+    p_pix_key_type: params.pixKeyType,
+    p_correlation_id: correlationId,
+    p_description: `Saque solicitado (${maskPixKey(params.pixKey, params.pixKeyType)})`,
+  });
 
-  const { data: ledger, error: ledgerError } = await supabaseAdmin
-    .from("balance_transactions")
-    .insert({
-      organization_id: params.organizationId,
-      environment: params.environment,
-      type: "payout",
-      amount: -params.amountCents,
-      currency: "BRL",
-      net: -netAmount,
-      fee: feeAmount,
-      description: `Saque solicitado (${maskPixKey(params.pixKey, params.pixKeyType)})`,
-      available_on: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  if (ledgerError || !ledger) {
-    console.error("[withdrawals] ledger insert failed:", ledgerError);
-    throw new AppError(500, "api_error", "Nao foi possivel reservar o saldo para o saque.");
-  }
-
-  const baseRow = {
-    id: requestId,
-    organization_id: params.organizationId,
-    environment: params.environment,
-    amount: params.amountCents,
-    fee: feeAmount,
-    net: netAmount,
-    currency: "BRL",
-    pix_key: params.pixKey.trim(),
-    pix_key_type: params.pixKeyType,
-    status: "pending" as const,
-    correlation_id: correlationId,
-    balance_transaction_id: ledger.id,
-  };
-
-  const { data: publicUser, error: publicUserError } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("id", params.userId)
-    .maybeSingle();
-
-  if (publicUserError || !publicUser) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    console.error("[withdrawals] requested_by user lookup failed:", publicUserError);
-    throw new AppError(500, "api_error", "Usuario do saque nao encontrado no cadastro da plataforma.");
-  }
-
-  const { data: row, error: insertError } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .insert({ ...baseRow, requested_by: params.userId })
-    .select("*")
-    .single();
-
-  if (insertError) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    if (insertError.code === "23505") {
-      const existing = await getWithdrawalByCorrelation(
-        params.organizationId,
-        params.environment,
-        correlationId
-      );
-      if (existing) return existing;
-      throw new AppError(409, "conflict", "Ja existe um saque com esta referencia.");
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) {
+    if (error?.code === "23514") {
+      throw new AppError(400, "insufficient_funds", "Saldo disponivel insuficiente ou valor de saque invalido.");
     }
-    console.error("[withdrawals] insert failed:", {
-      code: insertError.code,
-      message: insertError.message,
-      details: insertError.details,
-      hint: (insertError as { hint?: string }).hint,
-    });
-    throw mapWithdrawalInsertError(insertError);
-  }
-
-  if (!row) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    throw new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
+    if (error?.code === "23505") {
+      throw new AppError(409, "conflict", "O correlation_id ja pertence a outro pedido de saque.");
+    }
+    if (error?.code === "22023") {
+      throw new AppError(400, "validation_error", "Dados invalidos para o pedido de saque.");
+    }
+    if (error?.code === "23503") {
+      throw new AppError(400, "validation_error", "Organizacao ou usuario do saque nao encontrado.");
+    }
+    console.error("[withdrawals] atomic reservation failed:", error);
+    throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
   return row as WithdrawalRequest;
