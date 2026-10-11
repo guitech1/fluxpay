@@ -38,6 +38,18 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
+
+function mapWithdrawalRow(row: any): WithdrawalRequest {
+  return {
+    ...row,
+    fee: row.fee ?? row.fee_amount ?? 0,
+    net: row.net ?? row.net_amount ?? 0,
+    approved_by: row.approved_by ?? row.reviewed_by ?? null,
+    approved_at: row.approved_at ?? row.reviewed_at ?? null,
+    provider_reference: row.provider_reference ?? row.provider_withdrawal_id ?? null,
+  } as WithdrawalRequest;
+}
+
 const MIN_WITHDRAWAL_CENTS = 1000;
 
 async function recordWithdrawalDecision(params: {
@@ -234,7 +246,7 @@ export async function requestWithdrawal(params: {
     throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
-  return row as WithdrawalRequest;
+  return mapWithdrawalRow(row);
 }
 
 export async function getWithdrawalByCorrelation(
@@ -249,7 +261,7 @@ export async function getWithdrawalByCorrelation(
     .eq("environment", environment)
     .eq("correlation_id", correlationId)
     .maybeSingle();
-  return (data as WithdrawalRequest) || null;
+  return data ? mapWithdrawalRow(data) : null;
 }
 
 export async function getWithdrawal(
@@ -268,7 +280,7 @@ export async function getWithdrawal(
   if (error || !data) {
     throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
   }
-  return data as WithdrawalRequest;
+  return mapWithdrawalRow(data);
 }
 
 export async function listWithdrawals(
@@ -290,7 +302,7 @@ export async function listWithdrawals(
   const { data, error } = await query;
   if (error) throw new AppError(500, "api_error", "Nao foi possivel listar os saques.");
 
-  const rows = (data || []) as WithdrawalRequest[];
+  const rows = (data || []).map(mapWithdrawalRow);
   return { data: rows.slice(0, limit), has_more: rows.length > limit };
 }
 
@@ -311,7 +323,7 @@ export async function listAllWithdrawals(options: {
 
   const { data, error } = await query;
   if (error) throw new AppError(500, "api_error", "Nao foi possivel listar os saques.");
-  return (data || []) as WithdrawalRequest[];
+  return (data || []).map(mapWithdrawalRow);
 }
 
 export async function rejectWithdrawal(params: {
@@ -326,7 +338,7 @@ export async function rejectWithdrawal(params: {
     .maybeSingle();
 
   if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  const w = row as WithdrawalRequest;
+  const w = mapWithdrawalRow(row);
 
   if (w.status !== "pending") {
     throw new AppError(
@@ -372,7 +384,7 @@ export async function rejectWithdrawal(params: {
     stateBefore: "pending",
     stateAfter: "rejected",
   });
-  return updated as WithdrawalRequest;
+  return mapWithdrawalRow(updated);
 }
 
 export async function approveAndExecuteWithdrawal(params: {
@@ -406,8 +418,8 @@ export async function approveAndExecuteWithdrawal(params: {
       .from("withdrawal_requests")
       .update({
         status: "approved",
-        approved_by: params.adminUserId,
-        approved_at: new Date().toISOString(),
+        reviewed_by: params.adminUserId,
+        reviewed_at: new Date().toISOString(),
       })
       .eq("id", w.id)
       .eq("status", "pending")
@@ -484,8 +496,8 @@ export async function approveAndExecuteWithdrawal(params: {
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider_reference: (providerResult as any).providerWithdrawalId || (providerResult as any).id || null,
-      fee: (providerResult as any).feeCents ?? w.fee,
+      provider_withdrawal_id: (providerResult as any).providerWithdrawalId || (providerResult as any).id || null,
+      fee_amount: (providerResult as any).feeCents ?? w.fee,
       failure_reason: null,
       failed_at: null,
     })
