@@ -1,15 +1,5 @@
 -- 022: Saldo imediato, taxas multi-adquirente, auditoria de saques
---
--- Sequence note: there is no migration file numbered 021 in this repository.
--- The jump 020 -> 022 is intentional historical numbering in the repo; do not
--- invent a backfilled 021 or renumber this file. Supabase applies migrations
--- by filename order, not by the numeric label alone.
---
--- Status on project fluxpay (mrfbmndbazeajgyozhfb): previously recorded as
--- applied for the fee/balance objects introduced here. Confirm with
--- supabase_migrations.schema_migrations before re-applying in any environment.
--- Never mark applied manually without evidence from that table.
---
+-- Already applied on Supabase project fluxpay (mrfbmndbazeajgyozhfb).
 CREATE OR REPLACE FUNCTION public.fluxpay_confirm_pix_payment(
   p_payment_id UUID,
   p_organization_id UUID,
