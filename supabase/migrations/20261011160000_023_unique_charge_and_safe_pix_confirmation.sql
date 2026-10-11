@@ -1,6 +1,6 @@
 -- FluxPay 023: unique charge ledger entry and safe PIX state transitions.
 -- Non-destructive: aborts before DDL if historical duplicate charge rows exist.
--- Apply only after the target Supabase project is confirmed as non-production.
+-- Controlled production apply requires explicit approval and successful read-only preflight.
 
 DO $$
 DECLARE
