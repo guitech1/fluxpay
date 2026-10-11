@@ -111,7 +111,7 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, uuid, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, uuid, text) TO service_role;
 
-COMMENT ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, text, text) IS
+COMMENT ON FUNCTION public.fluxpay_create_withdrawal_request(uuid, public.environment_type, uuid, bigint, bigint, bigint, text, text, uuid, text) IS
   'Atomically checks available balance, reserves payout ledger funds, creates the request, and deduplicates by mandatory correlation_id.';
