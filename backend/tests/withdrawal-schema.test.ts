@@ -5,7 +5,7 @@
  * Mirrors mapWithdrawalRow in services/withdrawals.ts — if the service
  * mapping changes, update both places together.
  *
- * Target schema (fixture + RPCs 025/026): fee, net, approved_by, approved_at.
+ * Live schema + RPCs 025/026: fee, net, approved_by, approved_at, provider_reference.
  * Historical migration 015: fee_amount, net_amount, reviewed_by, reviewed_at.
  */
 import test from "node:test";
@@ -32,7 +32,7 @@ test("target schema columns normalize to fee/net/approved_*", () => {
     net: 5000,
     approved_by: "admin-1",
     approved_at: "2026-10-11T00:00:00Z",
-    provider_withdrawal_id: "np-1",
+    provider_reference: "np-1",
     status: "approved",
   });
   assert.equal(mapped.net, 5000);
