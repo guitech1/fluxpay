@@ -6,6 +6,7 @@ on:
       - feature/multi-acquirer-fees
   pull_request:
     branches:
+      - main
       - feature/multi-acquirer-fees
   workflow_dispatch:
 
