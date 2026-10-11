@@ -7,6 +7,12 @@ import { gothampayProvider } from "./gothampay.js";
 import { smokepayProvider } from "./smokepay.js";
 import { kavropayProvider } from "./kavropay.js";
 import type { AcquirerAdapter, AcquirerId, AcquirerConfig, ChargeAttemptResult, CreateChargeContext } from "./types.js";
+import {
+  DEFAULT_PRIORITY,
+  filterActiveAcquirers,
+  parseActivePool,
+  type RoutingRow,
+} from "./routing.js";
 
 const adapters: Record<string, AcquirerAdapter | PaymentProvider> = {
   sandbox: sandboxProvider as unknown as AcquirerAdapter,
@@ -16,24 +22,10 @@ const adapters: Record<string, AcquirerAdapter | PaymentProvider> = {
   kavropay: kavropayProvider,
 };
 
-const DEFAULT_PRIORITY: Record<AcquirerId, number> = {
-  sandbox: 999,
-  nexuspag: 10,
-  gothampay: 20,
-  smokepay: 30,
-  kavropay: 40,
-};
-
 const MAX = 3;
 
-type RoutingRow = {
-  acquirer_id: string;
-  enabled: boolean;
-  priority: number;
-};
-
 let routingCache: { at: number; rows: RoutingRow[] } | null = null;
-const ROUTING_TTL_MS = 10_000;
+const ROUTING_TTL_MS = 5_000;
 
 function asA(p: PaymentProvider | AcquirerAdapter): AcquirerAdapter | null {
   return "id" in p && typeof (p as AcquirerAdapter).isConfigured === "function"
@@ -50,7 +42,6 @@ export function isLiveEnabled(): boolean {
   );
 }
 
-/** Invalida cache após PATCH no admin (enabled/priority). */
 export function invalidateAcquirerRoutingCache(): void {
   routingCache = null;
 }
@@ -64,6 +55,7 @@ async function loadRoutingRows(): Promise<RoutingRow[]> {
     .select("acquirer_id, enabled, priority");
   if (error) {
     console.error("[providers] falha ao ler acquirer_cost_config:", error.message);
+    // Fail-closed se já tínhamos config: reutiliza cache antigo; se nunca leu, vazio.
     return routingCache?.rows ?? [];
   }
   const rows = (data || []) as RoutingRow[];
@@ -71,52 +63,38 @@ async function loadRoutingRows(): Promise<RoutingRow[]> {
   return rows;
 }
 
-function candidatePool(): AcquirerId[] {
-  const raw = process.env.FLUXPAY_ACTIVE_ACQUIRERS?.trim();
-  if (raw) {
-    return raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter((id): id is AcquirerId => id in adapters && id !== "sandbox");
-  }
-  return ["nexuspag", "gothampay", "smokepay", "kavropay"];
+function isConfiguredId(id: string): boolean {
+  if (id === "sandbox") return true;
+  return Boolean(asA(adapters[id])?.isConfigured());
+}
+
+export async function resolveActiveIds(): Promise<AcquirerId[]> {
+  const rows = await loadRoutingRows();
+  const pool = parseActivePool(process.env.FLUXPAY_ACTIVE_ACQUIRERS).filter(
+    (id) => id in adapters
+  );
+  const { ordered, excluded } = filterActiveAcquirers({
+    pool,
+    rows,
+    isConfigured: isConfiguredId,
+    max: MAX,
+  });
+  console.info(
+    JSON.stringify({
+      tag: "acquirer_routing",
+      ordered,
+      excluded,
+      configRows: rows.length,
+    })
+  );
+  return ordered;
 }
 
 /**
- * Lista adquirentes que podem gerar cobrança live:
- * 1) na pool (env ou default)
- * 2) com API key configurada
- * 3) enabled=true no admin (acquirer_cost_config); se não houver linha, assume true
- * Ordenado por priority do admin (menor primeiro).
+ * getProvider é usado em refund/reconcile com preferred = payment.provider já gravado.
+ * preferred SEMPRE respeitado (é o adquirente da cobrança original).
+ * Sem preferred: usa só pool+chave (sem DB) — NÃO deve criar cobranças novas por este caminho.
  */
-export async function resolveActiveIds(): Promise<AcquirerId[]> {
-  const rows = await loadRoutingRows();
-  const byId = new Map(rows.map((r) => [String(r.acquirer_id).toLowerCase(), r]));
-
-  return candidatePool()
-    .filter((id) => {
-      if (!asA(adapters[id])?.isConfigured()) return false;
-      const row = byId.get(id);
-      // Sem linha no banco: permite (só chave). Com linha: respeita enabled do admin.
-      if (row && row.enabled === false) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const pa = byId.get(a)?.priority ?? DEFAULT_PRIORITY[a];
-      const pb = byId.get(b)?.priority ?? DEFAULT_PRIORITY[b];
-      return Number(pa) - Number(pb);
-    })
-    .slice(0, MAX);
-}
-
-/** Sync fallback (refunds/webhooks com preferred já gravado). */
-function activeIdsSyncFallback(): AcquirerId[] {
-  return candidatePool()
-    .filter((id) => asA(adapters[id])?.isConfigured())
-    .sort((a, b) => DEFAULT_PRIORITY[a] - DEFAULT_PRIORITY[b])
-    .slice(0, MAX);
-}
-
 export function getProvider(environment: Environment, preferred?: string): PaymentProvider {
   if (environment === "test") return sandboxProvider;
   if (!isLiveEnabled()) {
@@ -129,10 +107,12 @@ export function getProvider(environment: Environment, preferred?: string): Payme
   if (preferred && preferred !== "sandbox" && adapters[preferred]) {
     return adapters[preferred] as PaymentProvider;
   }
-  for (const id of activeIdsSyncFallback()) {
-    if (asA(adapters[id])?.isConfigured()) return adapters[id] as PaymentProvider;
-  }
-  throw new AppError(503, "provider_unavailable", "Nenhum adquirente válido configurado.");
+  // Sem preferred: não inventar NexusPag. Exigir createChargeWithFailover para live charge.
+  throw new AppError(
+    503,
+    "provider_unavailable",
+    "Nenhum adquirente preferido na cobrança; use o roteador de criação."
+  );
 }
 
 export function listProviders() {
@@ -160,7 +140,7 @@ export function listAcquirerConfigs(): AcquirerConfig[] {
       id,
       displayName: names[id],
       enabled: id === "sandbox" ? true : configured,
-      priority: DEFAULT_PRIORITY[id],
+      priority: DEFAULT_PRIORITY[id] ?? 100,
       environment: id === "sandbox" ? ("test" as const) : ("live" as const),
       costPercent: cost.percent,
       costFixedCents: cost.fixedCents,
@@ -233,11 +213,10 @@ export async function createChargeWithFailover(
   }
 
   const ordered = await resolveActiveIds();
-  console.info("[providers] routing live:", ordered.join(",") || "(nenhum)");
 
   if (!ordered.length) {
     return {
-      providerId: "nexuspag",
+      providerId: "none",
       success: false,
       errorCode: "provider_unavailable",
       errorMessage: "Nenhum adquirente ativo no admin com chave configurada.",
@@ -259,6 +238,15 @@ export async function createChargeWithFailover(
     const pid = (a?.id ?? (provider as PaymentProvider).name) as AcquirerId;
     attempted.push(pid);
     const t0 = Date.now();
+    console.info(
+      JSON.stringify({
+        tag: "acquirer_attempt",
+        paymentExternalId: ctx.externalId ?? null,
+        providerId: pid,
+        attempt: i,
+        ordered,
+      })
+    );
     try {
       const r = await provider.createPayment({
         amount: ctx.amountCents,
@@ -298,13 +286,22 @@ export async function createChargeWithFailover(
         ambiguous: e.ambiguous === true,
         latencyMs: Date.now() - t0,
       };
+      console.warn(
+        JSON.stringify({
+          tag: "acquirer_attempt_failed",
+          providerId: pid,
+          retryable: last.retryable,
+          ambiguous: last.ambiguous,
+          message: e.message,
+        })
+      );
       if (e.ambiguous || e.retryable !== true) return last;
     }
   }
 
   return (
     last ?? {
-      providerId: ordered[0] ?? "nexuspag",
+      providerId: ordered[0] ?? "none",
       success: false,
       errorCode: "provider_unavailable",
       errorMessage: "indisponível",
