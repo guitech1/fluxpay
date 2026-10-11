@@ -1,8 +1,6 @@
-import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
-import { getBalance } from "./balance.js";
 import type { Environment } from "../types/index.js";
 
 export type WithdrawalStatus =
@@ -40,7 +38,49 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
+/**
+ * Normalize a withdrawal_requests row to the application shape.
+ * Live schema uses fee, net, approved_by, approved_at, provider_reference; legacy rows may use provider_withdrawal_id.
+ * Historical migration 015 used fee_amount, net_amount, reviewed_by, reviewed_at.
+ */
+function mapWithdrawalRow(row: any): WithdrawalRequest {
+  return {
+    ...row,
+    fee: Number(row.fee ?? row.fee_amount ?? 0),
+    net: Number(row.net ?? row.net_amount ?? 0),
+    approved_by: row.approved_by ?? row.reviewed_by ?? null,
+    approved_at: row.approved_at ?? row.reviewed_at ?? null,
+    provider_reference: row.provider_reference ?? row.provider_withdrawal_id ?? null,
+  } as WithdrawalRequest;
+}
+
 const MIN_WITHDRAWAL_CENTS = 1000;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function recordWithdrawalDecision(params: {
+  withdrawalId: string;
+  organizationId: string;
+  action: "approve" | "reject" | "process" | "fail";
+  actorId?: string | null;
+  reason?: string | null;
+  stateBefore: string;
+  stateAfter: string;
+}): Promise<void> {
+  try {
+    await supabaseAdmin.from("withdrawal_decision_audit").insert({
+      withdrawal_id: params.withdrawalId,
+      organization_id: params.organizationId,
+      action: params.action,
+      actor_id: params.actorId || null,
+      reason: params.reason || null,
+      state_before: params.stateBefore,
+      state_after: params.stateAfter,
+    });
+  } catch (err) {
+    console.error("[withdrawals] audit failed:", err);
+  }
+}
 
 function maskPixKey(key: string, type: PixKeyType): string {
   if (type === "email") {
@@ -90,46 +130,6 @@ function assertPixKey(type: PixKeyType, key: string): void {
   }
 }
 
-/** Mensagens legíveis para erros comuns do insert em withdrawal_requests. */
-function mapWithdrawalInsertError(err: {
-  code?: string;
-  message?: string;
-  details?: string;
-}): AppError {
-  const code = err.code || "";
-  const msg = `${err.message || ""} ${err.details || ""}`;
-
-  if (
-    code === "42P01" ||
-    code === "PGRST205" ||
-    (/withdrawal_requests/i.test(msg) && /does not exist|not find|schema cache/i.test(msg))
-  ) {
-    return new AppError(
-      503,
-      "api_error",
-      "Tabela de saques ainda nao esta disponivel no banco. Aplique a migration 015_withdrawal_requests e tente de novo."
-    );
-  }
-
-  if (code === "23503") {
-    return new AppError(
-      500,
-      "api_error",
-      "Nao foi possivel vincular o pedido ao usuario. Tente novamente em instantes."
-    );
-  }
-
-  if (code === "23514") {
-    return new AppError(
-      400,
-      "validation_error",
-      "Dados do saque invalidos. Confira valor e chave PIX."
-    );
-  }
-
-  return new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
-}
-
 export async function requestWithdrawal(params: {
   organizationId: string;
   environment: Environment;
@@ -157,7 +157,6 @@ export async function requestWithdrawal(params: {
 
   assertPixKey(params.pixKeyType, params.pixKey);
 
-  // Gate KYC: se a conta exige e nao esta verified, bloqueia saque
   const { data: orgKyc } = await supabaseAdmin
     .from("organizations")
     .select("kyc_required, kyc_status")
@@ -172,103 +171,56 @@ export async function requestWithdrawal(params: {
     );
   }
 
-  const balance = await getBalance(params.organizationId, params.environment);
-  const brl = balance.available.find((b) => b.currency === "BRL");
-  const available = brl?.amount ?? 0;
-
-  if (params.amountCents > available) {
+  const correlationId = params.correlationId?.trim();
+  if (!correlationId) {
     throw new AppError(
       400,
-      "insufficient_funds",
-      `Saldo disponivel insuficiente. Disponivel: R$ ${(available / 100).toFixed(2).replace(".", ",")}.`
+      "validation_error",
+      "Informe correlation_id para garantir idempotencia do pedido de saque."
+    );
+  }
+  if (!UUID_RE.test(correlationId)) {
+    throw new AppError(
+      400,
+      "validation_error",
+      "correlation_id deve ser um UUID valido."
     );
   }
 
-  const correlationId = params.correlationId?.trim() || uuidv4();
-  const requestId = uuidv4();
   const feeAmount = 0;
   const netAmount = params.amountCents - feeAmount;
+  const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
+    p_organization_id: params.organizationId,
+    p_environment: params.environment,
+    p_user_id: params.userId,
+    p_amount: params.amountCents,
+    p_fee_amount: feeAmount,
+    p_net_amount: netAmount,
+    p_pix_key: params.pixKey.trim(),
+    p_pix_key_type: params.pixKeyType,
+    p_correlation_id: correlationId,
+    p_description: `Saque solicitado (${maskPixKey(params.pixKey, params.pixKeyType)})`,
+  });
 
-  const { data: ledger, error: ledgerError } = await supabaseAdmin
-    .from("balance_transactions")
-    .insert({
-      organization_id: params.organizationId,
-      environment: params.environment,
-      type: "payout",
-      amount: -params.amountCents,
-      currency: "BRL",
-      net: -netAmount,
-      fee: feeAmount,
-      description: `Saque solicitado (${maskPixKey(params.pixKey, params.pixKeyType)})`,
-      available_on: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  if (ledgerError || !ledger) {
-    console.error("[withdrawals] ledger insert failed:", ledgerError);
-    throw new AppError(500, "api_error", "Nao foi possivel reservar o saldo para o saque.");
-  }
-
-  const baseRow = {
-    id: requestId,
-    organization_id: params.organizationId,
-    environment: params.environment,
-    amount: params.amountCents,
-    fee: feeAmount,
-    net: netAmount,
-    currency: "BRL",
-    pix_key: params.pixKey.trim(),
-    pix_key_type: params.pixKeyType,
-    status: "pending" as const,
-    correlation_id: correlationId,
-    balance_transaction_id: ledger.id,
-  };
-
-  const { data: publicUser, error: publicUserError } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("id", params.userId)
-    .maybeSingle();
-
-  if (publicUserError || !publicUser) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    console.error("[withdrawals] requested_by user lookup failed:", publicUserError);
-    throw new AppError(500, "api_error", "Usuario do saque nao encontrado no cadastro da plataforma.");
-  }
-
-  const { data: row, error: insertError } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .insert({ ...baseRow, requested_by: params.userId })
-    .select("*")
-    .single();
-
-  if (insertError) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    if (insertError.code === "23505") {
-      const existing = await getWithdrawalByCorrelation(
-        params.organizationId,
-        params.environment,
-        correlationId
-      );
-      if (existing) return existing;
-      throw new AppError(409, "conflict", "Ja existe um saque com esta referencia.");
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) {
+    if (error?.code === "23514") {
+      throw new AppError(400, "insufficient_funds", "Saldo disponivel insuficiente ou valor de saque invalido.");
     }
-    console.error("[withdrawals] insert failed:", {
-      code: insertError.code,
-      message: insertError.message,
-      details: insertError.details,
-      hint: (insertError as { hint?: string }).hint,
-    });
-    throw mapWithdrawalInsertError(insertError);
+    if (error?.code === "23505") {
+      throw new AppError(409, "conflict", "O correlation_id ja pertence a outro pedido de saque.");
+    }
+    if (error?.code === "22023") {
+      throw new AppError(400, "validation_error", "Dados invalidos para o pedido de saque.");
+    }
+    if (error?.code === "23503") {
+      throw new AppError(400, "validation_error", "Organizacao ou usuario do saque nao encontrado.");
+    }
+    console.error("[withdrawals] atomic reservation failed:", error);
+    throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
-  if (!row) {
-    await supabaseAdmin.from("balance_transactions").delete().eq("id", ledger.id);
-    throw new AppError(500, "api_error", "Nao foi possivel registrar o pedido de saque.");
-  }
-
-  return row as WithdrawalRequest;
+  return mapWithdrawalRow(row);
 }
 
 export async function getWithdrawalByCorrelation(
@@ -283,7 +235,7 @@ export async function getWithdrawalByCorrelation(
     .eq("environment", environment)
     .eq("correlation_id", correlationId)
     .maybeSingle();
-  return (data as WithdrawalRequest) || null;
+  return data ? mapWithdrawalRow(data) : null;
 }
 
 export async function getWithdrawal(
@@ -302,7 +254,7 @@ export async function getWithdrawal(
   if (error || !data) {
     throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
   }
-  return data as WithdrawalRequest;
+  return mapWithdrawalRow(data);
 }
 
 export async function listWithdrawals(
@@ -324,7 +276,7 @@ export async function listWithdrawals(
   const { data, error } = await query;
   if (error) throw new AppError(500, "api_error", "Nao foi possivel listar os saques.");
 
-  const rows = (data || []) as WithdrawalRequest[];
+  const rows = (data || []).map(mapWithdrawalRow);
   return { data: rows.slice(0, limit), has_more: rows.length > limit };
 }
 
@@ -345,7 +297,7 @@ export async function listAllWithdrawals(options: {
 
   const { data, error } = await query;
   if (error) throw new AppError(500, "api_error", "Nao foi possivel listar os saques.");
-  return (data || []) as WithdrawalRequest[];
+  return (data || []).map(mapWithdrawalRow);
 }
 
 export async function rejectWithdrawal(params: {
@@ -353,51 +305,20 @@ export async function rejectWithdrawal(params: {
   adminUserId: string;
   reason: string;
 }): Promise<WithdrawalRequest> {
-  const { data: row, error } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .select("*")
-    .eq("id", params.withdrawalId)
-    .maybeSingle();
-
-  if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  const w = row as WithdrawalRequest;
-
-  if (w.status !== "pending") {
-    throw new AppError(
-      400,
-      "invalid_request",
-      `So e possivel rejeitar pedidos pendentes (atual: ${w.status}).`
-    );
-  }
-
-  await supabaseAdmin.from("balance_transactions").insert({
-    organization_id: w.organization_id,
-    environment: w.environment,
-    type: "adjustment",
-    amount: w.amount,
-    currency: w.currency,
-    net: w.net,
-    fee: 0,
-    description: `Estorno de saque rejeitado (${w.id.slice(0, 8)})`,
-    available_on: new Date().toISOString(),
+  const { data, error } = await supabaseAdmin.rpc("fluxpay_reject_withdrawal", {
+    p_withdrawal_id: params.withdrawalId,
+    p_admin_user_id: params.adminUserId,
+    p_reason: params.reason,
   });
-
-  const { data: updated, error: upErr } = await supabaseAdmin
-    .from("withdrawal_requests")
-    .update({
-      status: "rejected",
-      rejection_reason: params.reason,
-      rejected_at: new Date().toISOString(),
-    })
-    .eq("id", w.id)
-    .eq("status", "pending")
-    .select("*")
-    .single();
-
-  if (upErr || !updated) {
-    throw new AppError(500, "api_error", "Nao foi possivel rejeitar o saque.");
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) {
+    if (error?.code === "P0002") throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
+    if (error?.code === "55000") throw new AppError(409, "conflict", "O saque nao esta pendente e nao pode ser rejeitado.");
+    console.error("[withdrawals] atomic rejection failed:", error);
+    throw new AppError(503, "api_error", "Nao foi possivel rejeitar e liberar o saldo atomicamente.");
   }
-  return updated as WithdrawalRequest;
+
+  return mapWithdrawalRow(row);
 }
 
 export async function approveAndExecuteWithdrawal(params: {
@@ -412,7 +333,7 @@ export async function approveAndExecuteWithdrawal(params: {
     .maybeSingle();
 
   if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  const w = row as WithdrawalRequest;
+  let w = mapWithdrawalRow(row);
 
   if (w.status !== "pending" && w.status !== "approved") {
     throw new AppError(
@@ -422,15 +343,65 @@ export async function approveAndExecuteWithdrawal(params: {
     );
   }
 
-  await supabaseAdmin
+  if (!Number.isFinite(w.net) || w.net <= 0) {
+    throw new AppError(
+      500,
+      "api_error",
+      "Pedido de saque sem valor liquido valido; reconcilie antes de enviar ao adquirente."
+    );
+  }
+
+  const stateBeforeApprove = w.status;
+
+  if (w.status === "pending") {
+    const { data: approved, error: approveError } = await supabaseAdmin
+      .from("withdrawal_requests")
+      .update({
+        status: "approved",
+        approved_by: params.adminUserId,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", w.id)
+      .eq("status", "pending")
+      .select("*")
+      .maybeSingle();
+
+    if (approveError || !approved) {
+      throw new AppError(
+        409,
+        "conflict",
+        "O pedido de saque foi alterado por outra operação. Atualize o estado antes de tentar novamente."
+      );
+    }
+    w = mapWithdrawalRow(approved);
+  }
+
+  const { data: claimed, error: claimError } = await supabaseAdmin
     .from("withdrawal_requests")
-    .update({
-      status: "approved",
-      approved_by: params.adminUserId,
-      approved_at: new Date().toISOString(),
-    })
+    .update({ status: "processing" })
     .eq("id", w.id)
-    .in("status", ["pending", "approved"]);
+    .eq("status", "approved")
+    .select("*")
+    .maybeSingle();
+
+  if (claimError || !claimed) {
+    throw new AppError(
+      409,
+      "conflict",
+      "O pedido de saque já foi assumido por outra operação ou precisa de reconciliação."
+    );
+  }
+  w = mapWithdrawalRow(claimed);
+
+  await recordWithdrawalDecision({
+    withdrawalId: w.id,
+    organizationId: w.organization_id,
+    action: "approve",
+    actorId: params.adminUserId,
+    reason: params.note ?? null,
+    stateBefore: stateBeforeApprove,
+    stateAfter: "processing",
+  });
 
   let providerResult;
   try {
@@ -438,6 +409,7 @@ export async function approveAndExecuteWithdrawal(params: {
       amountCents: w.net,
       pixKey: w.pix_key,
       pixKeyType: w.pix_key_type as PixKeyType,
+      externalId: w.id,
     });
   } catch (err) {
     const e = err as Error & { code?: string; status?: number };
@@ -463,13 +435,16 @@ export async function approveAndExecuteWithdrawal(params: {
   }
 
   const finalStatus = providerResult.status === "completed" ? "completed" : "processing";
+  const providerRef =
+    (providerResult as any).providerWithdrawalId || (providerResult as any).id || null;
+  const feeCents = (providerResult as any).feeCents;
 
   const { data: updated, error: upErr } = await supabaseAdmin
     .from("withdrawal_requests")
     .update({
       status: finalStatus,
-      provider_reference: providerResult.providerWithdrawalId,
-      fee: providerResult.feeCents,
+      provider_reference: providerRef,
+      fee: typeof feeCents === "number" ? feeCents : w.fee,
       failure_reason: null,
       failed_at: null,
     })
@@ -486,7 +461,7 @@ export async function approveAndExecuteWithdrawal(params: {
     );
   }
 
-  return updated as WithdrawalRequest;
+  return mapWithdrawalRow(updated);
 }
 
 export function publicWithdrawalView(w: WithdrawalRequest) {

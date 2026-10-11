@@ -156,6 +156,7 @@ router.post("/payments/:id/refund", requireRole("owner", "admin", "developer"), 
   try {
     const schema = z.object({
       amount: z.number().int().positive().optional(),
+      idempotency_key: z.string().min(1).max(255),
       reason: z.string().max(500).optional(),
     });
     const body = schema.parse(req.body);

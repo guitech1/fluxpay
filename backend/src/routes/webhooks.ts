@@ -280,4 +280,45 @@ router.post("/nexuspag", async (req, res, next) => {
   }
 });
 
+router.post("/provider", async (req, res, next) => {
+  try {
+    const secret =
+      process.env.NEXUSPAG_WEBHOOK_SECRET ||
+      process.env.GOTHAMPAY_WEBHOOK_SECRET ||
+      process.env.SMOKEPAY_WEBHOOK_SECRET ||
+      process.env.KAVROPAY_WEBHOOK_SECRET;
+    if (!secret) { res.status(503).json({ error: "webhook_secret_not_configured" }); return; }
+    const signatureHeader =
+      (req.headers["x-webhook-signature"] as string) ||
+      (req.headers["x-kavro-signature"] as string) || "";
+    const rawBody = typeof (req as any).rawBody === "string" ? (req as any).rawBody : JSON.stringify(req.body ?? {});
+    const isKavro = Boolean(req.headers["x-kavro-signature"]);
+    let valid = false;
+    if (isKavro) {
+      const crypto = await import("crypto");
+      const calculated = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+      try {
+        const a = Buffer.from(signatureHeader);
+        const b = Buffer.from(calculated);
+        valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+      } catch { valid = false; }
+    } else {
+      valid = verifyWebhookSignature(rawBody, signatureHeader, secret);
+    }
+    if (!valid) { res.status(401).json({ error: "invalid_signature" }); return; }
+    const payload = req.body as { event?: string; transaction_id?: string; txid?: string; external_id?: string | null; status?: string; id?: string; };
+    const event = payload.event || "";
+    const isPaid = event === "payment.confirmed" || event === "charge.paid" || payload.status === "paid";
+    if (!isPaid) { res.status(200).json({ received: true, ignored: true }); return; }
+    const payment = await getPaymentByProviderReference({
+      txid: payload.txid || payload.transaction_id || null,
+      externalId: payload.external_id || payload.id || null,
+    });
+    if (!payment) { res.status(200).json({ received: true, matched: false }); return; }
+    if (payment.status === "succeeded") { res.status(200).json({ received: true, already_processed: true }); return; }
+    await markPixPaymentSucceeded(payment);
+    res.status(200).json({ received: true, matched: true, payment_id: payment.id });
+  } catch (err) { next(err); }
+});
+
 export default router;

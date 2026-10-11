@@ -1,55 +1,46 @@
 import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase.js";
-import { getProvider } from "../providers/index.js";
+import {
+  getProvider,
+  createChargeWithFailover,
+} from "../providers/index.js";
 import { AppError } from "../middleware/error.js";
 import { dispatchWebhook } from "./webhooks.js";
 import { inScopeOrNull } from "../utils/scope.js";
 import { decideReconcileAction, decideWebhookAction } from "./provider-events.js";
 import { env } from "../config/env.js";
+import { calculateFee } from "./fees.js";
 import type {
   CreatePaymentInput,
   Payment,
   Environment,
   CreateRefundInput,
 } from "../types/index.js";
+import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
- * Cria uma cobranca.
+ * Cria uma cobranca com roteamento multi-adquirente e failover.
  *
- * ORDEM DAS OPERACOES (mudou, e o motivo importa):
+ * ORDEM DAS OPERACOES:
  *
  *   1. grava a linha em `payments` — status pending, sem txid;
- *   2. chama o adquirente, usando o id local como `external_id`;
- *   3. grava txid, QR Code e taxas na mesma linha.
+ *   2. calcula taxa (regras org/global + custo do adquirente) e snapshot;
+ *   3. chama createChargeWithFailover (GothamPay, SmokePay, KavroPay, NexusPag);
+ *   4. grava txid, QR Code, taxas e fee_rule_snapshot na mesma linha.
  *
- * Antes era 2 -> 1, e isso criava tres problemas reais:
+ * Idempotencia:
+ *   - UNIQUE(organization_id, environment, idempotency_key) na migration 013;
+ *   - external_id = id local (UUID) para o adquirente.
  *
- * a) Corrida com o webhook. O webhook da NexusPag chega por `txid`, que so
- *    existe depois do passo 2. Se a confirmacao chegasse antes do insert (PIX
- *    pago em segundos, insert lento), o evento nao casava com nada e ficava
- *    esperando alguem clicar em "reprocessar" no ADM. Gravando a linha ANTES
- *    da chamada, o pagamento local ja existe no instante em que a NexusPag
- *    passa a conhecer a cobranca — a ordem "webhook antes da persistencia"
- *    deixa de ser possivel. E, como o `external_id` tambem vai gravado antes,
- *    o webhook casa por txid OU por external_id (ver routes/webhooks.ts).
+ * Failover:
+ *   - so tenta outro provedor quando o erro e retryable e NAO ambiguo;
+ *   - resultado ambiguo (timeout/502) deixa a linha pendente para reconciliacao;
+ *   - nao repete cobranca em outro provedor quando o resultado anterior for ambiguo.
  *
- * b) Corrida de idempotencia. Duas requisicoes simultaneas com a mesma
- *    Idempotency-Key passavam as duas pelo middleware (nenhuma via a outra,
- *    porque nenhuma linha existia ainda) e criavam DUAS cobrancas no
- *    adquirente. Agora a primeira escrita vence e a segunda bate na
- *    UNIQUE(organization_id, environment, idempotency_key) da migration 013:
- *    o 23505 e tratado aqui como "ja existe", e a resposta devolve a mesma
- *    cobranca. O banco vira o arbitro, que e o unico lugar onde duas
- *    requisicoes simultaneas realmente se enxergam.
- *
- * c) Cobranca duplicada no adquirente. O `external_id` e, pela doc da
- *    NexusPag, chave de idempotencia: reenviar o mesmo valor devolve a
- *    transacao existente em vez de criar outra. Usamos o id local (UUID) —
- *    ver comentario em buildProviderExternalId.
- *
- * Se o passo 2 falhar de forma ambigua (timeout, 502), a linha fica pendente
- * sem txid e a reconciliacao automatica resolve depois
- * (reconcileOrphanPixCharges, chamada pela funcao agendada da Netlify).
+ * Liquidacao:
+ *   - vendas confirmadas creditam no ledger na confirmacao;
+ *   - available_on = agora (sem atraso artificial T+2);
+ *   - saldo disponivel vs pendente controlado por available_on e aprovacao de saque.
  */
 export async function createPayment(
   organizationId: string,
@@ -61,7 +52,6 @@ export async function createPayment(
   }
 
   const currency = (input.currency || "BRL").toUpperCase();
-  const provider = getProvider(environment);
   const paymentType = input.payment_method?.type === "pix" ? "pix" : "card";
 
   const paymentId = uuidv4();
@@ -80,7 +70,7 @@ export async function createPayment(
       status: "pending",
       description: input.description || null,
       idempotency_key: input.idempotency_key || null,
-      provider: provider.name,
+      provider: "pending",
       provider_external_id: providerExternalId,
       fee_amount: 0,
       net_amount: null,
@@ -91,11 +81,6 @@ export async function createPayment(
     .single();
 
   if (insertError) {
-    // 23505 = unique_violation. Com a migration 013 a unique e
-    // (organization_id, environment, idempotency_key): quem chegou primeiro
-    // ja gravou, e esta requisicao devolve a MESMA cobranca em vez de criar
-    // outra. E o fecho da corrida que o middleware de idempotencia sozinho
-    // nao consegue fechar.
     if (insertError.code === "23505" && input.idempotency_key) {
       const existing = await getPaymentByIdempotencyKey(
         organizationId,
@@ -108,36 +93,45 @@ export async function createPayment(
     throw new AppError(500, "api_error", "Nao foi possivel registrar a cobranca. Tente novamente.");
   }
 
-  // ---------- 2. Adquirente ----------
-  let providerResult;
+  // ---------- 2. Taxa (snapshot) ----------
+  const preferredProviderId = (
+    environment === "test" ? "sandbox" : "nexuspag"
+  ) as AcquirerId;
+
+  let feeCalc = await calculateFee({
+    amountCents: input.amount,
+    organizationId,
+    providerId: preferredProviderId,
+  });
+
+  // ---------- 3. Adquirente com failover ----------
+  const webhookUrl = `${env.API_BASE_URL}/v1/webhooks/provider`;
+
+  let attemptResult;
   try {
-    providerResult = await provider.createPayment({
-      amount: input.amount,
-      currency,
-      paymentMethodToken: input.payment_method?.token,
-      metadata: input.metadata,
-      description: input.description,
-      externalId: providerExternalId,
-      webhookUrl: `${env.API_BASE_URL}/v1/webhooks/nexuspag`,
-      expirationSeconds: paymentType === "pix" ? input.expires_in_seconds || 3600 : undefined,
-    });
+    attemptResult = await createChargeWithFailover(
+      {
+        organizationId,
+        amountCents: input.amount,
+        currency,
+        description: input.description,
+        externalId: providerExternalId,
+        webhookUrl,
+        expirationSeconds: paymentType === "pix" ? input.expires_in_seconds || 3600 : undefined,
+        metadata: input.metadata,
+        attempt: 0,
+        attemptedProviders: [],
+      },
+      environment
+    );
   } catch (err) {
-    // A falha pode ser determinista (400 do adquirente) ou ambigua (timeout).
-    // Nao da para distinguir com seguranca a partir de um Error generico, e
-    // marcar como "failed" uma cobranca que o adquirente criou faria o
-    // pagamento do cliente sumir do painel. Entao a linha fica PENDENTE sem
-    // txid e a reconciliacao decide, consultando o adquirente pelo
-    // external_id (GET /api/pix/{id} aceita external_id — doc da NexusPag).
-    console.error("[payments] provider.createPayment falhou:", {
-      provider: provider.name,
+    console.error("[payments] createChargeWithFailover falhou:", {
       environment,
       organizationId,
       paymentId,
       error: err instanceof Error ? err.message : err,
     });
-
     if (err instanceof AppError) throw err;
-
     throw new AppError(
       502,
       "provider_error",
@@ -145,29 +139,108 @@ export async function createPayment(
     );
   }
 
-  // Taxa: para PIX usamos a que a propria NexusPag devolveu; fora isso, o
-  // calculo interno de exemplo (1,5% + R$ 0,50).
-  const feeAmount = providerResult.pix?.feeAmountCents ?? Math.round(input.amount * 0.015) + 50;
-  const netAmount = providerResult.pix?.netAmountCents ?? input.amount - feeAmount;
+  if (!attemptResult.success) {
+    if (attemptResult.ambiguous) {
+      console.warn("[payments] resultado ambiguo — sem failover adicional:", {
+        paymentId,
+        providerId: attemptResult.providerId,
+        error: attemptResult.errorMessage,
+      });
+      const { data: pendingRow } = await supabaseAdmin
+        .from("payments")
+        .update({
+          provider: attemptResult.providerId,
+          provider_response: {
+            ambiguous: true,
+            error: attemptResult.errorMessage,
+            latencyMs: attemptResult.latencyMs,
+          },
+        })
+        .eq("id", paymentId)
+        .select()
+        .single();
+      if (pendingRow) {
+        dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
+        return pendingRow as Payment;
+      }
+      throw new AppError(
+        502,
+        "provider_error",
+        "Cobranca registrada localmente; confirmacao pendente de reconciliacao."
+      );
+    }
 
-  // ---------- 3. Completa a linha com o que so o adquirente sabe ----------
+    const nowIso = new Date().toISOString();
+    const { data: failedRow } = await supabaseAdmin
+      .from("payments")
+      .update({
+        status: "failed",
+        provider: attemptResult.providerId,
+        failed_at: nowIso,
+        provider_response: {
+          error: attemptResult.errorMessage,
+          errorCode: attemptResult.errorCode,
+          latencyMs: attemptResult.latencyMs,
+        },
+      })
+      .eq("id", paymentId)
+      .select()
+      .single();
+
+    if (failedRow) {
+      dispatchWebhook(organizationId, environment, "payment.failed", failedRow).catch(console.error);
+      return failedRow as Payment;
+    }
+
+    throw new AppError(
+      502,
+      "provider_error",
+      attemptResult.errorMessage || "Nao foi possivel gerar a cobranca no momento."
+    );
+  }
+
+  const usedProviderId = attemptResult.providerId as AcquirerId;
+  if (usedProviderId !== preferredProviderId) {
+    feeCalc = await calculateFee({
+      amountCents: input.amount,
+      organizationId,
+      providerId: usedProviderId,
+    });
+  }
+
+  const feeAmount =
+    attemptResult.pix?.feeAmountCents ?? feeCalc.feeAmountCents;
+  const netAmount =
+    attemptResult.pix?.netAmountCents ?? feeCalc.netAmountCents;
+  const feeSnapshot: FeeRuleSnapshot = feeCalc.snapshot;
+
   const nowIso = new Date().toISOString();
+  const providerStatus = attemptResult.status || "pending";
+  // A provider's successful PIX response must not mark the payment paid before
+  // the database RPC atomically changes status and inserts the ledger credit.
+  const status =
+    paymentType === "pix" && providerStatus === "succeeded"
+      ? "processing"
+      : providerStatus;
+
   const { data: payment, error: updateError } = await supabaseAdmin
     .from("payments")
     .update({
-      status: providerResult.status,
-      provider_payment_id: providerResult.providerPaymentId,
-      provider_response: providerResult.rawResponse,
+      status,
+      provider: usedProviderId,
+      provider_payment_id: attemptResult.providerPaymentId || null,
+      provider_response: attemptResult.rawResponse ?? null,
       fee_amount: feeAmount,
       net_amount: netAmount,
-      provider_txid: providerResult.pix?.txid || null,
-      pix_copy_paste: providerResult.pix?.copyPaste || null,
-      pix_qr_code_base64: providerResult.pix?.qrCodeBase64 || null,
-      expires_at: providerResult.pix?.expiresAt || null,
-      authorized_at: providerResult.status === "succeeded" ? nowIso : null,
-      captured_at: providerResult.status === "succeeded" ? nowIso : null,
-      failed_at: providerResult.status === "failed" ? nowIso : null,
-      paid_at: providerResult.status === "succeeded" ? nowIso : null,
+      fee_rule_snapshot: feeSnapshot,
+      provider_txid: attemptResult.pix?.txid || null,
+      pix_copy_paste: attemptResult.pix?.copyPaste || null,
+      pix_qr_code_base64: attemptResult.pix?.qrCodeBase64 || null,
+      expires_at: attemptResult.pix?.expiresAt || null,
+      authorized_at: status === "succeeded" ? nowIso : null,
+      captured_at: status === "succeeded" ? nowIso : null,
+      failed_at: status === "failed" ? nowIso : null,
+      paid_at: status === "succeeded" ? nowIso : null,
     })
     .eq("id", paymentId)
     .eq("organization_id", organizationId)
@@ -176,9 +249,6 @@ export async function createPayment(
     .single();
 
   if (updateError || !payment) {
-    // A cobranca EXISTE no adquirente. Nao devolvemos erro silencioso: a
-    // linha fica pendente sem txid e a reconciliacao vai busca-la pelo
-    // external_id na proxima passada do job.
     console.error("Create payment error (update pos-provider):", {
       paymentId,
       providerExternalId,
@@ -191,60 +261,80 @@ export async function createPayment(
     );
   }
 
-  // Ledger so para pagamento que ja nasce aprovado (cartao no sandbox).
-  // PIX credita na confirmacao, em markPixPaymentSucceeded.
-  if (payment.status === "succeeded") {
-    await supabaseAdmin.from("balance_transactions").insert({
-      organization_id: organizationId,
-      environment,
-      type: "charge",
-      amount: input.amount,
-      currency,
-      net: netAmount,
-      fee: feeAmount,
-      payment_id: payment.id,
-      description: input.description || "Payment",
-      available_on: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(), // T+2
-    });
+  let finalPayment = payment as Payment;
+
+  if (providerStatus === "succeeded") {
+    if (payment.payment_type === "pix") {
+      // The RPC owns the succeeded transition and charge ledger insert in one transaction.
+      const { data: confirmed, error: ledgerError } = await supabaseAdmin.rpc(
+        "fluxpay_confirm_pix_payment",
+        {
+          p_payment_id: payment.id,
+          p_organization_id: organizationId,
+          p_environment: environment,
+        }
+      );
+
+      const confirmedPayment = Array.isArray(confirmed) ? confirmed[0] : confirmed;
+      if (ledgerError || !confirmedPayment) {
+        console.error("Atomic PIX ledger confirmation failed:", {
+          paymentId: payment.id,
+          error: ledgerError,
+        });
+        throw new AppError(
+          500,
+          "api_error",
+          "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
+        );
+      }
+      finalPayment = confirmedPayment as Payment;
+    } else {
+      // Non-PIX flows are not covered by the PIX-specific RPC.
+      // Unique index balance_transactions_one_charge_per_payment (migration 023)
+      // makes a concurrent/retried insert a safe no-op via 23505.
+      const { error: ledgerError } = await supabaseAdmin
+        .from("balance_transactions")
+        .insert({
+          organization_id: organizationId,
+          environment,
+          type: "charge",
+          amount: input.amount,
+          currency,
+          net: netAmount,
+          fee: feeAmount,
+          payment_id: payment.id,
+          description: input.description || "Payment",
+          available_on: nowIso,
+        });
+
+      if (ledgerError && ledgerError.code !== "23505") {
+        throw new AppError(
+          500,
+          "api_error",
+          "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
+        );
+      }
+    }
   }
 
   const eventType =
-    payment.status === "succeeded"
+    finalPayment.status === "succeeded"
       ? "payment.succeeded"
-      : payment.status === "failed"
+      : finalPayment.status === "failed"
         ? "payment.failed"
-        : payment.status === "pending"
+        : finalPayment.status === "pending"
           ? "payment.pending"
           : "payment.created";
 
-  dispatchWebhook(organizationId, environment, eventType, payment).catch(console.error);
+  dispatchWebhook(organizationId, environment, eventType, finalPayment).catch(console.error);
 
-  return payment as Payment;
+  return finalPayment;
 }
 
-/**
- * `external_id` enviado ao adquirente.
- *
- * Usamos o id LOCAL da cobranca (UUID), nunca a referencia do lojista.
- * Motivo: pela doc da NexusPag o `external_id` e chave de idempotencia do
- * dono da API key — e a API key da NexusPag e UMA so, da plataforma, usada
- * por todas as organizacoes do FluxPay. Se mandassemos a referencia do
- * lojista, duas empresas diferentes emitindo "pedido-1" colidiriam: a segunda
- * receberia de volta a cobranca da primeira (a doc diz explicitamente que o
- * mesmo external_id devolve a transacao existente, sem criar outra). O UUID
- * local e unico por cobranca, por empresa e por ambiente.
- *
- * Sobre prefixar "test:"/"live:": NAO e necessario e nao foi feito. O
- * ambiente "test" nunca chega a NexusPag (providers/index.ts manda test para
- * o sandbox e recusa sandbox em live), e o UUID ja e globalmente unico. A doc
- * da NexusPag nao descreve nenhum conceito de ambiente para external_id —
- * inventar um prefixo seria assumir comportamento nao documentado.
- */
 export function buildProviderExternalId(paymentId: string): string {
   return paymentId;
 }
 
-/** Busca por chave de idempotencia DENTRO da organizacao e do ambiente. */
 export async function getPaymentByIdempotencyKey(
   organizationId: string,
   environment: Environment,
@@ -261,14 +351,6 @@ export async function getPaymentByIdempotencyKey(
   return inScopeOrNull(data as Payment | null, organizationId, environment);
 }
 
-/**
- * Busca uma cobranca da organizacao.
- *
- * O parametro `environment` NAO e opcional por acaso: sem ele, uma chave
- * sk_test_ conseguia ler — e, via cancelPayment/createRefund, ESCREVER — em
- * cobrancas do ambiente de producao da mesma empresa. A regra da API e que a
- * chave decide o ambiente; ela precisa valer tambem na leitura por id.
- */
 export async function getPayment(
   organizationId: string,
   paymentId: string,
@@ -282,9 +364,6 @@ export async function getPayment(
     .eq("environment", environment)
     .maybeSingle();
 
-  // Filtro na query (defesa principal) + conferencia depois da leitura
-  // (utils/scope.ts): se um `.eq()` for perdido numa refatoracao, o recurso e
-  // recusado em vez de vazar para o outro ambiente.
   const payment = inScopeOrNull(data as Payment | null, organizationId, environment);
 
   if (error || !payment) {
@@ -314,10 +393,6 @@ export async function listPayments(
   }
 
   if (options.starting_after) {
-    // O cursor tambem e escopado: sem organization_id/environment aqui, um id
-    // de OUTRA empresa ou do outro ambiente servia de cursor e devolvia o
-    // instante de criacao daquela cobranca. Cursor fora do escopo e tratado
-    // como cursor invalido.
     const { data: cursor } = await supabaseAdmin
       .from("payments")
       .select("created_at")
@@ -389,90 +464,130 @@ export async function createRefund(
     throw new AppError(400, "invalid_request", "So e possivel reembolsar uma cobranca ja aprovada.");
   }
 
-  const refundAmount = input.amount ?? payment.amount;
+  if (payment.payment_type === "pix" && payment.provider === "nexuspag") {
+    throw new AppError(
+      501,
+      "provider_error",
+      "Reembolso de PIX pela NexusPag não é suportado pela API atual."
+    );
+  }
 
-  if (refundAmount <= 0 || refundAmount > payment.amount) {
+  const refundAmount = input.amount ?? payment.amount;
+  if (!Number.isSafeInteger(refundAmount) || refundAmount <= 0) {
     throw new AppError(400, "validation_error", "Valor de reembolso invalido.");
   }
-
-  const provider = getProvider(payment.environment);
-  const providerResult = await provider.refundPayment({
-    providerPaymentId: payment.provider_payment_id!,
-    amount: refundAmount,
-  });
-
-  const { data: refund, error } = await supabaseAdmin
-    .from("refunds")
-    .insert({
-      organization_id: organizationId,
-      payment_id: paymentId,
-      environment: payment.environment,
-      amount: refundAmount,
-      currency: payment.currency,
-      status: providerResult.status,
-      reason: input.reason || null,
-      provider_refund_id: providerResult.providerRefundId,
-      provider_response: providerResult.rawResponse,
-      metadata: input.metadata || {},
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new AppError(500, "api_error", "Nao foi possivel registrar o reembolso. Tente novamente.");
+  if (!payment.provider_payment_id) {
+    throw new AppError(
+      409,
+      "invalid_request",
+      "A cobranca nao possui referencia confirmada no adquirente; reembolso bloqueado para reconciliacao."
+    );
   }
 
-  // Update payment status
-  const newStatus = refundAmount >= payment.amount ? "refunded" : "partially_refunded";
-  await supabaseAdmin
-    .from("payments")
-    .update({ status: newStatus })
-    .eq("id", paymentId);
+  // Reserve the amount under a payment-row lock BEFORE calling the provider.
+  // An unresolved pending reservation blocks subsequent refunds; never blindly
+  // resubmit after a timeout or an uncertain provider/database outcome.
+  const { data: reserved, error: reserveError } = await supabaseAdmin.rpc(
+    "fluxpay_reserve_refund",
+    {
+      p_payment_id: paymentId,
+      p_organization_id: organizationId,
+      p_environment: payment.environment,
+      p_amount: refundAmount,
+      p_idempotency_key: input.idempotency_key,
+      p_reason: input.reason || null,
+      p_metadata: input.metadata || {},
+    }
+  );
+  const envelope = Array.isArray(reserved) ? reserved[0] : reserved;
+  const reservation = envelope?.refund;
+  if (reserveError || !reservation) {
+    const code = reserveError?.code;
+    if (code === "23514") {
+      throw new AppError(400, "validation_error", "O valor solicitado excede o saldo ainda disponivel para reembolso.");
+    }
+    if (code === "23505") {
+      throw new AppError(409, "conflict", "A chave de idempotencia ja foi usada com parametros diferentes.");
+    }
+    if (code === "55000") {
+      throw new AppError(409, "conflict", "Existe um reembolso pendente ou a cobranca exige reconciliacao. Nao repita a operacao.");
+    }
+    throw new AppError(503, "api_error", "Nao foi possivel reservar o reembolso no banco; nenhum pedido foi enviado ao adquirente.");
+  }
 
-  // Ledger
-  await supabaseAdmin.from("balance_transactions").insert({
-    organization_id: organizationId,
-    environment: payment.environment,
-    type: "refund",
-    amount: -refundAmount,
-    currency: payment.currency,
-    net: -refundAmount,
-    fee: 0,
-    payment_id: paymentId,
-    refund_id: refund.id,
-    description: input.reason || "Refund",
-  });
+  if (envelope.created === false) {
+    // A replay with the same key returns the durable result without contacting
+    // the provider again. Pending means the original operation needs reconciliation.
+    if (reservation.status === "pending") {
+      throw new AppError(409, "conflict", "Este reembolso já está pendente de confirmação/reconciliação. Não repita a operação.");
+    }
+    return reservation;
+  }
 
+  const provider = getProvider(payment.environment, payment.provider ?? undefined);
+  let providerResult;
+  try {
+    providerResult = await provider.refundPayment({
+      providerPaymentId: payment.provider_payment_id,
+      amount: refundAmount,
+    });
+  } catch (err) {
+    // We cannot prove whether the provider executed the request. Keep the
+    // reservation pending so a retry cannot trigger a second external refund.
+    console.error("[refunds] provider result uncertain; reservation retained:", {
+      refundId: reservation.id,
+      paymentId,
+      error: err instanceof Error ? err.message : err,
+    });
+    throw new AppError(
+      502,
+      "provider_error",
+      "Resultado do adquirente incerto. O reembolso ficou reservado para reconciliacao; nao repita a solicitacao."
+    );
+  }
+
+  const { data: finalized, error: finalizeError } = await supabaseAdmin.rpc(
+    "fluxpay_finalize_refund",
+    {
+      p_refund_id: reservation.id,
+      p_organization_id: organizationId,
+      p_environment: payment.environment,
+      p_status: providerResult.status,
+      p_provider_refund_id: providerResult.providerRefundId || null,
+      p_provider_response: providerResult.rawResponse ?? null,
+    }
+  );
+  const refund = Array.isArray(finalized) ? finalized[0] : finalized;
+
+  if (finalizeError || !refund) {
+    // The provider may already have acted. The pending reservation is the
+    // durable reconciliation marker and prevents another provider submission.
+    console.error("[refunds] provider result could not be finalized:", {
+      refundId: reservation.id,
+      paymentId,
+      status: providerResult.status,
+      error: finalizeError,
+    });
+    throw new AppError(
+      500,
+      "api_error",
+      "O adquirente respondeu, mas o estado local exige reconciliacao. Nao repita o reembolso."
+    );
+  }
+
+  if (providerResult.status !== "succeeded") {
+    return refund;
+  }
+
+  const updatedPayment = await getPayment(organizationId, paymentId, payment.environment);
   dispatchWebhook(organizationId, payment.environment, "payment.refunded", {
-    payment,
+    payment: updatedPayment,
     refund,
   }).catch(console.error);
 
   return refund;
 }
 
-// ============================================================
-// Confirmacao assincrona de PIX — chamada pelo webhook de entrada
-// da NexusPag (routes/webhooks.ts -> POST /v1/webhooks/nexuspag).
-// Cartao confirma na hora (createPayment); PIX so confirma quando
-// o adquirente avisa que o cliente pagou.
-// ============================================================
-
-/**
- * Encontra a cobranca local a que um evento do adquirente se refere.
- *
- * Procura por `provider_txid` E por `provider_external_id`, nessa ordem.
- *
- * O external_id e o que fecha a janela de corrida: ele e gravado ANTES da
- * chamada ao adquirente (ver createPayment), enquanto o txid so existe depois
- * da resposta. Se a confirmacao chegar no intervalo entre a chamada e a
- * gravacao do txid, a busca por txid falha e a por external_id acerta — a
- * confirmacao nao se perde e ninguem precisa reprocessar nada a mao.
- *
- * Nao escopamos por organizacao/ambiente aqui de proposito: quem chama e o
- * webhook do adquirente, que nao tem (nem deveria ter) esse contexto. O
- * escopo vem do proprio registro encontrado.
- */
 export async function getPaymentByProviderReference(reference: {
   txid?: string | null;
   externalId?: string | null;
@@ -498,15 +613,11 @@ export async function getPaymentByProviderReference(reference: {
   return null;
 }
 
-/** Compatibilidade: busca so por txid. Prefira getPaymentByProviderReference. */
 export async function getPaymentByProviderTxid(txid: string): Promise<Payment | null> {
   return getPaymentByProviderReference({ txid });
 }
 
 export async function markPixPaymentSucceeded(payment: Payment): Promise<void> {
-  // A confirmação + crédito no ledger precisam acontecer na mesma transação.
-  // Webhooks/retries podem chegar simultaneamente; fazer UPDATE e INSERT
-  // separados no Node permite que duas execuções creditem o mesmo pagamento.
   const { data: updated, error } = await supabaseAdmin.rpc(
     "fluxpay_confirm_pix_payment",
     {
@@ -531,19 +642,10 @@ export async function markPixPaymentSucceeded(payment: Payment): Promise<void> {
   ).catch(console.error);
 }
 
-/**
- * Confirma uma cobranca PIX SIMULADA a partir do painel (ambiente de teste).
- *
- * Mesmas travas da versao do checkout: environment "test" E provider
- * "sandbox". Qualquer outra combinacao responde 404 — inclusive uma cobranca
- * real em producao, que so o webhook da NexusPag confirma.
- */
 export async function simulateSandboxPayment(
   organizationId: string,
   paymentId: string
 ): Promise<Payment> {
-  // Sempre "test": esta funcao so existe para o provider sandbox, e checar o
-  // ambiente ja na consulta impede que um id de producao sequer seja lido aqui.
   const payment = await getPayment(organizationId, paymentId, "test");
 
   if (payment.environment !== "test" || payment.provider !== "sandbox") {
@@ -565,7 +667,7 @@ export async function markPixPaymentFailedOrExpired(
   payment: Payment,
   reason: "failed" | "expired"
 ): Promise<void> {
-  if (["succeeded", "failed", "expired"].includes(payment.status)) return; // idempotente
+  if (["succeeded", "failed", "expired"].includes(payment.status)) return;
 
   const { data: updated, error } = await supabaseAdmin
     .from("payments")
@@ -588,28 +690,8 @@ export async function markPixPaymentFailedOrExpired(
   ).catch(console.error);
 }
 
-// ============================================================
-// RECONCILIACAO AUTOMATICA
-//
-// Chamada pela funcao agendada da Netlify (netlify/functions/scheduled-jobs.ts),
-// a cada 10 minutos. Nada aqui depende de alguem abrir o ADM e clicar em
-// "reprocessar" — o ADM continua existindo para inspecao e para o caso raro,
-// mas nao e mais o caminho normal de recuperacao.
-// ============================================================
-
-/** Janela antes de concluir qualquer coisa sobre uma cobranca sem txid. */
 const ORPHAN_GRACE_SECONDS = 5 * 60;
 
-/**
- * Cobranca "orfa": linha local em `pending`, tipo pix, SEM `provider_txid`.
- *
- * Acontece quando a chamada ao adquirente falhou de forma ambigua (timeout,
- * 502) ou quando o processo caiu entre a chamada e a gravacao do txid. Como a
- * cobranca pode existir do lado da NexusPag, nao da para simplesmente marcar
- * como falha: o desempate e consultar GET /api/pix/{id} usando o
- * `external_id` — endpoint documentado, cujo {id} aceita UUID interno, txid
- * OU external_id (docs/nexuspag-api.md, "Consultar PIX").
- */
 export async function reconcileOrphanPixCharges(): Promise<{
   checked: number;
   confirmed: number;
@@ -639,18 +721,23 @@ export async function reconcileOrphanPixCharges(): Promise<{
 
     const reference = row.provider_external_id || row.id;
     let providerStatus: Parameters<typeof decideReconcileAction>[0]["providerStatus"];
-    let providerPix: { txid: string; copyPaste: string; qrCodeBase64: string; expiresAt: string; feeAmountCents: number; netAmountCents: number } | undefined;
+    let providerPix:
+      | {
+          txid: string;
+          copyPaste: string;
+          qrCodeBase64: string;
+          expiresAt: string;
+          feeAmountCents: number;
+          netAmountCents: number;
+        }
+      | undefined;
     let providerPaymentId: string | undefined;
 
     try {
       if (row.environment === "test") {
-        // Sandbox nao tem onde consultar: nao existe cobranca de verdade em
-        // adquirente nenhum. Se a criacao falhou, a cobranca simplesmente nao
-        // existe — encerra em vez de ficar consultando um provider simulado a
-        // cada 10 minutos para sempre.
         providerStatus = "not_found";
       } else {
-        const provider = getProvider(row.environment);
+        const provider = getProvider(row.environment, row.provider ?? undefined);
         const consulted = await provider.getPayment(reference);
         providerPix = consulted.pix;
         providerPaymentId = consulted.providerPaymentId;
@@ -665,9 +752,6 @@ export async function reconcileOrphanPixCharges(): Promise<{
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // A mensagem de 404 do adapter e explicita ("nao encontrada na NexusPag").
-      // Qualquer outra falha e tratada como indisponibilidade: nao concluimos
-      // nada sobre a cobranca de ninguem por causa de uma queda de rede.
       providerStatus = /nao encontrada|not found|404/i.test(message) ? "not_found" : "unreachable";
     }
 
@@ -687,8 +771,6 @@ export async function reconcileOrphanPixCharges(): Promise<{
       continue;
     }
 
-    // "attach" e "confirm" compartilham a gravacao dos dados do adquirente:
-    // sem isso o proximo webhook continuaria sem txid para casar.
     if (providerPix || providerPaymentId) {
       const { data: attached } = await supabaseAdmin
         .from("payments")
@@ -718,15 +800,6 @@ export async function reconcileOrphanPixCharges(): Promise<{
   return result;
 }
 
-/**
- * Reprocessa eventos do adquirente que ficaram sem par.
- *
- * Sao as linhas de `provider_events` com `processed_at` nulo: chegaram,
- * tiveram a assinatura validada e foram gravadas (a dedupe por
- * UNIQUE(provider, provider_event_id) continua intacta), mas nao encontraram
- * cobranca local naquele instante. Em vez de ficarem esperando uma acao
- * manual no ADM, sao tentadas de novo aqui a cada passada do job.
- */
 export async function reprocessUnmatchedProviderEvents(): Promise<{
   checked: number;
   confirmed: number;

@@ -1,28 +1,11 @@
 import type { PaymentProvider, PaymentStatus, RefundStatus, PixDetails } from "../types/index.js";
 
-/**
- * Provider NexusPag — adquirente real de PIX.
- *
- * Baseado na documentacao oficial (nexuspag-api.md):
- *   POST /api/pix/create   — cria a cobranca PIX (resposta aninhada em "transaction")
- *   GET  /api/pix/{id}     — consulta status (resposta PLANA, sem "transaction")
- *   POST /api/withdrawals  — saque da carteira PRINCIPAL (dona da API key)
- *   POST /api/kyc/verify   — verificacao KYC (PIX R$ 2 travado no CPF/CNPJ)
- *   GET  /api/kyc/verify/{id}
- *   POST <webhook_url>     — payment.confirmed | kyc.verified | kyc.rejected
- *
- * O saque da carteira principal so deve ser chamado apos aprovacao administrativa
- * de um pedido de lojista (services/withdrawals.ts). Nunca no pedido direto.
- */
-
 const NEXUSPAG_BASE_URL = process.env.NEXUSPAG_BASE_URL || "https://nexuspag.com";
 
 function getApiKey(): string {
   const key = process.env.NEXUSPAG_API_KEY;
   if (!key) {
-    throw new Error(
-      "NEXUSPAG_API_KEY nao configurada. Defina no .env do backend antes de usar o provider 'nexuspag'."
-    );
+    throw new Error("NEXUSPAG_API_KEY nao configurada.");
   }
   return key;
 }
@@ -35,55 +18,36 @@ function reaisToCents(reais: number): number {
   return Math.round(reais * 100);
 }
 
-interface NexusPagPixCreateResponse {
-  success: boolean;
-  transaction: {
-    id: string;
-    txid: string;
-    external_id: string | null;
-    amount: number;
-    fee: number;
-    fee_percent: number;
-    net_amount: number;
-    status: string;
-    pix_copia_cola: string;
-    qr_code_base64: string;
-    expires_at: string;
-  };
-}
-
-interface NexusPagPixConsultResponse {
-  id: string;
-  txid: string;
-  external_id: string | null;
-  status: "pending" | "paid" | "expired" | "cancelled" | string;
-  amount: number;
-  fee: number;
-  net_amount: number;
-  paid_at?: string | null;
-  expires_at: string;
-  pix_copia_cola?: string;
-  qr_code_base64?: string;
-}
-
 function mapNexusPagStatus(status: string): PaymentStatus {
   switch (status) {
-    case "pending":
-      return "pending";
-    case "paid":
-      return "succeeded";
-    case "expired":
-      return "expired";
+    case "pending": return "pending";
+    case "paid": return "succeeded";
+    case "expired": return "expired";
     case "cancelled":
-    case "canceled":
-      return "failed";
-    default:
-      return "pending";
+    case "canceled": return "canceled";
+    default: return "pending";
   }
 }
 
 export class NexusPagProvider implements PaymentProvider {
   name = "nexuspag";
+  id = "nexuspag" as const;
+  isConfigured() { return Boolean(process.env.NEXUSPAG_API_KEY); }
+  getLimits() { return { minAmountCents: 100, maxAmountCents: 0 }; }
+  getConfiguredCost() { return { percent: 5, fixedCents: 0 }; }
+  async healthCheck() {
+    const t0 = Date.now();
+    if (!this.isConfigured()) return { status: "unconfigured" as const, latencyMs: 0 };
+    try {
+      const base = process.env.NEXUSPAG_BASE_URL || "https://nexuspag.com";
+      const res = await fetch(`${base}/api/wallet`, { headers: { "x-api-key": process.env.NEXUSPAG_API_KEY as string }, signal: AbortSignal.timeout(8000) });
+      const ms = Date.now() - t0;
+      if (res.status === 401 || res.status === 403) return { status: "down" as const, message: "auth", latencyMs: ms };
+      return { status: res.status >= 500 ? "degraded" as const : "healthy" as const, latencyMs: ms };
+    } catch (e) {
+      return { status: "down" as const, message: e instanceof Error ? e.message : "rede", latencyMs: Date.now() - t0 };
+    }
+  }
 
   async createPayment(params: {
     amount: number;
@@ -94,46 +58,42 @@ export class NexusPagProvider implements PaymentProvider {
     externalId?: string;
     webhookUrl?: string;
     expirationSeconds?: number;
-  }): Promise<{
-    providerPaymentId: string;
-    status: PaymentStatus;
-    rawResponse?: unknown;
-    pix?: PixDetails;
-  }> {
-    if (params.currency !== "BRL") {
-      throw new Error("NexusPag PIX so aceita cobrancas em BRL.");
-    }
-
-    const amountReais = centsToReais(params.amount);
-    if (amountReais < 1) {
-      throw new Error("Valor minimo para PIX na NexusPag e R$ 1,00.");
-    }
-
-    const body: Record<string, unknown> = { amount: amountReais };
+  }) {
+    if (params.currency !== "BRL") throw new Error("NexusPag: apenas BRL");
+    if (params.amount < 100) throw new Error("NexusPag: minimo R$ 1,00");
+    const body: Record<string, unknown> = { amount: centsToReais(params.amount) };
     if (params.description) body.description = params.description;
     if (params.externalId) body.external_id = params.externalId;
     if (params.webhookUrl) body.webhook_url = params.webhookUrl;
     if (params.expirationSeconds) body.expiration = params.expirationSeconds;
-
-    const response = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/create`, {
-      method: "POST",
-      headers: {
-        "x-api-key": getApiKey(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = (await response.json().catch(() => null)) as NexusPagPixCreateResponse | null;
-
-    if (!response.ok || !data?.success) {
-      throw new Error(
-        `NexusPag recusou a cobranca PIX (HTTP ${response.status}): ${JSON.stringify(data)}`
-      );
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 25000);
+    let res: Response;
+    try {
+      res = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/create`, {
+        method: "POST",
+        headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } catch (err) {
+      clearTimeout(to);
+      const amb = err instanceof Error && err.name === "AbortError";
+      const e = new Error(amb ? "NexusPag: timeout" : "NexusPag: rede") as Error & { retryable?: boolean; ambiguous?: boolean };
+      e.retryable = true; e.ambiguous = amb; throw e;
+    } finally { clearTimeout(to); }
+    const data = (await res.json().catch(() => null)) as {
+      success?: boolean;
+      transaction?: {
+        id: string; txid: string; status: string; fee: number; net_amount: number;
+        pix_copia_cola: string; qr_code_base64: string; expires_at: string;
+      };
+    } | null;
+    if (!res.ok || !data?.success || !data.transaction) {
+      const e = new Error(`NexusPag HTTP ${res.status}`) as Error & { retryable?: boolean; ambiguous?: boolean };
+      e.retryable = res.status === 429 || res.status >= 500; e.ambiguous = false; throw e;
     }
-
     const tx = data.transaction;
-
     return {
       providerPaymentId: tx.id,
       status: mapNexusPagStatus(tx.status),
@@ -145,164 +105,82 @@ export class NexusPagProvider implements PaymentProvider {
         expiresAt: tx.expires_at,
         feeAmountCents: reaisToCents(tx.fee),
         netAmountCents: reaisToCents(tx.net_amount),
-      },
+      } satisfies PixDetails,
     };
   }
 
-  async getPayment(reference: string): Promise<{
-    status: PaymentStatus;
-    providerPaymentId?: string;
-    rawResponse?: unknown;
-    pix?: PixDetails;
-  }> {
-    const response = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/${encodeURIComponent(reference)}`, {
+  async getPayment(ref: string) {
+    const res = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/${encodeURIComponent(ref)}`, {
       headers: { "x-api-key": getApiKey() },
+      signal: AbortSignal.timeout(15000),
     });
-
-    if (response.status === 404) {
-      throw new Error(`Transacao ${reference} nao encontrada na NexusPag.`);
-    }
-
-    const data = (await response.json().catch(() => null)) as NexusPagPixConsultResponse | null;
-
-    if (!response.ok || !data) {
-      throw new Error(`Falha ao consultar PIX na NexusPag (HTTP ${response.status}).`);
-    }
-
+    if (res.status === 404) throw new Error("nao encontrado");
+    const data = (await res.json().catch(() => null)) as {
+      id?: string; txid?: string; status?: string; fee?: number; net_amount?: number;
+      pix_copia_cola?: string; qr_code_base64?: string; expires_at?: string;
+    } | null;
+    if (!res.ok || !data) throw new Error(`consulta HTTP ${res.status}`);
     return {
-      status: mapNexusPagStatus(data.status),
+      status: mapNexusPagStatus(data.status ?? "pending"),
       providerPaymentId: data.id,
       rawResponse: data,
-      pix: data.txid
-        ? {
-            txid: data.txid,
-            copyPaste: data.pix_copia_cola ?? "",
-            qrCodeBase64: data.qr_code_base64 ?? "",
-            expiresAt: data.expires_at,
-            feeAmountCents: reaisToCents(data.fee ?? 0),
-            netAmountCents: reaisToCents(data.net_amount ?? 0),
-          }
-        : undefined,
+      pix: data.txid ? {
+        txid: data.txid,
+        copyPaste: data.pix_copia_cola ?? "",
+        qrCodeBase64: data.qr_code_base64 ?? "",
+        expiresAt: data.expires_at ?? "",
+        feeAmountCents: reaisToCents(data.fee ?? 0),
+        netAmountCents: reaisToCents(data.net_amount ?? 0),
+      } : undefined,
     };
   }
 
   async refundPayment(_params: {
     providerPaymentId: string;
     amount: number;
-  }): Promise<{ providerRefundId: string; status: RefundStatus; rawResponse?: unknown }> {
-    throw new Error(
-      "Reembolso de PIX nao suportado pelo provider NexusPag nesta integracao. " +
-        "Consulte a categoria 'Saques' da API da NexusPag para devolver o valor manualmente."
-    );
+  }): Promise<{
+    providerRefundId: string;
+    status: import("../types/index.js").RefundStatus;
+    rawResponse?: unknown;
+  }> {
+    throw new Error("Reembolso PIX nao suportado via API NexusPag");
   }
 }
 
 export const nexuspagProvider = new NexusPagProvider();
 
-// ---------------------------------------------------------------------------
-// Saque — POST /api/withdrawals (carteira PRINCIPAL da conta dona da API key)
-// Usado apenas apos aprovacao administrativa (services/withdrawals.ts).
-// ---------------------------------------------------------------------------
-
-export interface NexusPagWithdrawalResult {
-  providerWithdrawalId: string;
-  status: "completed" | "processing" | "failed";
-  amountCents: number;
-  feeCents: number;
-  netAmountCents: number;
-  newBalanceCents?: number;
-  rawResponse?: unknown;
-}
-
-interface NexusPagWithdrawResponse {
-  success?: boolean;
-  withdrawal_id?: string;
-  amount?: number;
-  fee?: number;
-  net_amount?: number;
-  status?: string;
-  new_balance?: number;
-  requires_kyc?: boolean;
-  cooldown_seconds?: number;
-}
-
 export async function createNexusPagWithdrawal(params: {
   amountCents: number;
   pixKey: string;
-  pixKeyType: "cpf" | "cnpj" | "email" | "phone" | "random" | "qrc";
-}): Promise<NexusPagWithdrawalResult> {
-  const amountReais = centsToReais(params.amountCents);
-  if (amountReais <= 0) {
-    throw new Error("Valor de saque invalido.");
-  }
-
-  const response = await fetch(`${NEXUSPAG_BASE_URL}/api/withdrawals`, {
-    method: "POST",
-    headers: {
-      "x-api-key": getApiKey(),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      amount: amountReais,
-      pix_key: params.pixKey,
-      pix_key_type: params.pixKeyType,
-    }),
-  });
-
-  const data = (await response.json().catch(() => null)) as NexusPagWithdrawResponse | null;
-
-  if (response.status === 429) {
-    const wait = data?.cooldown_seconds ?? 300;
-    const err = new Error(
-      `Cooldown de saque na NexusPag ativo. Aguarde ${wait} segundos antes de tentar novamente.`
-    ) as Error & { code?: string; status?: number };
-    err.code = "cooldown";
-    err.status = 429;
-    throw err;
-  }
-
-  if (response.status === 403) {
-    const err = new Error(
-      data?.requires_kyc
-        ? "Saques bloqueados na NexusPag: conta sem KYC verificado."
-        : "Saques desabilitados na NexusPag para esta conta."
-    ) as Error & { code?: string; status?: number };
-    err.code = data?.requires_kyc ? "requires_kyc" : "forbidden";
-    err.status = 403;
-    throw err;
-  }
-
-  if (!response.ok || !data?.withdrawal_id) {
-    const err = new Error(
-      `NexusPag recusou o saque (HTTP ${response.status}): ${JSON.stringify(data)}`
-    ) as Error & { code?: string; status?: number };
-    err.code = "provider_error";
-    err.status = response.status;
-    throw err;
-  }
-
-  const statusRaw = (data.status || "processing").toLowerCase();
-  let status: "completed" | "processing" | "failed" = "processing";
-  if (statusRaw === "completed") status = "completed";
-  else if (statusRaw === "failed") status = "failed";
-
-  return {
-    providerWithdrawalId: data.withdrawal_id,
-    status,
-    amountCents: reaisToCents(data.amount ?? amountReais),
-    feeCents: reaisToCents(data.fee ?? 0),
-    netAmountCents: reaisToCents(data.net_amount ?? data.amount ?? amountReais),
-    newBalanceCents:
-      typeof data.new_balance === "number" ? reaisToCents(data.new_balance) : undefined,
-    rawResponse: data,
+  pixKeyType: string;
+  description?: string;
+  externalId?: string;
+}): Promise<{ id: string; status: string; rawResponse: unknown }> {
+  const body: Record<string, unknown> = {
+    amount: centsToReais(params.amountCents),
+    pix_key: params.pixKey,
+    pix_key_type: params.pixKeyType,
   };
+  if (params.description) body.description = params.description;
+  if (params.externalId) body.external_id = params.externalId;
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/withdrawals`, {
+    method: "POST",
+    headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    // A timeout is an uncertain provider outcome; the caller leaves the
+    // withdrawal in processing and must reconcile it instead of resubmitting.
+    signal: AbortSignal.timeout(25000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok || !data) {
+    const error = new Error(`NexusPag saque HTTP ${res.status}: ${JSON.stringify(data)}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
+  return { id: data.id || data.withdrawal?.id || "", status: data.status || data.withdrawal?.status || "pending", rawResponse: data };
 }
 
-// ---------------------------------------------------------------------------
-// KYC — POST /api/kyc/verify + GET /api/kyc/verify/{id}
-// ---------------------------------------------------------------------------
-
-export interface NexusPagKycResult {
+interface NexusPagKycResult {
   id: string;
   externalId: string | null;
   status: "pending" | "approved" | "rejected" | "expired" | string;
