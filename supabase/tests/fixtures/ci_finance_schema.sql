@@ -49,7 +49,30 @@ CREATE TABLE public.balance_transactions (
 
 CREATE TABLE public.provider_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.webhook_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
-CREATE TABLE public.withdrawal_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+CREATE TABLE public.users (id uuid PRIMARY KEY);
+CREATE TABLE public.withdrawal_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES public.organizations(id),
+  environment public.environment_type NOT NULL DEFAULT 'live',
+  amount bigint NOT NULL,
+  fee_amount bigint NOT NULL DEFAULT 0,
+  net_amount bigint NOT NULL,
+  currency text NOT NULL DEFAULT 'BRL',
+  pix_key text NOT NULL,
+  pix_key_type text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  requested_by uuid REFERENCES public.users(id),
+  reviewed_by uuid,
+  reviewed_at timestamptz,
+  rejection_reason text,
+  correlation_id text,
+  provider_withdrawal_id text,
+  failure_reason text,
+  balance_transaction_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, environment, correlation_id)
+);
 CREATE TABLE public.platform_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.organization_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.acquirer_cost_config (acquirer_id text PRIMARY KEY);
