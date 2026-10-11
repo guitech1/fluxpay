@@ -29,7 +29,7 @@ BEGIN
       'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
       'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
       'rejected_at', w.rejected_at, 'rejection_reason', w.rejection_reason, 'failed_at', w.failed_at,
-      'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
+      'correlation_id', w.correlation_id, 'provider_reference', w.provider_reference,
       'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
       'created_at', w.created_at, 'updated_at', w.updated_at
     );
@@ -67,7 +67,7 @@ BEGIN
     'pix_key', w.pix_key, 'pix_key_type', w.pix_key_type, 'status', w.status,
     'requested_by', w.requested_by, 'approved_by', w.approved_by, 'approved_at', w.approved_at,
     'rejected_at', w.rejected_at, 'rejection_reason', w.rejection_reason, 'failed_at', w.failed_at,
-    'correlation_id', w.correlation_id, 'provider_reference', w.provider_withdrawal_id,
+    'correlation_id', w.correlation_id, 'provider_reference', w.provider_reference,
     'failure_reason', w.failure_reason, 'balance_transaction_id', w.balance_transaction_id,
     'created_at', w.created_at, 'updated_at', w.updated_at
   );
