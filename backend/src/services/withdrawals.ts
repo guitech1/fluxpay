@@ -506,6 +506,10 @@ export async function approveAndExecuteWithdrawal(params: {
       amountCents: w.net,
       pixKey: w.pix_key,
       pixKeyType: w.pix_key_type as PixKeyType,
+      // Stable operation identifier is sent as external_id for provider-side
+      // deduplication/reconciliation where NexusPag supports it. A timeout
+      // remains processing and must never be blindly resubmitted.
+      externalId: w.id,
     });
   } catch (err) {
     const e = err as Error & { code?: string; status?: number };
