@@ -55,6 +55,8 @@ function mapWithdrawalRow(row: any): WithdrawalRequest {
 }
 
 const MIN_WITHDRAWAL_CENTS = 1000;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function recordWithdrawalDecision(params: {
   withdrawalId: string;
@@ -177,6 +179,13 @@ export async function requestWithdrawal(params: {
       "Informe correlation_id para garantir idempotencia do pedido de saque."
     );
   }
+  if (!UUID_RE.test(correlationId)) {
+    throw new AppError(
+      400,
+      "validation_error",
+      "correlation_id deve ser um UUID valido."
+    );
+  }
 
   const feeAmount = 0;
   const netAmount = params.amountCents - feeAmount;
@@ -296,7 +305,6 @@ export async function rejectWithdrawal(params: {
   adminUserId: string;
   reason: string;
 }): Promise<WithdrawalRequest> {
-  // RPC owns status transition, ledger release, and decision audit in one transaction.
   const { data, error } = await supabaseAdmin.rpc("fluxpay_reject_withdrawal", {
     p_withdrawal_id: params.withdrawalId,
     p_admin_user_id: params.adminUserId,
@@ -325,7 +333,6 @@ export async function approveAndExecuteWithdrawal(params: {
     .maybeSingle();
 
   if (error || !row) throw new AppError(404, "not_found", "Pedido de saque nao encontrado.");
-  // Always normalize so net/fee/approved_* are present regardless of historical column names.
   let w = mapWithdrawalRow(row);
 
   if (w.status !== "pending" && w.status !== "approved") {
@@ -346,8 +353,6 @@ export async function approveAndExecuteWithdrawal(params: {
 
   const stateBeforeApprove = w.status;
 
-  // Claim pending -> approved with compare-and-set. Column names match the
-  // target/live schema used by fluxpay_create_withdrawal_request (approved_*).
   if (w.status === "pending") {
     const { data: approved, error: approveError } = await supabaseAdmin
       .from("withdrawal_requests")
@@ -371,8 +376,6 @@ export async function approveAndExecuteWithdrawal(params: {
     w = mapWithdrawalRow(approved);
   }
 
-  // approved -> processing before any provider call. Only the winner may submit.
-  // Ambiguous provider outcomes stay processing; never blind-retry.
   const { data: claimed, error: claimError } = await supabaseAdmin
     .from("withdrawal_requests")
     .update({ status: "processing" })
@@ -406,7 +409,6 @@ export async function approveAndExecuteWithdrawal(params: {
       amountCents: w.net,
       pixKey: w.pix_key,
       pixKeyType: w.pix_key_type as PixKeyType,
-      // Stable external id for provider-side dedup; timeout stays processing.
       externalId: w.id,
     });
   } catch (err) {
@@ -437,7 +439,6 @@ export async function approveAndExecuteWithdrawal(params: {
     (providerResult as any).providerWithdrawalId || (providerResult as any).id || null;
   const feeCents = (providerResult as any).feeCents;
 
-  // Target schema columns: provider_withdrawal_id and fee (not fee_amount).
   const { data: updated, error: upErr } = await supabaseAdmin
     .from("withdrawal_requests")
     .update({
