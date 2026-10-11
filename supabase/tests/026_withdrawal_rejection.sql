@@ -11,11 +11,11 @@ DECLARE
 BEGIN
   INSERT INTO public.users(id) VALUES (user_id);
   INSERT INTO public.withdrawal_requests (
-    organization_id, environment, amount, fee_amount, net_amount, currency,
+    organization_id, environment, amount, fee, net, currency,
     pix_key, pix_key_type, status, requested_by, correlation_id
   ) VALUES (
     org_id, 'test', 3000, 0, 3000, 'BRL', 'ci@example.test', 'email',
-    'pending', user_id, 'ci-withdrawal-reject-001'
+    'pending', user_id, '00000000-0000-4000-8000-000000000261'
   ) RETURNING id INTO withdrawal_id;
 
   first_result := public.fluxpay_reject_withdrawal(withdrawal_id, user_id, 'synthetic rejection');
