@@ -36,9 +36,31 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE public.balance_transactions
-  ADD CONSTRAINT balance_transactions_charge_requires_payment
-  CHECK (type <> 'charge' OR payment_id IS NOT NULL) NOT VALID;
+DO $constraint$
+DECLARE
+  existing_definition text;
+  expected_definition constant text :=
+    'CHECK (((type <> ''charge''::text) OR (payment_id IS NOT NULL)))';
+BEGIN
+  SELECT pg_get_constraintdef(c.oid)
+    INTO existing_definition
+    FROM pg_constraint c
+   WHERE c.conrelid = 'public.balance_transactions'::regclass
+     AND c.conname = 'balance_transactions_charge_requires_payment';
+
+  IF existing_definition IS NULL THEN
+    ALTER TABLE public.balance_transactions
+      ADD CONSTRAINT balance_transactions_charge_requires_payment
+      CHECK (type <> 'charge' OR payment_id IS NOT NULL) NOT VALID;
+  ELSIF regexp_replace(existing_definition, '\s+', '', 'g')
+        <> regexp_replace(expected_definition, '\s+', '', 'g') THEN
+    RAISE EXCEPTION
+      'Constraint balance_transactions_charge_requires_payment exists with unexpected definition: %',
+      existing_definition
+      USING ERRCODE = '23514';
+  END IF;
+END
+$constraint$;
 
 ALTER TABLE public.balance_transactions
   VALIDATE CONSTRAINT balance_transactions_charge_requires_payment;
