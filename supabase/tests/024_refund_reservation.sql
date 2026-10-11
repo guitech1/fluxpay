@@ -35,7 +35,7 @@ BEGIN
   );
   -- Repeated finalization must not create another ledger debit.
   PERFORM public.fluxpay_finalize_refund(
-    refund_id, org_id, 'test', 'succeeded', 'provider-refund-024', '{"status":"succeeded"}'::jsonb
+    refund_uuid, org_id, 'test', 'succeeded', 'provider-refund-024', '{"status":"succeeded"}'::jsonb
   );
 
   SELECT count(*) INTO ledger_count
