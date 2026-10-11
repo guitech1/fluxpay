@@ -454,15 +454,41 @@ export async function approveAndExecuteWithdrawal(params: {
   }
 
   const stateBeforeApprove = w.status;
-  await supabaseAdmin
+
+  // Claim the approval with a compare-and-set update. A concurrent admin request
+  // must not execute the same payout merely because it read the same pending row.
+  if (w.status === "pending") {
+    const { data: approved, error: approveError } = await supabaseAdmin
+      .from("withdrawal_requests")
+      .update({
+        status: "approved",
+        approved_by: params.adminUserId,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", w.id)
+      .eq("status", "pending")
+      .select("*")
+      .maybeSingle();
+
+    if (approveError || !approved) {
+      throw new AppError(409, "conflict", "O pedido de saque foi alterado por outra operação. Atualize o estado antes de tentar novamente.");
+    }
+  }
+
+  // Move approved -> processing atomically before contacting the provider.
+  // Only the caller that wins this transition may submit the payout. If the
+  // provider result is ambiguous, reconciliation—not a blind retry—is required.
+  const { data: claimed, error: claimError } = await supabaseAdmin
     .from("withdrawal_requests")
-    .update({
-      status: "approved",
-      approved_by: params.adminUserId,
-      approved_at: new Date().toISOString(),
-    })
+    .update({ status: "processing" })
     .eq("id", w.id)
-    .in("status", ["pending", "approved"]);
+    .eq("status", "approved")
+    .select("*")
+    .maybeSingle();
+
+  if (claimError || !claimed) {
+    throw new AppError(409, "conflict", "O pedido de saque já foi assumido por outra operação ou precisa de reconciliação.");
+  }
 
   await recordWithdrawalDecision({
     withdrawalId: w.id,
@@ -471,7 +497,7 @@ export async function approveAndExecuteWithdrawal(params: {
     actorId: params.adminUserId,
     reason: params.note ?? null,
     stateBefore: stateBeforeApprove,
-    stateAfter: "approved",
+    stateAfter: "processing",
   });
 
   let providerResult;
