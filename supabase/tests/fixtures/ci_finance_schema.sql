@@ -11,7 +11,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TYPE public.environment_type AS ENUM ('test', 'live');
-CREATE TYPE public.payment_status AS ENUM ('pending','processing','succeeded','failed','canceled','refunded','partially_refunded');
+CREATE TYPE public.payment_status AS ENUM ('pending','processing','succeeded','failed','canceled','expired','refunded','partially_refunded');
 CREATE TYPE public.refund_status AS ENUM ('pending','succeeded','failed','canceled');
 
 CREATE TABLE public.organizations (id uuid PRIMARY KEY, name text);
