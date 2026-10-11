@@ -16,14 +16,14 @@ BEGIN
   ) RETURNING id INTO payment_id;
 
   SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
-    payment_id, org_id, 'test', 600, 'first partial refund', '{}'::jsonb
+    payment_id, org_id, 'test', 600, 'refund-024-1', 'first partial refund', '{}'::jsonb
   );
   refund_uuid := refund_row.id;
 
   -- A pending reservation is ambiguous/in-flight and blocks a second provider call.
   BEGIN
     PERFORM public.fluxpay_reserve_refund(
-      payment_id, org_id, 'test', 400, 'must wait for reconciliation', '{}'::jsonb
+      payment_id, org_id, 'test', 400, 'refund-024-pending-2', 'must wait for reconciliation', '{}'::jsonb
     );
     RAISE EXCEPTION 'expected pending reservation to block another refund';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN
@@ -49,7 +49,7 @@ BEGIN
   -- Amount above the remaining 400 must be rejected while the payment is partially refunded.
   BEGIN
     PERFORM public.fluxpay_reserve_refund(
-      payment_id, org_id, 'test', 1, 'over refund', '{}'::jsonb
+      payment_id, org_id, 'test', 1, 'refund-024-over', 'over refund', '{}'::jsonb
     );
     RAISE EXCEPTION 'expected over-refund limit to reject';
   EXCEPTION WHEN check_violation THEN
@@ -58,7 +58,7 @@ BEGIN
 
   -- Now that the first refund is finalized, the remaining 400 can be reserved.
   SELECT * INTO refund_row FROM public.fluxpay_reserve_refund(
-    payment_id, org_id, 'test', 400, 'final partial refund', '{}'::jsonb
+    payment_id, org_id, 'test', 400, 'refund-024-2', 'final partial refund', '{}'::jsonb
   );
   PERFORM public.fluxpay_finalize_refund(
     refund_row.id, org_id, 'test', 'succeeded', 'provider-refund-025', '{"status":"succeeded"}'::jsonb
