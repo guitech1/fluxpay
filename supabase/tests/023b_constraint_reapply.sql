@@ -20,7 +20,7 @@ BEGIN
 
   IF regexp_replace(lower(constraint_definition), '\s+', '', 'g')
      <> regexp_replace(
-          'check(((type <> ''charge''::text) OR (payment_id IS NOT NULL)))',
+          lower('check(((type <> ''charge''::text) OR (payment_id IS NOT NULL)))'),
           '\s+', '', 'g'
         ) THEN
     RAISE EXCEPTION 'unexpected CHECK definition: %', constraint_definition;
