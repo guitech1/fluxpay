@@ -506,6 +506,9 @@ export async function createRefund(
     if (code === "23514") {
       throw new AppError(400, "validation_error", "O valor solicitado excede o saldo ainda disponivel para reembolso.");
     }
+    if (code === "23505") {
+      throw new AppError(409, "conflict", "A chave de idempotencia ja foi usada com parametros diferentes.");
+    }
     if (code === "55000") {
       throw new AppError(409, "conflict", "Existe um reembolso pendente ou a cobranca exige reconciliacao. Nao repita a operacao.");
     }
