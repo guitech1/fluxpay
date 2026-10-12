@@ -10,6 +10,8 @@ import type {
   CreateRefundInput,
 } from "../types/index.js";
 
+const ORPHAN_GRACE_SECONDS = 5 * 60;
+
 export function buildProviderExternalId(paymentId: string): string {
   return paymentId;
 }
@@ -245,12 +247,16 @@ export async function createRefund(
 }
 
 export async function getPaymentByProviderReference(reference: {
-  txid?: string;
-  externalId?: string;
+  txid?: string | null;
+  externalId?: string | null;
 }): Promise<Payment | null> {
   if (reference.txid) {
-    const byTxid = await getPaymentByProviderTxid(reference.txid);
-    if (byTxid) return byTxid;
+    const { data } = await supabaseAdmin
+      .from("payments")
+      .select("*")
+      .eq("provider_txid", reference.txid)
+      .maybeSingle();
+    if (data) return data as Payment;
   }
   if (reference.externalId) {
     const { data } = await supabaseAdmin
@@ -258,44 +264,48 @@ export async function getPaymentByProviderReference(reference: {
       .select("*")
       .eq("provider_external_id", reference.externalId)
       .maybeSingle();
-    return (data as Payment) || null;
+    if (data) return data as Payment;
   }
   return null;
 }
 
 export async function getPaymentByProviderTxid(txid: string): Promise<Payment | null> {
-  const { data } = await supabaseAdmin
-    .from("payments")
-    .select("*")
-    .eq("provider_txid", txid)
-    .maybeSingle();
-  return (data as Payment) || null;
+  return getPaymentByProviderReference({ txid });
 }
 
 export async function markPixPaymentSucceeded(payment: Payment): Promise<void> {
-  if (payment.status === "succeeded") return;
-  const { error } = await supabaseAdmin.rpc("fluxpay_confirm_pix_payment", {
-    p_payment_id: payment.id,
-    p_organization_id: payment.organization_id,
-    p_environment: payment.environment,
-  });
-  if (error) {
-    console.error("[payments] markPixPaymentSucceeded failed:", error);
-    throw new AppError(500, "api_error", "Falha ao confirmar pagamento PIX.");
+  const { data: updated, error } = await supabaseAdmin.rpc(
+    "fluxpay_confirm_pix_payment",
+    {
+      p_payment_id: payment.id,
+      p_organization_id: payment.organization_id,
+      p_environment: payment.environment,
+    }
+  );
+  if (error || !updated) {
+    console.error("Falha ao confirmar PIX:", error);
   }
 }
 
 export async function simulateSandboxPayment(
   organizationId: string,
-  paymentId: string,
-  environment: Environment
+  paymentId: string
 ): Promise<Payment> {
-  const payment = await getPayment(organizationId, paymentId, environment);
-  if (payment.provider !== "sandbox") {
-    throw new AppError(400, "invalid_request", "Simulacao so e permitida no sandbox.");
+  const payment = await getPayment(organizationId, paymentId, "test");
+
+  if (payment.environment !== "test" || payment.provider !== "sandbox") {
+    throw new AppError(404, "not_found", "Recurso nao encontrado.");
   }
+
+  if (payment.status === "succeeded") return payment;
+
+  if (payment.status !== "pending") {
+    throw new AppError(409, "invalid_request", "Esta cobranca nao esta mais pendente.");
+  }
+
   await markPixPaymentSucceeded(payment);
-  return getPayment(organizationId, paymentId, environment);
+
+  return getPayment(organizationId, paymentId, "test");
 }
 
 export async function markPixPaymentFailedOrExpired(
@@ -316,44 +326,115 @@ export async function markPixPaymentFailedOrExpired(
 export async function reconcileOrphanPixCharges(): Promise<{
   checked: number;
   confirmed: number;
+  attached: number;
+  failed: number;
 }> {
-  const result = { checked: 0, confirmed: 0 };
-  const { data: rows, error } = await supabaseAdmin
+  const cutoff = new Date(Date.now() - ORPHAN_GRACE_SECONDS * 1000).toISOString();
+
+  const { data: orphans, error } = await supabaseAdmin
     .from("payments")
     .select("*")
+    .eq("status", "pending")
     .eq("payment_type", "pix")
-    .in("status", ["pending", "processing"])
-    .not("provider_payment_id", "is", null)
+    .is("provider_txid", null)
+    .lt("created_at", cutoff)
     .limit(50);
 
+  const result = { checked: 0, confirmed: 0, attached: 0, failed: 0 };
+
   if (error) {
-    console.error("[reconcile] list failed:", error);
+    console.error("[reconcile] falha ao listar cobrancas orfas:", error);
     return result;
   }
 
-  for (const row of rows || []) {
+  for (const row of (orphans || []) as Payment[]) {
     result.checked += 1;
-    const payment = row as Payment;
+
+    const reference = row.provider_external_id || row.id;
+    let providerStatus: Parameters<typeof decideReconcileAction>[0]["providerStatus"];
+    let providerPix:
+      | {
+          txid: string;
+          copyPaste: string;
+          qrCodeBase64: string;
+          expiresAt: string;
+          feeAmountCents: number;
+          netAmountCents: number;
+        }
+      | undefined;
+    let providerPaymentId: string | undefined;
+
     try {
-      const provider = getProvider(payment.environment, payment.provider ?? undefined);
-      const remote = await provider.getPayment(payment.provider_payment_id as string);
-      const decision = decideReconcileAction({
-        localStatus: payment.status,
-        remoteStatus: remote.status,
-      });
-      if (decision.action === "confirm") {
-        await markPixPaymentSucceeded(payment);
-        result.confirmed += 1;
-      } else if (decision.action === "fail" || decision.action === "expire") {
-        await markPixPaymentFailedOrExpired(
-          payment,
-          decision.action === "expire" ? "expired" : "failed"
-        );
+      if (row.environment === "test") {
+        providerStatus = "not_found";
+      } else {
+        const provider = getProvider(row.environment, row.provider ?? undefined);
+        const remote = await provider.getPayment(reference);
+        providerPaymentId = remote.providerPaymentId;
+        providerPix = remote.pix
+          ? {
+              txid: remote.pix.txid,
+              copyPaste: remote.pix.copyPaste,
+              qrCodeBase64: remote.pix.qrCodeBase64,
+              expiresAt: remote.pix.expiresAt,
+              feeAmountCents: remote.pix.feeAmountCents,
+              netAmountCents: remote.pix.netAmountCents,
+            }
+          : undefined;
+        if (remote.status === "succeeded") providerStatus = "paid";
+        else if (remote.status === "expired") providerStatus = "expired";
+        else if (remote.status === "failed" || remote.status === "canceled") providerStatus = "failed";
+        else providerStatus = "pending";
       }
     } catch (err) {
-      console.error("[reconcile] payment error:", payment.id, err);
+      const msg = err instanceof Error ? err.message.toLowerCase() : "";
+      if (msg.includes("404") || msg.includes("nao encontrado") || msg.includes("not found")) {
+        providerStatus = "not_found";
+      } else {
+        providerStatus = "unreachable";
+      }
+    }
+
+    const ageSeconds = Math.max(
+      0,
+      (Date.now() - new Date(row.created_at).getTime()) / 1000
+    );
+
+    const decision = decideReconcileAction({
+      ageSeconds,
+      graceSeconds: ORPHAN_GRACE_SECONDS,
+      providerStatus,
+    });
+
+    if (decision.action === "wait") continue;
+
+    if (decision.action === "confirm") {
+      await markPixPaymentSucceeded(row);
+      result.confirmed += 1;
+      continue;
+    }
+
+    if (decision.action === "attach" && providerPix) {
+      await supabaseAdmin
+        .from("payments")
+        .update({
+          provider_payment_id: providerPaymentId || row.provider_payment_id,
+          provider_txid: providerPix.txid,
+          pix_copy_paste: providerPix.copyPaste,
+          pix_qr_code_base64: providerPix.qrCodeBase64,
+          expires_at: providerPix.expiresAt,
+        })
+        .eq("id", row.id);
+      result.attached += 1;
+      continue;
+    }
+
+    if (decision.action === "fail") {
+      await markPixPaymentFailedOrExpired(row, providerStatus === "expired" ? "expired" : "failed");
+      result.failed += 1;
     }
   }
+
   return result;
 }
 
@@ -400,8 +481,8 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
 
     if (decision.action === "retry_later") continue;
 
-    if (decision.action === "confirm") {
-      await markPixPaymentSucceeded(payment as Payment);
+    if (decision.action === "confirm" && payment) {
+      await markPixPaymentSucceeded(payment);
       result.confirmed += 1;
     }
 
