@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { apiLogger } from "./middleware/api-log.js";
 import { maintenanceGuard } from "./middleware/maintenance.js";
+import { getMongoStatus } from "./config/mongo.js";
 
 import paymentsRouter from "./routes/payments.js";
 import customersRouter from "./routes/customers.js";
@@ -25,6 +26,11 @@ import supportAdminRouter from "./routes/support-admin.js";
 import fluxpayCardDashboardRouter from "./routes/fluxpay-card-dashboard.js";
 import fluxpayCardAdminRouter from "./routes/fluxpay-card-admin.js";
 import paymentLinksDashboardRouter from "./routes/payment-links-dashboard.js";
+import scoreDashboardRouter from "./routes/score-dashboard.js";
+import rankingPublicRouter from "./routes/ranking-public.js";
+import rankingAdminRouter from "./routes/ranking-admin.js";
+import profileDashboardRouter from "./routes/profile-dashboard.js";
+import profilePublicRouter from "./routes/profile-public.js";
 
 const app = express();
 
@@ -89,8 +95,32 @@ app.use(
   })
 );
 
+function mongoStoreLabel(mongo: ReturnType<typeof getMongoStatus>): string {
+  if (!mongo.configured) return "supabase_fallback";
+  if (mongo.ready) return "mongodb";
+  if (mongo.connectionFailed) return "mongodb_unavailable";
+  return "mongodb_configured";
+}
+
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "fluxpay-api", version: "0.1.0" });
+  const mongo = getMongoStatus();
+  const label = mongoStoreLabel(mongo);
+  res.json({
+    status: "ok",
+    service: "fluxpay-api",
+    version: "0.4.0",
+    stores: {
+      financial: "supabase",
+      ranking_participants: label,
+      org_scores: label === "supabase_fallback" ? "none" : label,
+      public_profiles: label,
+      mongo: {
+        configured: mongo.configured,
+        ready: mongo.ready,
+        database: mongo.configured ? mongo.database : null,
+      },
+    },
+  });
 });
 
 app.use(maintenanceGuard);
@@ -103,12 +133,17 @@ app.use("/v1/checkout", checkoutRouter);
 app.use("/v1/balance", balanceRouter);
 app.use("/v1/webhooks", webhooksRouter);
 
+app.use("/v1", rankingPublicRouter);
+app.use("/v1", profilePublicRouter);
+
 app.use("/dashboard-api", dashboardRouter);
 app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
 app.use("/dashboard-api/support", supportDashboardRouter);
 app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
 app.use("/dashboard-api", paymentLinksDashboardRouter);
+app.use("/dashboard-api", scoreDashboardRouter);
+app.use("/dashboard-api", profileDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
@@ -116,6 +151,7 @@ app.use("/admin-api", adminKycRouter);
 app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 app.use("/admin-api", supportAdminRouter);
 app.use("/admin-api/fluxpay-card", fluxpayCardAdminRouter);
+app.use("/admin-api", rankingAdminRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
