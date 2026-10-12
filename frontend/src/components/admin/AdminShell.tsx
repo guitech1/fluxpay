@@ -16,6 +16,7 @@ import {
   ArrowLeft,
   Headphones,
   Network,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FluxMark } from "@/components/brand/FluxLogo";
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/admin/withdrawals", label: "Saques", icon: Banknote },
   { href: "/admin/fluxpay-card", label: "FluxPay Card", icon: CreditCard },
   { href: "/admin/acquirers", label: "Adquirentes", icon: Network },
+  { href: "/admin/ranking", label: "Ranking", icon: Trophy },
   { href: "/admin/support", label: "Suporte", icon: Headphones },
   { href: "/admin/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/admin/security", label: "Segurança", icon: Activity },

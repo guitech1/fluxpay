@@ -18,6 +18,9 @@ import {
   Link2,
   Menu,
   X,
+  Trophy,
+  UserCircle,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -59,8 +62,11 @@ const NAV_GROUPS: {
   {
     label: "Conta",
     items: [
+      { href: "/dashboard/profile", label: "Perfil público", icon: UserCircle },
       { href: "/dashboard/company", label: "Empresa", icon: Building2 },
       { href: "/dashboard/settings", label: "Configurações", icon: Settings },
+      { href: "/ranking", label: "Ranking", icon: Trophy },
+      { href: "/labs", label: "Labs", icon: FlaskConical },
     ],
   },
 ];

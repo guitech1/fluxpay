@@ -22,7 +22,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # npm install (not ci) until package-lock includes mongodb workspace dep
+      - run: npm install --no-audit --no-fund
       - run: npm run lint --workspace=backend
       - run: npm run typecheck --workspace=backend
       - run: npm test --workspace=backend
@@ -36,7 +37,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: npm run typecheck --workspace=frontend
       - run: npm run lint --workspace=frontend
       - run: npm run build --workspace=frontend
