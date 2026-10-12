@@ -19,8 +19,8 @@ import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
  * Cria cobranca com roteamento multi-adquirente e failover.
- * Persiste provider_attempt_log; se a coluna falhar no update de sucesso,
- * faz retry sem o campo para nao bloquear cobranca ja criada no adquirente.
+ * Persiste provider_attempt_log; se a coluna falhar no update,
+ * faz retry sem o campo (success/fail/ambiguous). Nunca reenvia cobranca ao adquirente.
  */
 export async function createPayment(
   organizationId: string,
@@ -123,24 +123,40 @@ export async function createPayment(
         providerId: attemptResult.providerId,
         error: attemptResult.errorMessage,
       });
-      const { data: pendingRow } = await supabaseAdmin
+      const ambiguousPatch = {
+        provider: attemptResult.providerId,
+        provider_response: {
+          ambiguous: true,
+          error: attemptResult.errorMessage,
+          latencyMs: attemptResult.latencyMs,
+        },
+        provider_attempt_log: buildAttemptLog(attemptResult),
+      };
+      let { data: pendingRow, error: ambErr } = await supabaseAdmin
         .from("payments")
-        .update({
-          provider: attemptResult.providerId,
-          provider_response: {
-            ambiguous: true,
-            error: attemptResult.errorMessage,
-            latencyMs: attemptResult.latencyMs,
-          },
-          provider_attempt_log: buildAttemptLog(attemptResult),
-        })
+        .update(ambiguousPatch)
         .eq("id", paymentId)
         .select()
         .single();
+      // Soft-retry without log — never creates a second charge at the acquirer.
+      if (ambErr || !pendingRow) {
+        console.warn("[payments] ambiguous update with attempt_log failed; retrying without it:", ambErr?.message);
+        const { provider_attempt_log: _drop, ...withoutLog } = ambiguousPatch;
+        const retry = await supabaseAdmin
+          .from("payments")
+          .update(withoutLog)
+          .eq("id", paymentId)
+          .select()
+          .single();
+        pendingRow = retry.data;
+      }
       if (pendingRow) {
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
         return pendingRow as Payment;
       }
+      // DB still failed: local row may remain "pending" with provider "pending".
+      // Do NOT retry createCharge — outcome is uncertain; reconciliation must handle it.
+      console.error("[payments] ambiguous result could not be persisted:", { paymentId });
       throw new AppError(
         502,
         "provider_error",
@@ -149,28 +165,41 @@ export async function createPayment(
     }
 
     const nowIso = new Date().toISOString();
-    const { data: failedRow } = await supabaseAdmin
+    const failedPatch = {
+      status: "failed" as const,
+      provider: attemptResult.providerId,
+      failed_at: nowIso,
+      provider_response: {
+        error: attemptResult.errorMessage,
+        errorCode: attemptResult.errorCode,
+        latencyMs: attemptResult.latencyMs,
+      },
+      provider_attempt_log: buildAttemptLog(attemptResult),
+    };
+    let { data: failedRow, error: failErr } = await supabaseAdmin
       .from("payments")
-      .update({
-        status: "failed",
-        provider: attemptResult.providerId,
-        failed_at: nowIso,
-        provider_response: {
-          error: attemptResult.errorMessage,
-          errorCode: attemptResult.errorCode,
-          latencyMs: attemptResult.latencyMs,
-        },
-        provider_attempt_log: buildAttemptLog(attemptResult),
-      })
+      .update(failedPatch)
       .eq("id", paymentId)
       .select()
       .single();
+    if (failErr || !failedRow) {
+      console.warn("[payments] failed update with attempt_log failed; retrying without it:", failErr?.message);
+      const { provider_attempt_log: _drop, ...withoutLog } = failedPatch;
+      const retry = await supabaseAdmin
+        .from("payments")
+        .update(withoutLog)
+        .eq("id", paymentId)
+        .select()
+        .single();
+      failedRow = retry.data;
+    }
 
     if (failedRow) {
       dispatchWebhook(organizationId, environment, "payment.failed", failedRow).catch(console.error);
       return failedRow as Payment;
     }
 
+    // No second charge: acquirer already returned definitive failure.
     throw new AppError(
       502,
       "provider_error",
