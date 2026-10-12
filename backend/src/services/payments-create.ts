@@ -19,8 +19,8 @@ import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
  * Cria cobranca com roteamento multi-adquirente e failover.
- * Persiste provider_attempt_log (nao bloqueia se coluna falhar no sentido de
- * que o campo e opcional no update; migration 022 adiciona a coluna).
+ * Persiste provider_attempt_log; se a coluna falhar no update,
+ * faz retry sem o campo (success/fail/ambiguous). Nunca reenvia cobranca ao adquirente.
  */
 export async function createPayment(
   organizationId: string,
@@ -123,24 +123,40 @@ export async function createPayment(
         providerId: attemptResult.providerId,
         error: attemptResult.errorMessage,
       });
-      const { data: pendingRow } = await supabaseAdmin
+      const ambiguousPatch = {
+        provider: attemptResult.providerId,
+        provider_response: {
+          ambiguous: true,
+          error: attemptResult.errorMessage,
+          latencyMs: attemptResult.latencyMs,
+        },
+        provider_attempt_log: buildAttemptLog(attemptResult),
+      };
+      let { data: pendingRow, error: ambErr } = await supabaseAdmin
         .from("payments")
-        .update({
-          provider: attemptResult.providerId,
-          provider_response: {
-            ambiguous: true,
-            error: attemptResult.errorMessage,
-            latencyMs: attemptResult.latencyMs,
-          },
-          provider_attempt_log: buildAttemptLog(attemptResult),
-        })
+        .update(ambiguousPatch)
         .eq("id", paymentId)
         .select()
         .single();
+      // Soft-retry without log — never creates a second charge at the acquirer.
+      if (ambErr || !pendingRow) {
+        console.warn("[payments] ambiguous update with attempt_log failed; retrying without it:", ambErr?.message);
+        const { provider_attempt_log: _drop, ...withoutLog } = ambiguousPatch;
+        const retry = await supabaseAdmin
+          .from("payments")
+          .update(withoutLog)
+          .eq("id", paymentId)
+          .select()
+          .single();
+        pendingRow = retry.data;
+      }
       if (pendingRow) {
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
         return pendingRow as Payment;
       }
+      // DB still failed: local row may remain "pending" with provider "pending".
+      // Do NOT retry createCharge — outcome is uncertain; reconciliation must handle it.
+      console.error("[payments] ambiguous result could not be persisted:", { paymentId });
       throw new AppError(
         502,
         "provider_error",
@@ -149,28 +165,41 @@ export async function createPayment(
     }
 
     const nowIso = new Date().toISOString();
-    const { data: failedRow } = await supabaseAdmin
+    const failedPatch = {
+      status: "failed" as const,
+      provider: attemptResult.providerId,
+      failed_at: nowIso,
+      provider_response: {
+        error: attemptResult.errorMessage,
+        errorCode: attemptResult.errorCode,
+        latencyMs: attemptResult.latencyMs,
+      },
+      provider_attempt_log: buildAttemptLog(attemptResult),
+    };
+    let { data: failedRow, error: failErr } = await supabaseAdmin
       .from("payments")
-      .update({
-        status: "failed",
-        provider: attemptResult.providerId,
-        failed_at: nowIso,
-        provider_response: {
-          error: attemptResult.errorMessage,
-          errorCode: attemptResult.errorCode,
-          latencyMs: attemptResult.latencyMs,
-        },
-        provider_attempt_log: buildAttemptLog(attemptResult),
-      })
+      .update(failedPatch)
       .eq("id", paymentId)
       .select()
       .single();
+    if (failErr || !failedRow) {
+      console.warn("[payments] failed update with attempt_log failed; retrying without it:", failErr?.message);
+      const { provider_attempt_log: _drop, ...withoutLog } = failedPatch;
+      const retry = await supabaseAdmin
+        .from("payments")
+        .update(withoutLog)
+        .eq("id", paymentId)
+        .select()
+        .single();
+      failedRow = retry.data;
+    }
 
     if (failedRow) {
       dispatchWebhook(organizationId, environment, "payment.failed", failedRow).catch(console.error);
       return failedRow as Payment;
     }
 
+    // No second charge: acquirer already returned definitive failure.
     throw new AppError(
       502,
       "provider_error",
@@ -200,7 +229,8 @@ export async function createPayment(
       ? "processing"
       : providerStatus;
 
-  const { data: payment, error: updateError } = await supabaseAdmin
+  let payment: Record<string, unknown> | null = null;
+  const { data: paymentData, error: updateError } = await supabaseAdmin
     .from("payments")
     .update({
       status,
@@ -226,27 +256,57 @@ export async function createPayment(
     .select()
     .single();
 
+  payment = paymentData as Record<string, unknown> | null;
   if (updateError || !payment) {
-    console.error("Create payment error (update pos-provider):", {
-      paymentId,
-      providerExternalId,
-      error: updateError,
-    });
-    throw new AppError(
-      500,
-      "api_error",
-      "A cobranca foi criada, mas houve falha ao registra-la. Consulte em instantes antes de tentar de novo."
-    );
+    console.warn("[payments] update with attempt_log failed; retrying without it:", updateError?.message);
+    const retry = await supabaseAdmin
+      .from("payments")
+      .update({
+        status,
+        provider: usedProviderId,
+        provider_payment_id: attemptResult.providerPaymentId || null,
+        provider_response: attemptResult.rawResponse ?? null,
+        fee_amount: feeAmount,
+        net_amount: netAmount,
+        fee_rule_snapshot: feeSnapshot,
+        provider_txid: attemptResult.pix?.txid || null,
+        pix_copy_paste: attemptResult.pix?.copyPaste || null,
+        pix_qr_code_base64: attemptResult.pix?.qrCodeBase64 || null,
+        expires_at: attemptResult.pix?.expiresAt || null,
+        authorized_at: status === "succeeded" ? nowIso : null,
+        captured_at: status === "succeeded" ? nowIso : null,
+        failed_at: status === "failed" ? nowIso : null,
+        paid_at: status === "succeeded" ? nowIso : null,
+      })
+      .eq("id", paymentId)
+      .eq("organization_id", organizationId)
+      .eq("environment", environment)
+      .select()
+      .single();
+    if (retry.error || !retry.data) {
+      console.error("Create payment error (update pos-provider):", {
+        paymentId,
+        providerExternalId,
+        error: retry.error || updateError,
+      });
+      throw new AppError(
+        500,
+        "api_error",
+        "A cobranca foi criada, mas houve falha ao registra-la. Consulte em instantes antes de tentar de novo."
+      );
+    }
+    payment = retry.data as Record<string, unknown>;
   }
 
-  let finalPayment = payment as Payment;
+  const paymentRow = payment as unknown as Payment;
+  let finalPayment = paymentRow;
 
   if (providerStatus === "succeeded") {
-    if (payment.payment_type === "pix") {
+    if (paymentRow.payment_type === "pix") {
       const { data: confirmed, error: ledgerError } = await supabaseAdmin.rpc(
         "fluxpay_confirm_pix_payment",
         {
-          p_payment_id: payment.id,
+          p_payment_id: paymentRow.id,
           p_organization_id: organizationId,
           p_environment: environment,
         }
@@ -255,7 +315,7 @@ export async function createPayment(
       const confirmedPayment = Array.isArray(confirmed) ? confirmed[0] : confirmed;
       if (ledgerError || !confirmedPayment) {
         console.error("Atomic PIX ledger confirmation failed:", {
-          paymentId: payment.id,
+          paymentId: paymentRow.id,
           error: ledgerError,
         });
         throw new AppError(
@@ -276,7 +336,7 @@ export async function createPayment(
           currency,
           net: netAmount,
           fee: feeAmount,
-          payment_id: payment.id,
+          payment_id: paymentRow.id,
           description: input.description || "Payment",
           available_on: nowIso,
         });
