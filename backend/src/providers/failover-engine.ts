@@ -49,7 +49,7 @@ export function makeFailoverEngine(deps: {
       console.info(JSON.stringify({ tag: "acquirer_failover_start", paymentExternalId: ctx.externalId ?? null, ordered, maxAttempts, totalBudgetMs: cfg.totalBudgetMs, perAttemptTimeoutMs: cfg.perAttemptTimeoutMs }));
 
       if (!ordered.length || maxAttempts === 0) {
-        return { providerId: "none", success: false, errorCode: "provider_unavailable", errorMessage: "Nenhum adquirente ativo no admin com chave configurada (sem fallback).", latencyMs: 0, attemptLog };
+        return { providerId: "sandbox", success: false, errorCode: "provider_unavailable", errorMessage: "Nenhum adquirente ativo no admin com chave configurada (sem fallback).", latencyMs: 0, attemptLog };
       }
 
       const attempted: AcquirerId[] = [...ctx.attemptedProviders];
@@ -135,7 +135,7 @@ export function makeFailoverEngine(deps: {
 
       console.info(JSON.stringify({ tag: "acquirer_failover_completed", paymentExternalId: ctx.externalId ?? null, success: false, stopReason: "exhausted", attempts: attemptLog.length, totalMs: Date.now() - startedAt }));
       return {
-        ...(last ?? { providerId: ordered[0] ?? "none", success: false, errorCode: "provider_unavailable", errorMessage: "indisponivel", latencyMs: 0 }),
+        ...(last ?? { providerId: (ordered[0] ?? "sandbox"), success: false, errorCode: "provider_unavailable", errorMessage: "indisponivel", latencyMs: 0 }),
         attemptLog,
       };
     },
