@@ -19,9 +19,8 @@ export const DEFAULT_PRIORITY: Record<string, number> = {
  * - pool = FLUXPAY_ACTIVE_ACQUIRERS (ou default)
  * - precisa isConfigured (chave presente)
  * - se existir QUALQUER linha em acquirer_cost_config, só entram enabled=true
- *   (fail-closed: sem linha no mapa = fora)
- * - se a tabela estiver vazia, fallback: só chave (compat bootstrap)
- * - ordenação por priority do admin (menor primeiro), senão DEFAULT_PRIORITY
+ * - ordenação por priority do admin (menor primeiro)
+ * - max: se omitido ou <=0, percorre TODAS as elegíveis (sem teto de 3)
  */
 export function filterActiveAcquirers(params: {
   pool: string[];
@@ -29,7 +28,6 @@ export function filterActiveAcquirers(params: {
   isConfigured: (id: string) => boolean;
   max?: number;
 }): { ordered: AcquirerId[]; excluded: Array<{ id: string; reason: string }> } {
-  const max = params.max ?? 3;
   const byId = new Map(
     params.rows.map((r) => [String(r.acquirer_id).toLowerCase(), r])
   );
@@ -61,15 +59,18 @@ export function filterActiveAcquirers(params: {
     eligible.push(id);
   }
 
-  const ordered = eligible
-    .sort((a, b) => {
-      const pa = byId.get(a)?.priority ?? DEFAULT_PRIORITY[a] ?? 100;
-      const pb = byId.get(b)?.priority ?? DEFAULT_PRIORITY[b] ?? 100;
-      return Number(pa) - Number(pb);
-    })
-    .slice(0, max) as AcquirerId[];
+  const orderedAll = eligible.sort((a, b) => {
+    const pa = byId.get(a)?.priority ?? DEFAULT_PRIORITY[a] ?? 100;
+    const pb = byId.get(b)?.priority ?? DEFAULT_PRIORITY[b] ?? 100;
+    return Number(pa) - Number(pb);
+  }) as AcquirerId[];
 
-  return { ordered, excluded };
+  const max =
+    params.max == null || params.max <= 0
+      ? orderedAll.length
+      : Math.min(params.max, orderedAll.length);
+
+  return { ordered: orderedAll.slice(0, max), excluded };
 }
 
 export function parseActivePool(envValue: string | undefined): string[] {

@@ -28,8 +28,12 @@ export const kavropayProvider: AcquirerAdapter = {
     const body: Record<string, unknown> = { amount: (params.amount / 100).toFixed(2), expiresInMinutes: 30 };
     if (params.description) body.description = params.description;
     if (params.externalId) body.externalId = params.externalId;
+    const attemptTimeoutMs = Math.max(
+      500,
+      Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 2000) || 2000
+    );
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 25000);
+    const to = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
     let res: Response;
     try {
       res = await fetch(`${base()}/charges`, {
@@ -45,8 +49,11 @@ export const kavropayProvider: AcquirerAdapter = {
     } finally { clearTimeout(to); }
     const data = (await res.json().catch(() => null)) as any;
     if (!res.ok || !data?.id) {
-      const e = new Error(`HTTP ${res.status}`) as Error & { retryable?: boolean };
-      e.retryable = res.status === 429 || res.status >= 500; throw e;
+      const e = new Error(`HTTP ${res.status}`) as Error & { retryable?: boolean; statusCode?: number; ambiguous?: boolean };
+      e.statusCode = res.status;
+      e.retryable = res.status === 429 || res.status >= 500;
+      e.ambiguous = false;
+      throw e;
     }
     const fee = Math.round((data.fee ?? 0) * 100);
     const net = data.net != null ? Math.round(data.net * 100) : params.amount - fee;

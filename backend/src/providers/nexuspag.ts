@@ -67,7 +67,7 @@ export class NexusPagProvider implements PaymentProvider {
     if (params.webhookUrl) body.webhook_url = params.webhookUrl;
     if (params.expirationSeconds) body.expiration = params.expirationSeconds;
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 25000);
+    const to = setTimeout(() => ctrl.abort(), Math.max(500, Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 2000) || 2000));
     let res: Response;
     try {
       res = await fetch(`${NEXUSPAG_BASE_URL}/api/pix/create`, {
@@ -90,8 +90,11 @@ export class NexusPagProvider implements PaymentProvider {
       };
     } | null;
     if (!res.ok || !data?.success || !data.transaction) {
-      const e = new Error(`NexusPag HTTP ${res.status}`) as Error & { retryable?: boolean; ambiguous?: boolean };
-      e.retryable = res.status === 429 || res.status >= 500; e.ambiguous = false; throw e;
+      const e = new Error(`NexusPag HTTP ${res.status}`) as Error & { retryable?: boolean; ambiguous?: boolean; statusCode?: number };
+      e.statusCode = res.status;
+      e.retryable = res.status === 429 || res.status >= 500;
+      e.ambiguous = false;
+      throw e;
     }
     const tx = data.transaction;
     return {
@@ -167,8 +170,6 @@ export async function createNexusPagWithdrawal(params: {
     method: "POST",
     headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    // A timeout is an uncertain provider outcome; the caller leaves the
-    // withdrawal in processing and must reconcile it instead of resubmitting.
     signal: AbortSignal.timeout(25000),
   });
   const data = (await res.json().catch(() => null)) as any;
