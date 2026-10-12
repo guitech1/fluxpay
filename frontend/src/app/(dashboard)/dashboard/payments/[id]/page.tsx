@@ -54,8 +54,9 @@ export default async function PaymentDetailPage({
   const refunds = (refundRows || []) as Refund[];
   const isPix = payment.payment_type === "pix";
   const isSimulated = environment === "test" && payment.provider === "sandbox";
+  const providerKey = payment.provider ?? "";
   const providerLabel =
-    PROVIDER_LABEL[payment.provider] || payment.provider || "—";
+    (providerKey ? PROVIDER_LABEL[providerKey] : undefined) || payment.provider || "—";
 
   return (
     <div className="space-y-6">
