@@ -1,36 +1,19 @@
-# CRÍTICO — Restaurar `backend/src/routes/webhooks.ts`
+# Estado da restauração de `backend/src/routes/webhooks.ts`
 
-Durante a validação contínua, o ficheiro `backend/src/routes/webhooks.ts` foi corrompido por um push incompleto e substituído por um **stub temporário** que responde 503 em `/nexuspag` e `/provider`.
+A implementação completa dos webhooks foi restaurada na branch `feature/ultima-atualizacao-completa` a partir de `main` (blob original `5a722326487f4bc906e665558478bddb763973ee`).
 
-## Como restaurar (obrigatório antes de merge)
+Também foi adicionado o helper `notifyAfterPixConfirmed` após a confirmação de pagamento nos handlers `/nexuspag` e `/provider`.
 
-1. Recuperar o conteúdo de `main` (blob `5a722326487f4bc906e665558478bddb763973ee`):
+## Validação obrigatória antes de merge
 
-```bash
-git show main:backend/src/routes/webhooks.ts > backend/src/routes/webhooks.ts
-```
-
-2. Adicionar o import e as chamadas de push após confirmação PIX:
-
-```ts
-import { notifyAfterPixConfirmed } from "../services/payments-queries-notify.js";
-```
-
-Após cada `await markPixPaymentSucceeded(payment)` (ou `payment!`):
-
-```ts
-notifyAfterPixConfirmed(payment);
-```
-
-O helper `payments-queries-notify.ts` já está na branch e é idempotente.
-
-3. Confirmar:
+Executar e confirmar no commit atual:
 
 ```bash
 npm run typecheck --workspace=backend
 npm test --workspace=backend
+npm run build --workspace=frontend
 ```
 
-4. Commit e push na branch `feature/ultima-atualizacao-completa`.
+A CI ainda precisa ser verificada no commit atual. A restauração do ficheiro não é, por si só, autorização para merge ou deploy.
 
-**Não fazer merge nem deploy de produção com o stub.**
+**Manter o PR em draft. Não fazer merge nem deploy de produção até todos os checks e a revisão de segurança estarem concluídos.**
