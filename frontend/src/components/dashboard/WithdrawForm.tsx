@@ -5,32 +5,58 @@ import { useRouter } from "next/navigation";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { formatCurrency } from "@/lib/utils";
 
-type PixKeyType = "cpf" | "cnpj" | "email" | "phone" | "random" | "qrc";
+type PixKeyType = "cpf" | "cnpj" | "email" | "phone" | "random";
 
 const KEY_TYPES: { value: PixKeyType; label: string }[] = [
   { value: "cpf", label: "CPF" },
   { value: "cnpj", label: "CNPJ" },
   { value: "email", label: "E-mail" },
   { value: "phone", label: "Telefone" },
-  { value: "random", label: "Chave aleatória" },
-  { value: "qrc", label: "PIX copia e cola" },
+  { value: "random", label: "Chave Aleatória" },
 ];
 
-const MIN_WITHDRAWAL_CENTS = 1000;
+/** Mínimo de saque e taxa fixa (frontend). Backend continua a validar. */
+const MIN_WITHDRAWAL_CENTS = 1000; // R$ 10,00
+const FEE_CENTS = 300; // R$ 3,00
 
-/** "1.234,56" / "1234,56" / "1234.56" -> centavos. Mesmo padrão de NewPaymentForm. */
+/** "1.234,56" / "1234,56" / "1234.56" -> centavos. */
 function parseAmountToCents(value: string): number | null {
   const cleaned = value.replace(/[^\d,.-]/g, "").trim();
   if (!cleaned) return null;
-
   const normalized = cleaned.includes(",")
     ? cleaned.replace(/\./g, "").replace(",", ".")
     : cleaned;
-
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-
   return Math.round(parsed * 100);
+}
+
+function centsToBrlInput(cents: number): string {
+  const reais = cents / 100;
+  return reais.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function validatePixKey(type: PixKeyType, key: string): string | null {
+  const v = key.trim();
+  if (!v) return "Informe a chave PIX de destino.";
+  if (type === "cpf") {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length !== 11) return "CPF deve ter 11 dígitos.";
+  } else if (type === "cnpj") {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length !== 14) return "CNPJ deve ter 14 dígitos.";
+  } else if (type === "email") {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "E-mail inválido.";
+  } else if (type === "phone") {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 13) return "Telefone inválido.";
+  } else if (type === "random") {
+    if (v.length < 8) return "Chave aleatória inválida.";
+  }
+  return null;
 }
 
 interface Props {
@@ -39,6 +65,9 @@ interface Props {
   canWithdraw: boolean;
   environment: string;
   onSuccess?: () => void;
+  /** Se true, renderiza como modal com cabeçalho e botão fechar */
+  modal?: boolean;
+  onClose?: () => void;
 }
 
 export function WithdrawForm({
@@ -47,6 +76,8 @@ export function WithdrawForm({
   canWithdraw,
   environment,
   onSuccess,
+  modal = false,
+  onClose,
 }: Props) {
   const router = useRouter();
   const availableCents = Number(availableCentsProp) || 0;
@@ -57,6 +88,10 @@ export function WithdrawForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  /** MAX = saldo − taxa (não pode sacar a taxa). */
+  const maxWithdrawableCents = Math.max(0, availableCents - FEE_CENTS);
+  const canCoverMinAndFee = availableCents >= MIN_WITHDRAWAL_CENTS + FEE_CENTS;
 
   if (environment !== "live") {
     return (
@@ -80,6 +115,17 @@ export function WithdrawForm({
     );
   }
 
+  function applyMax() {
+    if (maxWithdrawableCents < MIN_WITHDRAWAL_CENTS) {
+      setError(
+        `Saldo insuficiente. É necessário pelo menos ${formatCurrency(MIN_WITHDRAWAL_CENTS + FEE_CENTS, currency)} (mínimo + taxa).`
+      );
+      return;
+    }
+    setAmountReais(centsToBrlInput(maxWithdrawableCents));
+    setError(null);
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -90,14 +136,21 @@ export function WithdrawForm({
       setError("Informe um valor de no mínimo R$ 10,00.");
       return;
     }
-    if (cents > availableCents) {
+    if (cents + FEE_CENTS > availableCents) {
       setError(
-        `Valor acima do saldo disponível (${formatCurrency(availableCents, currency)}).`
+        `Valor + taxa (R$ 3,00) supera o saldo disponível (${formatCurrency(availableCents, currency)}). Use MAX para o valor máximo.`
       );
       return;
     }
-    if (!pixKey.trim()) {
-      setError("Informe a chave PIX de destino.");
+    if (cents > maxWithdrawableCents) {
+      setError(
+        `Máximo sacável: ${formatCurrency(maxWithdrawableCents, currency)} (saldo − taxa).`
+      );
+      return;
+    }
+    const keyErr = validatePixKey(pixKeyType, pixKey);
+    if (keyErr) {
+      setError(keyErr);
       return;
     }
 
@@ -112,9 +165,7 @@ export function WithdrawForm({
         },
       });
 
-      setSuccess(
-        "Saque solicitado com sucesso! Aguarde até 24 horas para processamento."
-      );
+      setSuccess("Saque solicitado com sucesso! Processado em até 24h úteis.");
       setAmountReais("");
       setPixKey("");
       onSuccess?.();
@@ -126,56 +177,67 @@ export function WithdrawForm({
     }
   }
 
-  const belowMinimum = availableCents < MIN_WITHDRAWAL_CENTS;
-
-  return (
-    <form onSubmit={handleSubmit} className="card space-y-4" noValidate>
+  const formInner = (
+    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       <div>
-        <h3 className="text-sm font-medium">Solicitar saque</h3>
-        <p className="text-xs text-flux-muted mt-1">
-          Disponível: {formatCurrency(availableCents, currency)}. Mínimo R$ 10,00. O valor é
-          reservado no extrato; a transferência ocorre após aprovação da plataforma.
+        <p className="text-sm text-flux-muted">
+          Saldo disponível:{" "}
+          <span className="text-white font-medium">
+            {formatCurrency(availableCents, currency)}
+          </span>
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label className="block text-sm">
-          <span className="text-flux-muted">Valor (R$)</span>
+      <label className="block text-sm">
+        <span className="text-flux-muted">Valor</span>
+        <div className="mt-1 relative">
           <input
             type="text"
             inputMode="decimal"
             autoComplete="off"
-            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
-            placeholder="10,00"
+            className="w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 pr-16 min-h-[44px] text-white"
+            placeholder="0,00"
             value={amountReais}
             onChange={(e) => setAmountReais(e.target.value)}
             disabled={loading}
           />
-        </label>
-        <label className="block text-sm">
-          <span className="text-flux-muted">Tipo da chave</span>
-          <select
-            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
-            value={pixKeyType}
-            onChange={(e) => setPixKeyType(e.target.value as PixKeyType)}
-            disabled={loading}
+          <button
+            type="button"
+            onClick={applyMax}
+            disabled={loading || !canCoverMinAndFee}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold uppercase tracking-wide text-flux-red hover:text-red-400 disabled:opacity-40 px-2 py-1"
           >
-            {KEY_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+            MAX
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs text-flux-muted">
+          Min R$ 10,00 · Taxa R$ 3,00
+        </p>
+      </label>
+
+      <label className="block text-sm">
+        <span className="text-flux-muted">Tipo da chave PIX</span>
+        <select
+          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 min-h-[44px] text-white"
+          value={pixKeyType}
+          onChange={(e) => setPixKeyType(e.target.value as PixKeyType)}
+          disabled={loading}
+        >
+          {KEY_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label className="block text-sm">
         <span className="text-flux-muted">Chave PIX</span>
         <input
           type="text"
           autoComplete="off"
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2 min-h-[44px]"
-          placeholder="CPF, e-mail, telefone ou chave"
+          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 min-h-[44px] text-white"
+          placeholder="Informe a chave"
           value={pixKey}
           onChange={(e) => setPixKey(e.target.value)}
           disabled={loading}
@@ -193,13 +255,53 @@ export function WithdrawForm({
         </p>
       )}
 
-      {belowMinimum && !error && !success && (
-        <p className="text-xs text-flux-muted">Saldo mínimo para saque: R$ 10,00.</p>
+      {!canCoverMinAndFee && !error && !success && (
+        <p className="text-xs text-amber-200/80">
+          Saldo insuficiente para cobrir o mínimo (R$ 10,00) e a taxa (R$ 3,00).
+        </p>
       )}
 
-      <button type="submit" className="btn-primary" disabled={loading}>
-        {loading ? "Enviando…" : "Solicitar saque"}
+      <button
+        type="submit"
+        className="btn-primary w-full py-3 text-base font-medium disabled:opacity-50"
+        disabled={loading || !canCoverMinAndFee}
+      >
+        {loading ? "Enviando…" : "Confirmar Saque ↗"}
       </button>
+
+      <p className="text-center text-xs text-flux-muted">
+        Processado em até 24h úteis
+      </p>
     </form>
   );
+
+  if (modal) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="withdraw-title"
+      >
+        <div className="w-full sm:max-w-md bg-flux-dark border border-flux-border rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-flux-border">
+            <h2 id="withdraw-title" className="text-lg font-semibold">
+              Solicitar Saque
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-flux-muted hover:text-white hover:bg-flux-gray min-w-[44px] min-h-[44px] flex items-center justify-center"
+              aria-label="Fechar"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-5">{formInner}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return <div className="card space-y-0">{formInner}</div>;
 }

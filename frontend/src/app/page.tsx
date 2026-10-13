@@ -1,15 +1,13 @@
 import Link from "next/link";
 import { ArrowRight, Shield, Zap, Code2, BarChart3, Webhook, Lock } from "lucide-react";
 import { FluxLogo } from "@/components/brand/FluxLogo";
+import { HeroImageSlot } from "@/components/home/HeroImageSlot";
 
 /**
  * Site público. O visitante vê a proposta do produto e dois caminhos: entrar
  * ou criar conta.
  *
- * O que NÃO fica aqui, de propósito: a documentação da API. Endpoints,
- * formato de payload, regras de ambiente e comportamento do sandbox são
- * informação de quem já é cliente — vive em /dashboard/api, atrás de login
- * (a rota /docs é fechada no middleware, não só escondida da navegação).
+ * Documentação da API fica atrás de login (/dashboard/api).
  */
 
 const BENEFITS = [
@@ -66,7 +64,7 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1">
-        {/* Proposta */}
+        {/* Hero */}
         <section className="surface-grid border-b border-flux-border">
           <div className="max-w-6xl mx-auto px-5 sm:px-6 py-16 sm:py-24 text-center">
             <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-flux-border bg-flux-dark text-xs font-medium text-flux-muted">
@@ -83,7 +81,7 @@ export default function HomePage() {
             </p>
             <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
               <Link href="/signup" className="btn-primary px-6 py-3 w-full sm:w-auto">
-                Criar conta
+                Criar conta grátis
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link href="/login" className="btn-secondary px-6 py-3 w-full sm:w-auto">
@@ -97,8 +95,11 @@ export default function HomePage() {
           </div>
         </section>
 
+        {/* Slot da imagem — entre o texto de teste e "Cobranças PIX em segundos" */}
+        <HeroImageSlot />
+
         {/* Benefícios */}
-        <section className="max-w-6xl mx-auto px-5 sm:px-6 py-16 sm:py-20">
+        <section className="max-w-6xl mx-auto px-5 sm:px-6 py-12 sm:py-16">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {BENEFITS.map((f) => (
               <div key={f.title} className="card">
@@ -129,7 +130,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Recursos técnicos — visão geral, sem documentação */}
+        {/* Recursos técnicos */}
         <section className="max-w-6xl mx-auto px-5 sm:px-6 py-16 sm:py-20">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-start">
             <div>
