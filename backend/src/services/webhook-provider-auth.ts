@@ -131,7 +131,6 @@ export function paymentProviderMatchesClaim(
 ): boolean {
   if (!paymentProvider) return true;
   const p = paymentProvider.toLowerCase();
-  if (p === "sandbox") return true;
   if (!(KNOWN_PROVIDER_IDS as readonly string[]).includes(p)) return false;
   return p === verifiedProviderId;
 }
