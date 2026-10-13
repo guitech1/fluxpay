@@ -22,15 +22,15 @@ Idempotência: `push_notification_log.event_key` único (`pix_generated:{payment
 ```
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=mailto:suporte@usefluxpay.com
+VAPID_SUBJECT=https://usefluxpay.com
 ```
 
 Gerar: `npx web-push generate-vapid-keys`
 
 ## Migration
 
-`supabase/migrations/20261013200000_025_push_subscriptions.sql` — aplicar no Supabase antes de produção.
+`supabase/migrations/20261013211148_create_push_subscriptions_and_notification_log.sql` — alinhada ao histórico remoto já aplicado.\n`supabase/migrations/20261013211556_harden_push_subscription_table_grants.sql` — regista o hardening de permissões já aplicado.
 
 ## Dependência
 
-`web-push` no `backend/package.json`. Se ausente em runtime, o envio regista warning e não quebra pagamentos.
+`web-push` no `backend/package.json` e no `package-lock.json`. As variáveis VAPID foram configuradas no Netlify sem guardar os valores neste repositório; a chave privada tem escopo de Functions/Runtime. O envio real ainda requer uma subscrição de navegador válida e teste manual em produção após um deploy aprovado.
