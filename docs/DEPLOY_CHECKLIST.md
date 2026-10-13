@@ -16,6 +16,7 @@
 
 ## Antes do merge / deploy de produção
 
+- [ ] Corrigir configuração de runtime antes do release. Na auditoria do projeto Netlify que publica `usefluxpay.com`, não aparecem estas variáveis necessárias ao backend/Push: `SUPABASE_SERVICE_ROLE_KEY`, `VAPID_PRIVATE_KEY` e segredos de API/webhook dos adquirentes. Confirmar primeiro qual projeto executa o backend; não inventar nem sobrescrever segredos.
 - [ ] Conferir no painel Netlify as variáveis de produção:
   - `API_BASE_URL` e `FRONTEND_URL`
   - `NEXT_PUBLIC_SITE_URL=https://usefluxpay.com`
