@@ -43,7 +43,13 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
       const body: Record<string, unknown> = { amount: centsToReais(params.amount) };
       if (params.description) body.description = params.description;
       if (params.externalId) body.external_id = params.externalId;
-      if (params.webhookUrl) body.webhook_url = params.webhookUrl;
+      if (params.webhookUrl) {
+        const callbackUrl = new URL(params.webhookUrl);
+        if (opts.id === "profanuspay") {
+          callbackUrl.searchParams.set("provider", "profanuspay");
+        }
+        body.webhook_url = callbackUrl.toString();
+      }
       if (params.expirationSeconds) body.expiration = params.expirationSeconds;
       const attemptTimeoutMs = Math.max(
         500,
