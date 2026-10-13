@@ -6,6 +6,7 @@ import { nexuspagProvider } from "./nexuspag.js";
 import { gothampayProvider } from "./gothampay.js";
 import { smokepayProvider } from "./smokepay.js";
 import { kavropayProvider } from "./kavropay.js";
+import { profanuspayProvider } from "./profanuspay.js";
 import type { AcquirerAdapter, AcquirerId, AcquirerConfig, ChargeAttemptResult, CreateChargeContext } from "./types.js";
 import { DEFAULT_PRIORITY, filterActiveAcquirers, parseActivePool, type RoutingRow } from "./routing.js";
 import { CircuitBreaker, readFailoverEnv } from "./failover-policy.js";
@@ -14,6 +15,7 @@ import { makeFailoverEngine } from "./failover-engine.js";
 const adapters: Record<string, AcquirerAdapter | PaymentProvider> = {
   sandbox: sandboxProvider as unknown as AcquirerAdapter,
   nexuspag: nexuspagProvider as unknown as AcquirerAdapter,
+  profanuspay: profanuspayProvider,
   gothampay: gothampayProvider, smokepay: smokepayProvider, kavropay: kavropayProvider,
 };
 
@@ -27,7 +29,13 @@ function asA(p: PaymentProvider | AcquirerAdapter): AcquirerAdapter | null {
 }
 
 export function isLiveEnabled(): boolean {
-  return Boolean(process.env.NEXUSPAG_API_KEY || process.env.GOTHAMPAY_API_KEY || process.env.SMOKEPAY_API_KEY || process.env.KAVROPAY_API_KEY);
+  return Boolean(
+    process.env.NEXUSPAG_API_KEY ||
+    process.env.PROFANUSPAY_API_KEY ||
+    process.env.GOTHAMPAY_API_KEY ||
+    process.env.SMOKEPAY_API_KEY ||
+    process.env.KAVROPAY_API_KEY
+  );
 }
 
 export function invalidateAcquirerRoutingCache(): void { routingCache = null; }
@@ -68,8 +76,15 @@ export function listProviders() { return Object.keys(adapters); }
 export function getAdapter(id: string) { return adapters[id] ? asA(adapters[id]) : null; }
 
 export function listAcquirerConfigs(): AcquirerConfig[] {
-  const names: Record<AcquirerId, string> = { nexuspag: "NexusPag", gothampay: "GothamPay", smokepay: "SmokePay", kavropay: "KavroPay", sandbox: "Sandbox" };
-  return (["nexuspag", "gothampay", "smokepay", "kavropay", "sandbox"] as AcquirerId[]).map((id) => {
+  const names: Record<AcquirerId, string> = {
+    nexuspag: "NexusPag",
+    profanuspay: "ProfanusPay",
+    gothampay: "GothamPay",
+    smokepay: "SmokePay",
+    kavropay: "KavroPay",
+    sandbox: "Sandbox",
+  };
+  return (["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay", "sandbox"] as AcquirerId[]).map((id) => {
     const a = asA(adapters[id]);
     const configured = a?.isConfigured() ?? id === "sandbox";
     const limits = a?.getLimits() ?? { minAmountCents: 100, maxAmountCents: 0 };
@@ -116,5 +131,5 @@ export async function createChargeWithFailover(ctx: CreateChargeContext, environ
 }
 
 export type { AttemptLogEntry } from "./failover-engine.js";
-export { sandboxProvider, nexuspagProvider, gothampayProvider, smokepayProvider, kavropayProvider };
+export { sandboxProvider, nexuspagProvider, gothampayProvider, smokepayProvider, kavropayProvider, profanuspayProvider };
 export type { AcquirerId, AcquirerConfig, ChargeAttemptResult, CreateChargeContext };

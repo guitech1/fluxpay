@@ -9,6 +9,7 @@ export type RoutingRow = {
 export const DEFAULT_PRIORITY: Record<string, number> = {
   sandbox: 999,
   nexuspag: 10,
+  profanuspay: 15,
   gothampay: 20,
   smokepay: 30,
   kavropay: 40,
@@ -81,5 +82,5 @@ export function parseActivePool(envValue: string | undefined): string[] {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
   }
-  return ["nexuspag", "gothampay", "smokepay", "kavropay"];
+  return ["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay"];
 }
