@@ -1,13 +1,21 @@
 # Notificações Web Push — FluxPay
 
-## Eventos
+## Eventos reais
 
-| Evento | Título | Mensagem |
-|--------|--------|----------|
-| PIX gerado | NOVO PIX GERADO! ⏳📋 | Aguardando o cliente concluir o pagamento. |
-| Venda paga | 💰 Venda Paga | DINHEIRO NA TELA! 🤑🔥 Pagamento aprovado! Bora vender mais! |
+| Evento | Título | Mensagem | Origem |
+|--------|--------|----------|--------|
+| PIX gerado | NOVO PIX GERADO! ⏳📋 | Aguardando o cliente concluir o pagamento. | Após createPayment com QR (backend) |
+| Venda paga | 💰 Venda Paga | DINHEIRO NA TELA! 🤑🔥 (+ valor) Pagamento aprovado! | Após status succeeded confirmado no backend |
 
-O evento de venda paga só é enviado após confirmação confiável no backend (webhook do adquirente / reconciliação), nunca apenas pelo frontend.
+Idempotência: `push_notification_log.event_key` único (`pix_generated:{paymentId}`, `sale_paid:{paymentId}`).
+
+## Rotas (dashboard-api)
+
+- `GET /dashboard-api/push/vapid-public-key`
+- `GET /dashboard-api/push/status`
+- `POST /dashboard-api/push/subscribe`
+- `DELETE /dashboard-api/push/subscribe`
+- `POST /dashboard-api/push/test` — demonstração (rate limit 5/min); não cria cobrança nem altera saldo
 
 ## Variáveis
 
@@ -19,12 +27,10 @@ VAPID_SUBJECT=mailto:suporte@usefluxpay.com
 
 Gerar: `npx web-push generate-vapid-keys`
 
-## Pendências de implementação completa
+## Migration
 
-- Tabela `push_subscriptions` (user_id, endpoint, keys, created_at) + RLS
-- Rotas: POST/DELETE `/dashboard-api/push/subscribe`, POST `/dashboard-api/push/test`
-- Envio no fluxo de createPayment (PIX gerado) e no handler de payment.succeeded
-- Idempotência: não reenviar o mesmo event_id
-- UI de permissão no login/signup e secção Notificações no perfil (testes de demonstração)
+`supabase/migrations/20261013200000_025_push_subscriptions.sql` — aplicar no Supabase antes de produção.
 
-Scaffold de env e documentação preparados nesta entrega; o service worker existente (`public/sw.js`) precisa de handler `push` e `notificationclick`.
+## Dependência
+
+`web-push` no `backend/package.json`. Se ausente em runtime, o envio regista warning e não quebra pagamentos.
