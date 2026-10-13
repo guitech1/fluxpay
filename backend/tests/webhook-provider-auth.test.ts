@@ -123,8 +123,9 @@ describe("paymentProviderMatchesClaim", () => {
     assert.equal(paymentProviderMatchesClaim("custom_x", "nexuspag"), false);
   });
 
-  it("requires match for known acquirers", () => {
+  it("requires match for known acquirers and normalizes case", () => {
     assert.equal(paymentProviderMatchesClaim("profanuspay", "profanuspay"), true);
+    assert.equal(paymentProviderMatchesClaim("PROFANUSPAY", "profanuspay"), true);
     assert.equal(paymentProviderMatchesClaim("profanuspay", "nexuspag"), false);
     assert.equal(paymentProviderMatchesClaim("nexuspag", "profanuspay"), false);
   });
