@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/multi-acquirer-fees
+      - feature/ultima-atualizacao-completa
   pull_request:
     branches:
       - main
