@@ -117,8 +117,8 @@ describe("verifyProviderWebhook", () => {
 });
 
 describe("paymentProviderMatchesClaim", () => {
-  it("allows missing provider only when no acquirer is recorded; rejects sandbox and unknown providers", () => {
-    assert.equal(paymentProviderMatchesClaim(null, "nexuspag"), true);
+  it("fails closed when provider is missing, sandbox, or unknown", () => {
+    assert.equal(paymentProviderMatchesClaim(null, "nexuspag"), false);
     assert.equal(paymentProviderMatchesClaim("sandbox", "nexuspag"), false);
     assert.equal(paymentProviderMatchesClaim("custom_x", "nexuspag"), false);
   });
