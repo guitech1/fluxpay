@@ -5,6 +5,7 @@ import { dashboardFetch } from "@/lib/dashboard-api";
 import { ScoreBadge } from "@/components/score/ScoreBadge";
 import { Alert, SubmitButton } from "@/components/dashboard/ui-client";
 import { formatCurrency } from "@/lib/utils";
+import { NotificationSettings } from "@/components/pwa/NotificationSettings";
 
 export function ProfileSettingsClient({ canWrite }: { canWrite: boolean }) {
   const [loading, setLoading] = useState(true);
@@ -161,6 +162,7 @@ export function ProfileSettingsClient({ canWrite }: { canWrite: boolean }) {
       </form>
 
       <div className="lg:col-span-2 space-y-4">
+        <NotificationSettings />
         <div className="card space-y-2">
           <div className="text-[10px] uppercase tracking-wider text-flux-muted">
             Total vendido (live)
