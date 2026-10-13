@@ -136,7 +136,7 @@ router.post("/nexuspag", async (req, res, next) => {
         organization_id: orgId,
         payment_id: null,
         environment: null,
-        payload: payload as unknown as Record<string, unknown>,
+        payload: { ...payload, txid, external_id: externalId } as unknown as Record<string, unknown>,
         signature_valid: true,
         processed_at: new Date().toISOString(),
       });
@@ -405,8 +405,16 @@ router.post("/provider", async (req, res, next) => {
     };
 
     if (!payment) {
-      await finishEvent("payment_not_found");
-      res.status(200).json({ received: true, matched: false });
+      // Keep processed_at NULL: the payment may be persisted shortly after the
+      // provider callback. Reconciliation can retry this authenticated event.
+      if (providerEventRowId) {
+        const { error } = await supabaseAdmin
+          .from("provider_events")
+          .update({ processing_error: "payment_not_found" })
+          .eq("id", providerEventRowId);
+        if (error) console.error("[provider webhook] failed to defer unmatched event:", error);
+      }
+      res.status(200).json({ received: true, matched: false, pending_reconciliation: true });
       return;
     }
 
