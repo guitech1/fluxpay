@@ -1,0 +1,39 @@
+name: repair-lockfile-once
+
+on:
+  push:
+    branches:
+      - feature/ultima-atualizacao-completa
+    paths:
+      - ".github/workflows/repair-lockfile-once.yml"
+      - "package.json"
+      - "backend/package.json"
+      - "frontend/package.json"
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate-lockfile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ultima-atualizacao-completa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate workspace lockfile without changing installed packages
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+      - name: Commit lockfile if it changed
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json is already synchronized"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "fix: synchronize npm workspace lockfile"
+          git push origin HEAD:feature/ultima-atualizacao-completa
