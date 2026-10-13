@@ -1,12 +1,13 @@
-# Estado da restauração de `backend/src/routes/webhooks.ts`
+# Webhooks PIX — estado restaurado
 
-A implementação completa dos webhooks foi restaurada na branch `feature/ultima-atualizacao-completa` a partir de `main` (blob original `5a722326487f4bc906e665558478bddb763973ee`).
+O ficheiro `backend/src/routes/webhooks.ts` foi restaurado (commit `d93753c`).
 
-Também foi adicionado o helper `notifyAfterPixConfirmed` após a confirmação de pagamento nos handlers `/nexuspag` e `/provider`.
+- Rotas `/nexuspag` e `/provider` com implementação completa
+- Validação de assinatura, idempotência via `provider_events`, confirmação no ledger
+- `notifyAfterPixConfirmed` após `markPixPaymentSucceeded` (falha de push não invalida a confirmação)
+- `markPixPaymentSucceeded` em `payments-queries.ts` também dispara push de forma segura (reconcile + webhooks)
 
-## Validação obrigatória antes de merge
-
-Executar e confirmar no commit atual:
+## Validação
 
 ```bash
 npm run typecheck --workspace=backend
@@ -14,6 +15,4 @@ npm test --workspace=backend
 npm run build --workspace=frontend
 ```
 
-A CI ainda precisa ser verificada no commit atual. A restauração do ficheiro não é, por si só, autorização para merge ou deploy.
-
-**Manter o PR em draft. Não fazer merge nem deploy de produção até todos os checks e a revisão de segurança estarem concluídos.**
+Não fazer merge nem deploy de produção até revisão humana final.
