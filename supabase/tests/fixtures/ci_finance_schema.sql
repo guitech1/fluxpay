@@ -8,23 +8,23 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   CREATE ROLE authenticated NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $ BEGIN
+DO $role$ BEGIN
   CREATE ROLE service_role NOLOGIN BYPASSRLS;
-EXCEPTION WHEN duplicate_object THEN NULL; END $;
+EXCEPTION WHEN duplicate_object THEN NULL; END $role$;
 
 -- Minimal Supabase Auth surface for the push migrations in disposable CI Postgres.
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
 LANGUAGE sql STABLE
-AS $ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $;
+AS $body$ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $body$;
 
 CREATE OR REPLACE FUNCTION public.support_set_updated_at() RETURNS trigger
 LANGUAGE plpgsql
-AS $ BEGIN NEW.updated_at = now(); RETURN NEW; END $;
+AS $body$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $body$;
 CREATE OR REPLACE FUNCTION public.fluxpay_card_set_updated_at() RETURNS trigger
 LANGUAGE plpgsql
-AS $ BEGIN NEW.updated_at = now(); RETURN NEW; END $;
+AS $body$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $body$;
 
 CREATE TYPE public.environment_type AS ENUM ('test', 'live');
 CREATE TYPE public.payment_status AS ENUM (
