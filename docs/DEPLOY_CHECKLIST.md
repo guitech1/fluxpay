@@ -1,22 +1,29 @@
-# Checklist — último deploy (usefluxpay.com)
+# Checklist — último deploy (https://usefluxpay.com)
 
-## Antes do deploy
+## Antes do merge / deploy
 
-- [ ] Branch `feature/ultima-atualizacao-completa` revista e mergeada
-- [ ] Variáveis novas no Netlify / backend:
+- [ ] Branch `feature/ultima-atualizacao-completa` revista
+- [ ] Migration `025_push_subscriptions` aplicada no Supabase
+- [ ] Variáveis no Netlify / backend:
+  - `API_BASE_URL` e `FRONTEND_URL` (produção, não localhost)
+  - `NEXT_PUBLIC_SITE_URL=https://usefluxpay.com`
   - `PROFANUSPAY_API_KEY` / `PROFANUSPAY_WEBHOOK_SECRET` (se usar)
-  - `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` (quando push estiver completo)
-  - `API_BASE_URL` e `FRONTEND_URL` apontando para produção (não localhost)
-  - Confirmar `NEXT_PUBLIC_SITE_URL=https://usefluxpay.com` no frontend
-- [ ] Imagem da homepage: definir `NEXT_PUBLIC_HOME_HERO_IMAGE` ou ficheiro em `/public/images/home-hero.webp`
-- [ ] Migration de `push_subscriptions` (se aplicável) aplicada no Supabase
-- [ ] `npm run test` (backend) e `npm run build` (frontend) locais ou CI
-- [ ] Não executar cobranças/saques reais nos testes
+  - `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`
+  - `NEXUSPAG_*` existentes
+- [ ] `npm install` no monorepo (inclui `web-push`)
+- [ ] `npm run test --workspace=backend`
+- [ ] `npm run build --workspace=backend` e `npm run build --workspace=frontend`
+- [ ] Imagem homepage: `NEXT_PUBLIC_HOME_HERO_IMAGE` ou ficheiro em `/public`
 
 ## Após o deploy
 
-- [ ] Health `/health`
-- [ ] Login + criar cobrança sandbox
-- [ ] Webhook de teste (se configurado)
-- [ ] Bottom nav mobile e modal de saque (só live)
-- [ ] Confirmar que nomes de adquirentes não aparecem na homepage/dashboard comum
+- [ ] `GET /health`
+- [ ] Login + cobrança sandbox
+- [ ] Bottom nav mobile
+- [ ] Activar push no perfil e teste de notificação
+- [ ] Confirmar ausência de nomes de adquirentes na homepage
+
+## Não fazer
+
+- Deploy automático sem os testes acima
+- Cobranças ou saques reais durante validação
