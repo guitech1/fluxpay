@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
+import { MobileBottomNav } from "@/components/dashboard/MobileBottomNav";
 import { SupportWidget } from "@/components/support/SupportWidget";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 
@@ -27,8 +28,6 @@ export default async function DashboardLayout({
     await requireDashboardContext();
 
   // Fonte da obrigação: SOMENTE organizations.kyc_required === true.
-  // Status/histórico (pending, rejected, verification antiga) NÃO obrigam KYC
-  // quando o admin desmarcou a exigência.
   if (organization.kyc_required === true && organization.kyc_status !== "verified") {
     redirect("/verificar-identidade");
   }
@@ -54,10 +53,11 @@ export default async function DashboardLayout({
           </div>
         )}
 
-        <main className="flex-1">
+        <main className="flex-1 pb-20 lg:pb-0">
           <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">{children}</div>
         </main>
       </div>
+      <MobileBottomNav />
       <SupportWidget />
     </div>
   );
