@@ -117,10 +117,10 @@ describe("verifyProviderWebhook", () => {
 });
 
 describe("paymentProviderMatchesClaim", () => {
-  it("allows sandbox and unknown providers", () => {
+  it("allows sandbox and missing provider, but rejects unknown providers", () => {
     assert.equal(paymentProviderMatchesClaim("sandbox", "nexuspag"), true);
     assert.equal(paymentProviderMatchesClaim(null, "nexuspag"), true);
-    assert.equal(paymentProviderMatchesClaim("custom_x", "nexuspag"), true);
+    assert.equal(paymentProviderMatchesClaim("custom_x", "nexuspag"), false);
   });
 
   it("requires match for known acquirers", () => {
