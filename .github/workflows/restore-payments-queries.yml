@@ -1,0 +1,29 @@
+name: restore-payments-queries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ultima-atualizacao-completa
+          fetch-depth: 0
+      - name: Restore payments-queries.ts from 43cf2ac
+        run: |
+          git show 43cf2ac3a15c1883457da475ecef9723483ab4ff:backend/src/services/payments-queries.ts > backend/src/services/payments-queries.ts
+          wc -c backend/src/services/payments-queries.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backend/src/services/payments-queries.ts
+          if git diff --staged --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "fix: restore payments-queries.ts from known-good commit 43cf2ac"
+          git push origin HEAD:feature/ultima-atualizacao-completa
