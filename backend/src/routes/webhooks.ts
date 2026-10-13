@@ -12,11 +12,6 @@ import {
 import { decideWebhookAction } from "../services/provider-events.js";
 import { notifyAfterPixConfirmed } from "../services/payments-queries-notify.js";
 import {
-  secretsFromEnv,
-  verifyProviderWebhook,
-  paymentProviderMatchesClaim,
-} from "../services/webhook-provider-auth.js";
-import {
   applyKycApproved,
   applyKycRejected,
   findOrgIdByKycProviderIds,
@@ -129,4 +124,216 @@ router.post("/nexuspag", async (req, res, next) => {
       });
 
       const { error: dedupeError } = await supabaseAdmin.from("provider_events").insert({
-        provider: "nexuspag<°s‹Du<°s‹Dv
+        provider: "nexuspag",
+        provider_event_id: providerEventId,
+        event_type: eventType,
+        organization_id: orgId,
+        payment_id: null,
+        environment: null,
+        payload: payload as unknown as Record<string, unknown>,
+        signature_valid: true,
+        processed_at: new Date().toISOString(),
+      });
+
+      if (dedupeError?.code === "23505") {
+        res.status(200).json({ received: true, duplicate: true });
+        return;
+      }
+
+      if (!orgId) {
+        res.status(200).json({ received: true, warning: "kyc sem organizacao correspondente" });
+        return;
+      }
+
+      if (eventType === "kyc.verified") {
+        await applyKycApproved({
+          organizationId: orgId,
+          providerVerificationId,
+          externalId,
+          payerName: payload.payer_name,
+          verifiedAt: payload.verified_at || payload.paid_at,
+          via: "nexuspag",
+        });
+      } else {
+        await applyKycRejected({
+          organizationId: orgId,
+          providerVerificationId,
+          externalId,
+          reason: payload.rejection_reason || "rejected",
+        });
+      }
+
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    // ---- Payment events (existente) ----
+    const txid = payload.txid;
+    const externalId = payload.external_id || null;
+
+    if (!txid && !externalId) {
+      res.status(200).json({ received: true, warning: "sem txid nem external_id no payload" });
+      return;
+    }
+
+    const providerEventId = `${eventType}:${txid || externalId}`;
+
+    const payment = await getPaymentByProviderReference({ txid, externalId });
+
+    const { data: eventRow, error: dedupeError } = await supabaseAdmin
+      .from("provider_events")
+      .insert({
+        provider: "nexuspag",
+        provider_event_id: providerEventId,
+        event_type: eventType,
+        organization_id: payment?.organization_id ?? null,
+        payment_id: payment?.id ?? null,
+        environment: payment?.environment ?? null,
+        payload: payload as unknown as Record<string, unknown>,
+        signature_valid: true,
+      })
+      .select("id")
+      .single();
+
+    let alreadyProcessed = false;
+
+    if (dedupeError) {
+      if (dedupeError.code !== "23505") {
+        console.error("Falha ao gravar provider_events:", dedupeError);
+        res.status(500).json({ error: { type: "api_error", message: "Falha ao registrar evento." } });
+        return;
+      }
+
+      const { data: previous } = await supabaseAdmin
+        .from("provider_events")
+        .select("id, processed_at")
+        .eq("provider", "nexuspag")
+        .eq("provider_event_id", providerEventId)
+        .maybeSingle();
+
+      alreadyProcessed = Boolean(previous?.processed_at);
+
+      if (alreadyProcessed) {
+        res.status(200).json({ received: true, duplicate: true });
+        return;
+      }
+    }
+
+    const eventId = eventRow?.id ?? null;
+
+    const markProcessed = async (error?: string) => {
+      if (!eventId) {
+        await supabaseAdmin
+          .from("provider_events")
+          .update({
+            processed_at: new Date().toISOString(),
+            processing_error: error ?? null,
+            payment_id: payment?.id ?? null,
+            organization_id: payment?.organization_id ?? null,
+            environment: payment?.environment ?? null,
+          })
+          .eq("provider", "nexuspag")
+          .eq("provider_event_id", providerEventId);
+        return;
+      }
+
+      await supabaseAdmin
+        .from("provider_events")
+        .update({ processed_at: new Date().toISOString(), processing_error: error ?? null })
+        .eq("id", eventId);
+    };
+
+    const decision = decideWebhookAction({
+      eventType,
+      status: payload.status,
+      payment: payment ? { id: payment.id, status: payment.status } : null,
+      alreadyProcessed,
+    });
+
+    switch (decision.action) {
+      case "duplicate":
+        res.status(200).json({ received: true, duplicate: true });
+        return;
+
+      case "confirm":
+        await markPixPaymentSucceeded(payment!);
+        notifyAfterPixConfirmed(payment!);
+        await markProcessed();
+        res.status(200).json({ received: true });
+        return;
+
+      case "retry_later":
+        await supabaseAdmin
+          .from("provider_events")
+          .update({ processing_error: decision.reason })
+          .eq("provider", "nexuspag")
+          .eq("provider_event_id", providerEventId);
+
+        res.status(200).json({ received: true, pending_reconciliation: true });
+        return;
+
+      case "ignore":
+        await markProcessed(decision.reason);
+        res.status(200).json({ received: true, ignored: true });
+        return;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/provider", async (req, res, next) => {
+  try {
+    // ProfanusPay uses the same callback route but must be verified with its own secret.
+    // Its adapter appends ?provider=profanuspay to the callback URL.
+    const requestedProvider =
+      typeof req.query.provider === "string" ? req.query.provider.toLowerCase() : "";
+    const providerSecrets: Record<string, string | undefined> = {
+      nexuspag: process.env.NEXUSPAG_WEBHOOK_SECRET,
+      profanuspay: process.env.PROFANUSPAY_WEBHOOK_SECRET,
+      gothampay: process.env.GOTHAMPAY_WEBHOOK_SECRET,
+      smokepay: process.env.SMOKEPAY_WEBHOOK_SECRET,
+      kavropay: process.env.KAVROPAY_WEBHOOK_SECRET,
+    };
+    const secret = requestedProvider
+      ? providerSecrets[requestedProvider]
+      : process.env.NEXUSPAG_WEBHOOK_SECRET ||
+        process.env.GOTHAMPAY_WEBHOOK_SECRET ||
+        process.env.SMOKEPAY_WEBHOOK_SECRET ||
+        process.env.KAVROPAY_WEBHOOK_SECRET;
+    if (!secret) { res.status(503).json({ error: "webhook_secret_not_configured" }); return; }
+    const signatureHeader =
+      (req.headers["x-webhook-signature"] as string) ||
+      (req.headers["x-kavro-signature"] as string) || "";
+    const rawBody = typeof (req as any).rawBody === "string" ? (req as any).rawBody : JSON.stringify(req.body ?? {});
+    const isKavro = Boolean(req.headers["x-kavro-signature"]);
+    let valid = false;
+    if (isKavro) {
+      const crypto = await import("crypto");
+      const calculated = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+      try {
+        const a = Buffer.from(signatureHeader);
+        const b = Buffer.from(calculated);
+        valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+      } catch { valid = false; }
+    } else {
+      valid = verifyWebhookSignature(rawBody, signatureHeader, secret);
+    }
+    if (!valid) { res.status(401).json({ error: "invalid_signature" }); return; }
+    const payload = req.body as { event?: string; transaction_id?: string; txid?: string; external_id?: string | null; status?: string; id?: string; };
+    const event = payload.event || "";
+    const isPaid = event === "payment.confirmed" || event === "charge.paid" || payload.status === "paid";
+    if (!isPaid) { res.status(200).json({ received: true, ignored: true }); return; }
+    const payment = await getPaymentByProviderReference({
+      txid: payload.txid || payload.transaction_id || null,
+      externalId: payload.external_id || payload.id || null,
+    });
+    if (!payment) { res.status(200).json({ received: true, matched: false }); return; }
+    if (payment.status === "succeeded") { res.status(200).json({ received: true, already_processed: true }); return; }
+    await markPixPaymentSucceeded(payment);
+    notifyAfterPixConfirmed(payment);
+    res.status(200).json({ received: true, matched: true, payment_id: payment.id });
+  } catch (err) { next(err); }
+});
+
+export default router;
