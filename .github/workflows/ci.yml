@@ -104,3 +104,13 @@ jobs:
           grep -q "refunds_org_env_idempotency_key_unique" supabase/migrations/20261011210000_027_refund_idempotency_keys.sql
           grep -q "pg_get_constraintdef" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
           grep -q "balance_transactions_charge_requires_payment" supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
+
+      - name: Apply and verify Web Push migrations in disposable PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261013211148_create_push_subscriptions_and_notification_log.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261013211153_seed_profanuspay_acquirer_disabled.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261013211556_harden_push_subscription_table_grants.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261013221114_harden_trigger_function_search_path.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/029_push_migrations.sql
