@@ -284,11 +284,23 @@ router.post("/nexuspag", async (req, res, next) => {
 
 router.post("/provider", async (req, res, next) => {
   try {
-    const secret =
-      process.env.NEXUSPAG_WEBHOOK_SECRET ||
-      process.env.GOTHAMPAY_WEBHOOK_SECRET ||
-      process.env.SMOKEPAY_WEBHOOK_SECRET ||
-      process.env.KAVROPAY_WEBHOOK_SECRET;
+    // ProfanusPay uses the same callback route but must be verified with its own secret.
+    // Its adapter appends ?provider=profanuspay to the callback URL.
+    const requestedProvider =
+      typeof req.query.provider === "string" ? req.query.provider.toLowerCase() : "";
+    const providerSecrets: Record<string, string | undefined> = {
+      nexuspag: process.env.NEXUSPAG_WEBHOOK_SECRET,
+      profanuspay: process.env.PROFANUSPAY_WEBHOOK_SECRET,
+      gothampay: process.env.GOTHAMPAY_WEBHOOK_SECRET,
+      smokepay: process.env.SMOKEPAY_WEBHOOK_SECRET,
+      kavropay: process.env.KAVROPAY_WEBHOOK_SECRET,
+    };
+    const secret = requestedProvider
+      ? providerSecrets[requestedProvider]
+      : process.env.NEXUSPAG_WEBHOOK_SECRET ||
+        process.env.GOTHAMPAY_WEBHOOK_SECRET ||
+        process.env.SMOKEPAY_WEBHOOK_SECRET ||
+        process.env.KAVROPAY_WEBHOOK_SECRET;
     if (!secret) { res.status(503).json({ error: "webhook_secret_not_configured" }); return; }
     const signatureHeader =
       (req.headers["x-webhook-signature"] as string) ||
