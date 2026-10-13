@@ -2,6 +2,7 @@ import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
 import type { Environment } from "../types/index.js";
+import { WITHDRAWAL_FEE_CENTS, WITHDRAWAL_MIN_CENTS } from "./withdrawal-fee.js";
 
 export type WithdrawalStatus =
   | "pending"
@@ -38,11 +39,6 @@ export interface WithdrawalRequest {
   updated_at: string;
 }
 
-/**
- * Normalize a withdrawal_requests row to the application shape.
- * Live schema uses fee, net, approved_by, approved_at, provider_reference; legacy rows may use provider_withdrawal_id.
- * Historical migration 015 used fee_amount, net_amount, reviewed_by, reviewed_at.
- */
 function mapWithdrawalRow(row: any): WithdrawalRequest {
   return {
     ...row,
@@ -54,7 +50,7 @@ function mapWithdrawalRow(row: any): WithdrawalRequest {
   } as WithdrawalRequest;
 }
 
-const MIN_WITHDRAWAL_CENTS = 1000;
+const MIN_WITHDRAWAL_CENTS = WITHDRAWAL_MIN_CENTS;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -187,8 +183,8 @@ export async function requestWithdrawal(params: {
     );
   }
 
-  const feeAmount = 0;
-  const netAmount = params.amountCents - feeAmount;
+  const feeAmount = WITHDRAWAL_FEE_CENTS;
+  const netAmount = params.amountCents;
   const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
     p_organization_id: params.organizationId,
     p_environment: params.environment,
