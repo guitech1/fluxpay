@@ -31,6 +31,7 @@ import rankingPublicRouter from "./routes/ranking-public.js";
 import rankingAdminRouter from "./routes/ranking-admin.js";
 import profileDashboardRouter from "./routes/profile-dashboard.js";
 import profilePublicRouter from "./routes/profile-public.js";
+import pushDashboardRouter from "./routes/push-dashboard.js";
 
 const app = express();
 
@@ -45,6 +46,8 @@ app.use(
 const allowedOrigins = new Set<string>([
   env.FRONTEND_URL,
   "http://localhost:3000",
+  "https://usefluxpay.com",
+  "https://www.usefluxpay.com",
   "https://fluxpay-sohn.netlify.app",
 ]);
 
@@ -54,6 +57,9 @@ app.use(
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
       if (/^https:\/\/[a-z0-9-]+--fluxpay-sohn\.netlify\.app$/i.test(origin)) {
+        return callback(null, true);
+      }
+      if (/^https:\/\/[a-z0-9-]+\.usefluxpay\.com$/i.test(origin)) {
         return callback(null, true);
       }
       callback(null, false);
@@ -67,7 +73,10 @@ const limiter = rateLimit({
   max: env.RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === "/health" || req.path.startsWith("/v1/webhooks/nexuspag"),
+  skip: (req) =>
+    req.path === "/health" ||
+    req.path.startsWith("/v1/webhooks/nexuspag") ||
+    req.path.startsWith("/v1/webhooks/provider"),
   keyGenerator: (req) => {
     const netlifyIp = req.headers["x-nf-client-connection-ip"];
     if (typeof netlifyIp === "string" && netlifyIp) return netlifyIp;
@@ -108,7 +117,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "fluxpay-api",
-    version: "0.4.0",
+    version: "0.5.0",
     stores: {
       financial: "supabase",
       ranking_participants: label,
@@ -144,6 +153,7 @@ app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
 app.use("/dashboard-api", paymentLinksDashboardRouter);
 app.use("/dashboard-api", scoreDashboardRouter);
 app.use("/dashboard-api", profileDashboardRouter);
+app.use("/dashboard-api/push", pushDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);
