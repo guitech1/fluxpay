@@ -129,7 +129,7 @@ export function paymentProviderMatchesClaim(
   paymentProvider: string | null | undefined,
   verifiedProviderId: string
 ): boolean {
-  if (!paymentProvider) return true;
+  if (!paymentProvider) return false;
   const p = paymentProvider.toLowerCase();
   if (!(KNOWN_PROVIDER_IDS as readonly string[]).includes(p)) return false;
   return p === verifiedProviderId;
