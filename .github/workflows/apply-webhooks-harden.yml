@@ -1,44 +1,11 @@
 name: apply-webhooks-harden
-
+# Disabled after partial payload incident; harden logic lives in webhook-provider-auth.ts + tests.
 on:
-  push:
-    branches:
-      - feature/ultima-atualizacao-completa
-    paths:
-      - "backend/src/routes/.webhooks.b64.*"
-      - ".github/workflows/apply-webhooks-harden.yml"
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  apply:
+  noop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/ultima-atualizacao-completa
-          fetch-depth: 0
-      - name: Assemble and write webhooks.ts
-        run: |
-          set -euo pipefail
-          if [ ! -f backend/src/routes/.webhooks.b64.0 ]; then
-            echo "No payload parts; skip"
-            exit 0
-          fi
-          cat backend/src/routes/.webhooks.b64.0 backend/src/routes/.webhooks.b64.1 backend/src/routes/.webhooks.b64.2 | base64 -d > backend/src/routes/webhooks.ts
-          wc -c backend/src/routes/webhooks.ts
-          grep -q verifyProviderWebhook backend/src/routes/webhooks.ts
-          grep -q paymentProviderMatchesClaim backend/src/routes/webhooks.ts
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backend/src/routes/webhooks.ts
-          # remove staging parts after apply
-          git rm -f backend/src/routes/.webhooks.b64.0 backend/src/routes/.webhooks.b64.1 backend/src/routes/.webhooks.b64.2 || true
-          if git diff --staged --quiet; then
-            echo "No changes"
-            exit 0
-          fi
-          git commit -m "fix(webhooks): apply hardened /provider secret binding and replay log"
-          git push origin HEAD:feature/ultima-atualizacao-completa
+      - run: echo "disabled"
