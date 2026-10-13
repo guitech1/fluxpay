@@ -1,30 +1,35 @@
 # Checklist — último deploy (https://usefluxpay.com)
 
-## Validação local (2026-10-13)
+## Validação confirmada (2026-10-13)
 
-- [x] Backend typecheck (`tsc --noEmit`) — OK
-- [x] Backend tests — 111 pass / 0 fail (incl. ProfanusPay, saque MAX, push keys, fee)
-- [x] Frontend `next build` — OK
-- [x] CI no PR #9 (após types web-push): backend, frontend, postgres-regression — success
-- [x] Netlify deploy preview — success
+- [x] CI do PR #9: backend (lint, typecheck, testes e build) — sucesso
+- [x] CI do PR #9: frontend (typecheck, lint e build) — sucesso
+- [x] CI do PR #9: regressão PostgreSQL, migrations e testes concorrentes — sucesso
+- [x] Deploy preview verificado pelo CI — sucesso
+- [x] Supabase: migrations de Web Push e ProfanusPay registradas/aplicadas
+  - `20261013211148_create_push_subscriptions_and_notification_log`
+  - `20261013211153_seed_profanuspay_acquirer_disabled`
+  - `20261013211556_harden_push_subscription_table_grants`
+  - `20261013221114_harden_trigger_function_search_path`
+- [x] Supabase: `profanuspay` permanece desativado (`enabled=false`)
+- [x] Supabase: tabelas de eventos e notificações verificadas com RLS habilitado
 
-## Antes do merge / deploy produção
+## Antes do merge / deploy de produção
 
-- [ ] Migration `20261013200000_025_push_subscriptions` aplicada no Supabase
-- [ ] Migration `20261013210000_026_profanuspay_acquirer` aplicada no Supabase
-- [ ] Variáveis Netlify/backend:
-  - `API_BASE_URL` e `FRONTEND_URL` (produção)
+- [ ] Conferir no painel Netlify as variáveis de produção:
+  - `API_BASE_URL` e `FRONTEND_URL`
   - `NEXT_PUBLIC_SITE_URL=https://usefluxpay.com`
-  - `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`
-  - `PROFANUSPAY_*` (só se for activar)
-  - `NEXUSPAG_*` existentes
-- [ ] `package-lock.json` com `web-push` commitado (após `npm install` local)
-- [ ] Imagem homepage (`NEXT_PUBLIC_HOME_HERO_IMAGE`) se disponível
-- [ ] Smoke: login, cobrança sandbox, push teste
+  - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`
+  - segredos dos adquirentes ativos (ProfanusPay deve continuar desativado até validação própria)
+  - nunca registrar valores secretos neste arquivo ou nos logs
+- [ ] Ativar Supabase Auth > Password Security > leaked password protection
+- [ ] Revisar permissões dos RPCs sinalizados pelo Security Advisor; preservar acesso público apenas onde for intencional (perfil público e estado de manutenção)
+- [ ] Smoke test no navegador: login, cobrança sandbox e notificação push de teste
+- [ ] Revisão humana final e autorização explícita antes de merge/deploy
 
-## Não fazer
+## Segurança de release
 
-- Merge sem revisão humana
-- Deploy de produção automático
-- Aplicar migrations em produção sem backup
-- Cobranças ou saques reais durante validação
+- Não fazer merge sem aprovação humana.
+- Não publicar em produção sem autorização explícita.
+- Não aplicar migrations de produção sem backup.
+- Não realizar cobranças ou saques reais durante validação.
