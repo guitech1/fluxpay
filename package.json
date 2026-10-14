@@ -13,7 +13,8 @@
     "typecheck": "npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend"
   },
   "dependencies": {
-    "serverless-http": "^3.2.0"
+    "serverless-http": "^3.2.0",
+    "web-push": "^3.6.7"
   },
   "engines": {
     "node": ">=20"
