@@ -5,11 +5,18 @@ import { createWebhookEndpoint } from "../services/webhooks.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { env } from "../config/env.js";
 import { verifyWebhookSignature } from "../utils/crypto.js";
+import { createHash } from "crypto";
+import {
+  paymentProviderMatchesClaim,
+  secretsFromEnv,
+  verifyProviderWebhook,
+} from "../services/webhook-provider-auth.js";
 import {
   getPaymentByProviderReference,
   markPixPaymentSucceeded,
 } from "../services/payments.js";
 import { decideWebhookAction } from "../services/provider-events.js";
+import { notifyAfterPixConfirmed } from "../services/payments-queries-notify.js";
 import {
   applyKycApproved,
   applyKycRejected,
@@ -256,6 +263,7 @@ router.post("/nexuspag", async (req, res, next) => {
 
       case "confirm":
         await markPixPaymentSucceeded(payment!);
+        notifyAfterPixConfirmed(payment!);
         await markProcessed();
         res.status(200).json({ received: true });
         return;
@@ -281,44 +289,175 @@ router.post("/nexuspag", async (req, res, next) => {
 });
 
 router.post("/provider", async (req, res, next) => {
+  let providerEventRowId: string | null = null;
+  let verifiedProviderId: string | null = null;
+  let providerEventId: string | null = null;
+
   try {
-    const secret =
-      process.env.NEXUSPAG_WEBHOOK_SECRET ||
-      process.env.GOTHAMPAY_WEBHOOK_SECRET ||
-      process.env.SMOKEPAY_WEBHOOK_SECRET ||
-      process.env.KAVROPAY_WEBHOOK_SECRET;
-    if (!secret) { res.status(503).json({ error: "webhook_secret_not_configured" }); return; }
+    // The query claim narrows verification to one secret; it never selects a
+    // secret without HMAC verification. Without a claim, the helper identifies
+    // the secret that actually verifies the raw body.
+    const claimedProvider =
+      typeof req.query.provider === "string" ? req.query.provider.toLowerCase() : null;
     const signatureHeader =
-      (req.headers["x-webhook-signature"] as string) ||
-      (req.headers["x-kavro-signature"] as string) || "";
-    const rawBody = typeof (req as any).rawBody === "string" ? (req as any).rawBody : JSON.stringify(req.body ?? {});
-    const isKavro = Boolean(req.headers["x-kavro-signature"]);
-    let valid = false;
-    if (isKavro) {
-      const crypto = await import("crypto");
-      const calculated = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
-      try {
-        const a = Buffer.from(signatureHeader);
-        const b = Buffer.from(calculated);
-        valid = a.length === b.length && crypto.timingSafeEqual(a, b);
-      } catch { valid = false; }
-    } else {
-      valid = verifyWebhookSignature(rawBody, signatureHeader, secret);
+      (req.headers["x-webhook-signature"] as string | undefined) ||
+      (req.headers["x-kavro-signature"] as string | undefined) ||
+      "";
+    const isKavroHeader = Boolean(req.headers["x-kavro-signature"]);
+    const rawBody = typeof (req as any).rawBody === "string" ? (req as any).rawBody : "";
+
+    // Never authenticate a re-serialized body: signatures must cover the exact
+    // bytes received from the acquirer.
+    if (!rawBody) {
+      res.status(500).json({ error: "raw_body_unavailable" });
+      return;
     }
-    if (!valid) { res.status(401).json({ error: "invalid_signature" }); return; }
-    const payload = req.body as { event?: string; transaction_id?: string; txid?: string; external_id?: string | null; status?: string; id?: string; };
-    const event = payload.event || "";
-    const isPaid = event === "payment.confirmed" || event === "charge.paid" || payload.status === "paid";
-    if (!isPaid) { res.status(200).json({ received: true, ignored: true }); return; }
-    const payment = await getPaymentByProviderReference({
-      txid: payload.txid || payload.transaction_id || null,
-      externalId: payload.external_id || payload.id || null,
+
+    const verification = verifyProviderWebhook({
+      claimedProvider,
+      signatureHeader,
+      rawBody,
+      isKavroHeader,
+      secrets: secretsFromEnv(),
     });
-    if (!payment) { res.status(200).json({ received: true, matched: false }); return; }
-    if (payment.status === "succeeded") { res.status(200).json({ received: true, already_processed: true }); return; }
+    if (!verification.ok) {
+      const status = verification.reason === "secret_not_configured" ? 503 : 401;
+      res.status(status).json({ error: verification.reason });
+      return;
+    }
+    verifiedProviderId = verification.providerId;
+
+    const payload = req.body as {
+      event?: string;
+      transaction_id?: string;
+      txid?: string;
+      external_id?: string | null;
+      status?: string;
+      id?: string;
+    };
+    const eventType =
+      payload.event ||
+      (req.headers["x-webhook-event"] as string | undefined) ||
+      "unknown";
+    const txid = payload.txid || payload.transaction_id || null;
+    const externalId = payload.external_id || payload.id || null;
+    providerEventId = `${eventType}:${txid || externalId || createHash("sha256").update(rawBody).digest("hex")}`;
+
+    // Persist authenticated events before changing payment state. An existing
+    // unprocessed row can be retried; a processed row is an idempotent replay.
+    const { data: insertedEvent, error: insertError } = await supabaseAdmin
+      .from("provider_events")
+      .insert({
+        provider: verifiedProviderId,
+        provider_event_id: providerEventId,
+        event_type: eventType,
+        organization_id: null,
+        payment_id: null,
+        environment: null,
+        payload: { ...payload, txid, external_id: externalId } as unknown as Record<string, unknown>,
+        signature_valid: true,
+      })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      if (insertError.code !== "23505") {
+        console.error("[provider webhook] failed to record event:", insertError);
+        res.status(500).json({ error: "provider_event_record_failed" });
+        return;
+      }
+      const { data: existingEvent, error: lookupError } = await supabaseAdmin
+        .from("provider_events")
+        .select("id, processed_at")
+        .eq("provider", verifiedProviderId)
+        .eq("provider_event_id", providerEventId)
+        .maybeSingle();
+      if (lookupError || !existingEvent) {
+        res.status(500).json({ error: "provider_event_lookup_failed" });
+        return;
+      }
+      if (existingEvent.processed_at) {
+        res.status(200).json({ received: true, duplicate: true });
+        return;
+      }
+      providerEventRowId = existingEvent.id;
+    } else {
+      providerEventRowId = insertedEvent.id;
+    }
+
+    const payment = await getPaymentByProviderReference({ txid, externalId });
+    const finishEvent = async (processingError?: string) => {
+      if (!providerEventRowId) return;
+      const update: Record<string, unknown> = {
+        processed_at: new Date().toISOString(),
+        processing_error: processingError ?? null,
+      };
+      if (payment) {
+        update.payment_id = payment.id;
+        update.organization_id = payment.organization_id;
+        update.environment = payment.environment;
+      }
+      const { error } = await supabaseAdmin
+        .from("provider_events")
+        .update(update)
+        .eq("id", providerEventRowId);
+      if (error) console.error("[provider webhook] failed to finalize event:", error);
+    };
+
+    if (!payment) {
+      // Keep processed_at NULL: the payment may be persisted shortly after the
+      // provider callback. Reconciliation can retry this authenticated event.
+      if (providerEventRowId) {
+        const { error } = await supabaseAdmin
+          .from("provider_events")
+          .update({ processing_error: "payment_not_found" })
+          .eq("id", providerEventRowId);
+        if (error) console.error("[provider webhook] failed to defer unmatched event:", error);
+      }
+      res.status(200).json({ received: true, matched: false, pending_reconciliation: true });
+      return;
+    }
+
+    // The authenticated secret must agree with the acquirer stored on the
+    // payment. A URL claim or valid signature for a different provider cannot
+    // authorize a payment belonging to another provider.
+    if (!paymentProviderMatchesClaim(payment.provider, verifiedProviderId)) {
+      await finishEvent("payment_provider_mismatch");
+      res.status(401).json({ error: "payment_provider_mismatch" });
+      return;
+    }
+
+    const isPaid =
+      eventType === "payment.confirmed" ||
+      eventType === "charge.paid" ||
+      payload.status === "paid";
+    if (!isPaid) {
+      await finishEvent("ignored_non_paid_event");
+      res.status(200).json({ received: true, ignored: true });
+      return;
+    }
+
+    if (payment.payment_type && payment.payment_type !== "pix") {
+      await finishEvent("ignored_non_pix_payment");
+      res.status(200).json({ received: true, ignored: true });
+      return;
+    }
+
+    if (payment.status === "succeeded") {
+      await finishEvent();
+      res.status(200).json({ received: true, already_processed: true });
+      return;
+    }
+
     await markPixPaymentSucceeded(payment);
+    notifyAfterPixConfirmed(payment);
+    await finishEvent();
     res.status(200).json({ received: true, matched: true, payment_id: payment.id });
-  } catch (err) { next(err); }
+  } catch (err) {
+    // Leave an event unprocessed when a transient exception occurs so a
+    // provider retry can resume safely.
+    next(err);
+  }
 });
 
 export default router;

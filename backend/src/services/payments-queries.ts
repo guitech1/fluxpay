@@ -4,6 +4,7 @@ import { AppError } from "../middleware/error.js";
 import { dispatchWebhook } from "./webhooks.js";
 import { inScopeOrNull } from "../utils/scope.js";
 import { decideReconcileAction, decideWebhookAction } from "./provider-events.js";
+import { paymentProviderMatchesClaim } from "./webhook-provider-auth.js";
 import type {
   Payment,
   Environment,
@@ -444,7 +445,7 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
 }> {
   const { data: events, error } = await supabaseAdmin
     .from("provider_events")
-    .select("id, event_type, payload, signature_valid, processed_at")
+    .select("id, provider, event_type, payload, signature_valid, processed_at")
     .is("processed_at", null)
     .eq("signature_valid", true)
     .order("received_at", { ascending: true })
@@ -459,8 +460,9 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
 
   for (const event of (events || []) as {
     id: string;
+    provider: string;
     event_type: string | null;
-    payload: { event?: string; status?: string; txid?: string; external_id?: string } | null;
+    payload: { event?: string; status?: string; txid?: string; transaction_id?: string; external_id?: string; id?: string } | null;
   }[]) {
     result.checked += 1;
 
@@ -468,34 +470,59 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
     const eventType = payload.event || event.event_type || "unknown";
 
     const payment = await getPaymentByProviderReference({
-      txid: payload.txid,
-      externalId: payload.external_id,
+      txid: payload.txid || payload.transaction_id,
+      externalId: payload.external_id || payload.id,
     });
 
-    const decision = decideWebhookAction({
-      eventType,
-      status: payload.status,
-      payment: payment ? { id: payment.id, status: payment.status } : null,
-      alreadyProcessed: false,
-    });
+    // Never apply an event authenticated with one acquirer's secret to another provider's payment.
+    if (!payment) continue;
 
-    if (decision.action === "retry_later") continue;
+    if (!paymentProviderMatchesClaim(payment.provider, event.provider)) {
+      await supabaseAdmin.from("provider_events").update({
+        processed_at: new Date().toISOString(),
+        processing_error: "payment_provider_mismatch",
+        payment_id: payment.id,
+        organization_id: payment.organization_id,
+        environment: payment.environment,
+      }).eq("id", event.id);
+      continue;
+    }
 
-    if (decision.action === "confirm" && payment) {
+    const isPaid = eventType === "payment.confirmed" || eventType === "charge.paid" || payload.status === "paid";
+    if (!isPaid) {
+      await supabaseAdmin.from("provider_events").update({
+        processed_at: new Date().toISOString(),
+        processing_error: "reconciled: ignored_non_paid_event",
+        payment_id: payment.id,
+        organization_id: payment.organization_id,
+        environment: payment.environment,
+      }).eq("id", event.id);
+      continue;
+    }
+
+    if (payment.payment_type && payment.payment_type !== "pix") {
+      await supabaseAdmin.from("provider_events").update({
+        processed_at: new Date().toISOString(),
+        processing_error: "reconciled: ignored_non_pix_payment",
+        payment_id: payment.id,
+        organization_id: payment.organization_id,
+        environment: payment.environment,
+      }).eq("id", event.id);
+      continue;
+    }
+
+    if (payment.status !== "succeeded") {
       await markPixPaymentSucceeded(payment);
       result.confirmed += 1;
     }
 
-    await supabaseAdmin
-      .from("provider_events")
-      .update({
-        processed_at: new Date().toISOString(),
-        processing_error: decision.action === "confirm" ? null : `reconciliado: ${decision.action}`,
-        payment_id: payment?.id ?? null,
-        organization_id: payment?.organization_id ?? null,
-        environment: payment?.environment ?? null,
-      })
-      .eq("id", event.id);
+    await supabaseAdmin.from("provider_events").update({
+      processed_at: new Date().toISOString(),
+      processing_error: null,
+      payment_id: payment.id,
+      organization_id: payment.organization_id,
+      environment: payment.environment,
+    }).eq("id", event.id);
   }
 
   return result;

@@ -10,7 +10,7 @@ export default async function SettingsPage() {
 
   // Resolvida server-side: em producao NEXT_PUBLIC_API_URL fica vazia, e ler a
   // variavel direto aqui produzia o caminho relativo "/v1/webhooks/nexuspag",
-  // que nao serve para cadastrar no painel da NexusPag.
+  // que nao serve para cadastrar no painel do adquirente.
   const webhookInUrl = `${await getPublicBaseUrl()}/v1/webhooks/nexuspag`;
 
   return (
@@ -42,12 +42,12 @@ export default async function SettingsPage() {
             <dd>{organization.timezone || "America/Sao_Paulo"}</dd>
           </div>
           <div className="sm:col-span-2">
-            <dt className="text-flux-muted mb-1">URL do webhook de entrada (NexusPag)</dt>
+            <dt className="text-flux-muted mb-1">URL do webhook de entrada (adquirente)</dt>
             <dd className="font-mono text-xs break-all">{webhookInUrl}</dd>
           </div>
         </dl>
         <p className="text-xs text-flux-muted">
-          Cadastre essa URL no painel da NexusPag e configure lá o{" "}
+          Cadastre essa URL no painel do adquirente e configure o{" "}
           <code>webhook_secret</code>. Sem o segredo, o FluxPay recusa os eventos recebidos — é
           proposital: sem assinatura não há como provar que a notificação veio mesmo do adquirente.
         </p>

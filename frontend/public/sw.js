@@ -1,18 +1,11 @@
 /*
  * Service worker do FluxPay.
- *
- * Regras, nessa ordem:
- *  - NUNCA intercepta /v1/*, /dashboard-api/*, /admin-api/*, /health nem nada
- *    que nao seja GET: dinheiro e sessao nao podem sair de cache.
- *  - Navegacao (HTML): rede primeiro, com /offline.html como ultimo recurso.
- *    Nada de cachear paginas do painel — elas dependem da sessao e do ambiente.
- *  - Estaticos do proprio site (/_next/static, /icons, manifest): cache
- *    primeiro, porque tem hash no nome ou mudam junto com o deploy.
+ * - NUNCA intercepta /v1/*, /dashboard-api/*, /admin-api/*, /health
+ * - Web Push: eventos push + notificationclick
  */
-const VERSION = "fluxpay-v1";
+const VERSION = "fluxpay-v2";
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
-
 const NEVER_CACHE = ["/v1/", "/dashboard-api/", "/admin-api/", "/health", "/auth/"];
 
 self.addEventListener("install", (event) => {
@@ -35,7 +28,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((prefix) => url.pathname.startsWith(prefix))) return;
@@ -70,5 +62,51 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
     )
+  );
+});
+
+self.addEventListener("push", (event) => {
+  let data = { title: "FluxPay", body: "Nova atualizacao", data: {} };
+  try {
+    if (event.data) {
+      const parsed = event.data.json();
+      data = {
+        title: parsed.title || data.title,
+        body: parsed.body || data.body,
+        data: parsed.data || {},
+        icon: parsed.icon || "/icons/icon-192.png",
+        badge: parsed.badge || "/icons/icon-192.png",
+      };
+    }
+  } catch (_) {
+    try {
+      data.body = event.data ? event.data.text() : data.body;
+    } catch (_) {}
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon || "/icons/icon-192.png",
+      badge: data.badge || "/icons/icon-192.png",
+      data: data.data || {},
+      vibrate: [100, 50, 100],
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/dashboard/payments";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes("/dashboard") && "focus" in client) {
+          client.navigate(target);
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
   );
 });

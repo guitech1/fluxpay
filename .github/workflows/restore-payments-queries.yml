@@ -1,0 +1,14 @@
+name: restore-payments-queries
+
+# One-shot recovery completed (commit fa24fe5c). Disabled to avoid loops.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Recovery already applied; workflow kept for audit only."

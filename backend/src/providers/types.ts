@@ -1,5 +1,5 @@
 import type { PaymentProvider, PaymentStatus, Environment } from "../types/index.js";
-export type AcquirerId = "sandbox" | "nexuspag" | "gothampay" | "smokepay" | "kavropay";
+export type AcquirerId = "sandbox" | "nexuspag" | "gothampay" | "smokepay" | "kavropay" | "profanuspay";
 export type AcquirerHealthStatus = "healthy" | "degraded" | "down" | "unknown" | "unconfigured";
 export interface AcquirerConfig {
   id: AcquirerId; displayName: string; enabled: boolean; priority: number;

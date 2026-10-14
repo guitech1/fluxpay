@@ -8,9 +8,23 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   CREATE ROLE authenticated NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
+DO $role$ BEGIN
   CREATE ROLE service_role NOLOGIN BYPASSRLS;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object THEN NULL; END $role$;
+
+-- Minimal Supabase Auth surface for the push migrations in disposable CI Postgres.
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
+LANGUAGE sql STABLE
+AS $body$ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $body$;
+
+CREATE OR REPLACE FUNCTION public.support_set_updated_at() RETURNS trigger
+LANGUAGE plpgsql
+AS $body$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $body$;
+CREATE OR REPLACE FUNCTION public.fluxpay_card_set_updated_at() RETURNS trigger
+LANGUAGE plpgsql
+AS $body$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $body$;
 
 CREATE TYPE public.environment_type AS ENUM ('test', 'live');
 CREATE TYPE public.payment_status AS ENUM (
@@ -100,7 +114,13 @@ CREATE TABLE public.withdrawal_requests (
 
 CREATE TABLE public.platform_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.organization_fee_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
-CREATE TABLE public.acquirer_cost_config (acquirer_id text PRIMARY KEY);
+CREATE TABLE public.acquirer_cost_config (
+  acquirer_id text PRIMARY KEY,
+  cost_percent numeric NOT NULL DEFAULT 0,
+  cost_fixed_cents integer NOT NULL DEFAULT 0,
+  enabled boolean NOT NULL DEFAULT false,
+  priority integer NOT NULL DEFAULT 100
+);
 CREATE TABLE public.fee_rule_audit (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE public.withdrawal_decision_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

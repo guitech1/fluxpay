@@ -1,0 +1,11 @@
+name: apply-webhooks-harden
+# Disabled after partial payload incident; harden logic lives in webhook-provider-auth.ts + tests.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "disabled"

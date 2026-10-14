@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 import { sessionAuth, requireRole } from "../middleware/session-auth.js";
 import {
   requestWithdrawal,
@@ -19,7 +20,7 @@ router.post("/", requireRole("owner", "admin"), async (req, res, next) => {
       amount: z.number().int().min(1000, "Valor minimo de saque: R$ 10,00."),
       pix_key: z.string().min(1).max(500),
       pix_key_type: z.enum(["cpf", "cnpj", "email", "phone", "random", "qrc"]),
-      correlation_id: z.string().min(1).max(120),
+      correlation_id: z.string().uuid().optional(),
     });
     const body = schema.parse(req.body);
     const withdrawal = await requestWithdrawal({
@@ -29,7 +30,7 @@ router.post("/", requireRole("owner", "admin"), async (req, res, next) => {
       amountCents: body.amount,
       pixKey: body.pix_key,
       pixKeyType: body.pix_key_type as PixKeyType,
-      correlationId: body.correlation_id,
+      correlationId: body.correlation_id || randomUUID(),
     });
     res.status(201).json({ data: publicWithdrawalView(withdrawal) });
   } catch (err) {
