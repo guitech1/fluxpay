@@ -162,7 +162,9 @@ export function ProfileSettingsClient({ canWrite }: { canWrite: boolean }) {
       </form>
 
       <div className="lg:col-span-2 space-y-4">
-        <NotificationSettings />
+        <div id="notificacoes">
+          <NotificationSettings />
+        </div>
         <div className="card space-y-2">
           <div className="text-[10px] uppercase tracking-wider text-flux-muted">
             Total vendido (live)
