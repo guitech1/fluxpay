@@ -1,11 +1,11 @@
 /**
  * Banner da homepage — arte oficial FluxPay (cards, faturamento, saldo).
- * Imagem em /public/images/home-banner-fluxpay.png (referência visual do produto).
- * Responsivo: object-cover em mobile, object-contain em ecrãs largos para não cortar texto.
+ * Imagem em /public/images/home-banner-fluxpay.jpg (referência visual do produto).
+ * Responsivo em mobile e desktop.
  */
 
 const DEFAULT_SRC =
-  process.env.NEXT_PUBLIC_HOME_HERO_IMAGE || "/images/home-banner-fluxpay.png";
+  process.env.NEXT_PUBLIC_HOME_HERO_IMAGE || "/images/home-banner-fluxpay.jpg";
 
 export function HeroImageSlot({
   src = DEFAULT_SRC,
@@ -47,8 +47,8 @@ export function HeroImageSlot({
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            width={1920}
-            height={900}
+            width={1600}
+            height={742}
           />
         </div>
       </div>
