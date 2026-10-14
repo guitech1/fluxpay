@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useTransition } from "react";
 import {
   CreditCard,
   Wallet,
@@ -33,57 +33,66 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 /**
- * Barra inferior fixa — apenas mobile (lg:hidden).
- * Respeita safe-area iOS. O layout do dashboard deve reservar padding-bottom.
+ * Barra inferior fixa — mobile only. router.push + useTransition para feedback imediato.
  */
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
 
-  // Não mostrar em rotas admin ou páginas públicas
   if (!pathname?.startsWith("/dashboard")) return null;
+
+  function go(href: string) {
+    startTransition(() => {
+      router.push(href);
+    });
+  }
 
   return (
     <nav
-      className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-flux-border bg-flux-dark/95 backdrop-blur-md"
+      className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-flux-border bg-flux-dark"
       style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       aria-label="Navegação principal"
+      data-pending={pending ? "1" : "0"}
     >
-      <ul className="grid grid-cols-6 h-16 max-w-lg mx-auto">
+      <ul className="grid grid-cols-6 h-14 max-w-lg mx-auto">
         {ITEMS.map((item) => {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
           if (item.center) {
             return (
-              <li key={item.href} className="flex items-center justify-center -mt-3">
-                <Link
-                  href={item.href}
+              <li key={item.href} className="flex items-center justify-center -mt-2">
+                <button
+                  type="button"
+                  onClick={() => go(item.href)}
                   aria-current={active ? "page" : undefined}
                   aria-label={item.label}
                   className={cn(
-                    "flex items-center justify-center w-14 h-14 rounded-full border-2 shadow-lg transition-colors",
+                    "flex items-center justify-center w-12 h-12 rounded-full border-2 shadow-md",
                     active
                       ? "bg-flux-red border-flux-red text-white"
-                      : "bg-flux-gray border-flux-border text-white hover:border-flux-red/60"
+                      : "bg-flux-gray border-flux-border text-white"
                   )}
                 >
-                  <Icon className="w-7 h-7" />
-                </Link>
+                  <Icon className="w-6 h-6" />
+                </button>
               </li>
             );
           }
           return (
             <li key={item.href} className="flex">
-              <Link
-                href={item.href}
+              <button
+                type="button"
+                onClick={() => go(item.href)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] min-h-[44px] transition-colors",
-                  active ? "text-flux-red font-medium" : "text-flux-muted hover:text-white"
+                  "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium",
+                  active ? "text-flux-red" : "text-flux-muted"
                 )}
               >
-                <Icon className="w-5 h-5" />
-                <span className="truncate max-w-[4.5rem]">{item.label}</span>
-              </Link>
+                <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} />
+                <span className="leading-none">{item.label}</span>
+              </button>
             </li>
           );
         })}
