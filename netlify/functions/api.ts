@@ -1,36 +1,57 @@
-import serverless from "serverless-http";
-import app from "../../backend/dist/index.js";
-
 /**
- * Empacota o app Express inteiro como uma unica funcao Netlify, em vez de
- * reescrever cada rota como uma function separada. Isso preserva 100% da
- * logica existente (services, middlewares, schemas zod) — muda so como a
- * requisicao chega ate o app.
- *
- * Duas decisoes que valem explicacao:
- *
- * 1. O import aponta para `backend/dist`, nao para `backend/src`. O bundler de
- *    functions da Netlify (esbuild) resolve o especificador literalmente, e
- *    `../../backend/src/index.js` nao existe em disco (o arquivo real e .ts).
- *    Por isso o build roda `npm run build --workspace=backend` antes.
- *
- * 2. Em vez de confiar no `basePath` do serverless-http, normalizamos o
- *    `event.path` na mao. Dependendo de como o redirect e resolvido, a Netlify
- *    entrega ora o caminho da funcao (/.netlify/functions/api/v1/...), ora o
- *    caminho original (/v1/...). Tratando os dois, a rota funciona nos dois
- *    casos — que e exatamente o risco que o CONTINUACAO.md apontava como
- *    "so se confirma com um deploy de teste".
+ * Empacota o Express. Import dinamico para capturar falha de boot (env, etc.)
+ * e devolver JSON legivel em vez de 502 opaco Runtime.ExitError.
  */
 const FUNCTION_PREFIX = "/.netlify/functions/api";
 
-const wrapped = serverless(app);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let cachedHandler: any = null;
+let bootError: string | null = null;
+
+async function getHandler() {
+  if (bootError) throw new Error(bootError);
+  if (cachedHandler) return cachedHandler;
+  try {
+    const serverless = (await import("serverless-http")).default;
+    const mod = await import("../../backend/dist/index.js");
+    const app = mod.default;
+    cachedHandler = serverless(app);
+    return cachedHandler;
+  } catch (err) {
+    bootError = err instanceof Error ? err.message : String(err);
+    console.error("[api] boot failed:", bootError);
+    throw err;
+  }
+}
 
 export const handler = async (event: Record<string, unknown>, context: unknown) => {
-  const path = event.path;
-
-  if (typeof path === "string" && path.startsWith(FUNCTION_PREFIX)) {
-    event.path = path.slice(FUNCTION_PREFIX.length) || "/";
+  try {
+    const path = event.path;
+    if (typeof path === "string" && path.startsWith(FUNCTION_PREFIX)) {
+      event.path = path.slice(FUNCTION_PREFIX.length) || "/";
+    }
+    const h = await getHandler();
+    return await h(event, context);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const missingEnv = [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "SUPABASE_ANON_KEY",
+      "API_BASE_URL",
+      "FRONTEND_URL",
+    ].filter((k) => !process.env[k]);
+    return {
+      statusCode: 503,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        error: {
+          type: "api_boot_error",
+          message: "API indisponivel no arranque.",
+          detail: message.slice(0, 500),
+          missing_env: missingEnv,
+        },
+      }),
+    };
   }
-
-  return wrapped(event as never, context as never);
 };

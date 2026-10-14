@@ -31,20 +31,6 @@ type BaseEnv = z.infer<typeof baseEnvSchema>;
 
 // ============================================================
 // Em producao, os defaults de desenvolvimento sao um perigo silencioso.
-//
-// API_BASE_URL e o que vai no campo `webhook_url` de toda cobranca PIX criada
-// na NexusPag. Se a variavel faltar na Netlify, o default assume
-// http://localhost:3001 — o adquirente tenta avisar uma maquina que nao
-// existe, nenhum PIX e confirmado, e o lojista so descobre pelo cliente
-// reclamando que pagou. Dinheiro entra e o sistema nao ve.
-//
-// FRONTEND_URL monta a URL do checkout hospedado devolvida em
-// POST /v1/checkout/sessions: com o default, o link enviado ao pagador aponta
-// para o localhost de quem integrou.
-//
-// Falhar na subida segue o mesmo criterio ja adotado no webhook de entrada
-// (503 sem NEXUSPAG_WEBHOOK_SECRET): quando a configuracao errada custa
-// dinheiro, e melhor nao subir do que subir quebrado em silencio.
 // ============================================================
 const envSchema = baseEnvSchema.superRefine((value: BaseEnv, ctx: z.RefinementCtx) => {
   if (value.NODE_ENV !== "production") return;
@@ -55,8 +41,7 @@ const envSchema = baseEnvSchema.superRefine((value: BaseEnv, ctx: z.RefinementCt
         code: z.ZodIssueCode.custom,
         path: [key],
         message:
-          `${key} aponta para localhost em producao. ` +
-          "Defina a URL publica do site (ver .env.example e a secao 4 do DEPLOY.md).",
+          `${key} aponta para localhost em producao. Defina a URL publica (ex.: https://usefluxpay.com).`,
       });
     }
   }
@@ -65,7 +50,13 @@ const envSchema = baseEnvSchema.superRefine((value: BaseEnv, ctx: z.RefinementCt
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error("❌ Invalid environment variables:", parsed.error.flatten().fieldErrors);
+  const fields = parsed.error.flatten().fieldErrors;
+  console.error("❌ Invalid environment variables:", fields);
+  const names = Object.keys(fields).join(", ");
+  // Em Netlify/Lambda process.exit gera 502 opaco. Throw permite resposta 503 com detalhe.
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY) {
+    throw new Error(`Variaveis de ambiente invalidas ou em falta: ${names}`);
+  }
   process.exit(1);
 }
 
