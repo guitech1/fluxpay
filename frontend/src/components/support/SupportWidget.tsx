@@ -76,7 +76,6 @@ export function SupportWidget() {
     scrollBottom();
   }, [messages, open, scrollBottom]);
 
-  // Realtime: novas mensagens na conversa atual
   useEffect(() => {
     if (!conversation?.id || !open) return;
     const supabase = createClient();
@@ -139,12 +138,10 @@ export function SupportWidget() {
         method: "POST",
         body: { action: "select_option", option: opt.title },
       });
-      const res = await dashboardFetch<{ data: unknown }>(`/support/conversations/${conv.id}/actions`, {
+      await dashboardFetch<{ data: unknown }>(`/support/conversations/${conv.id}/actions`, {
         method: "POST",
         body: { action: opt.action },
       });
-      void res;
-      // Recarrega mensagens para garantir ordem
       const full = await dashboardFetch<{ data: { conversation: Conversation; messages: Msg[] } }>(
         `/support/conversations/${conv.id}`
       );
@@ -242,19 +239,17 @@ export function SupportWidget() {
 
   return (
     <>
-      {/* Botao flutuante */}
       {!open && (
         <button
           type="button"
           onClick={handleOpen}
-          className="fixed bottom-5 right-5 z-50 flex items-center justify-center w-14 h-14 rounded-full bg-flux-red text-white shadow-lg shadow-flux-red/30 hover:bg-flux-red-dark transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-flux-red"
+          className="fixed bottom-24 right-4 z-50 flex items-center justify-center w-14 h-14 rounded-full bg-flux-red text-white shadow-lg shadow-flux-red/30 hover:bg-flux-red-dark transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-flux-red lg:bottom-5 lg:right-5"
           aria-label="Abrir suporte FluxPay"
         >
           <MessageCircle className="w-6 h-6" />
         </button>
       )}
 
-      {/* Painel */}
       <div
         ref={panelRef}
         className={cn(
@@ -262,14 +257,11 @@ export function SupportWidget() {
           open && !minimized
             ? "opacity-100 scale-100 pointer-events-auto"
             : "opacity-0 scale-95 pointer-events-none",
-          // Desktop
-          "bottom-5 right-5 w-[min(420px,calc(100vw-1.5rem))] h-[min(640px,calc(100vh-3rem))] rounded-2xl",
-          // Mobile quase tela cheia
-          "max-sm:inset-2 max-sm:w-auto max-sm:h-auto max-sm:rounded-xl"
+          "bottom-24 right-4 w-[min(420px,calc(100vw-1.5rem))] h-[min(560px,calc(100vh-8rem))] rounded-2xl lg:bottom-5 lg:right-5",
+          "max-sm:inset-2 max-sm:w-auto max-sm:h-auto max-sm:rounded-xl max-sm:bottom-auto max-sm:right-auto"
         )}
         aria-hidden={!open || minimized}
       >
-        {/* Header */}
         <header className="flex items-center gap-3 px-4 py-3 border-b border-flux-border bg-flux-black/60 rounded-t-2xl max-sm:rounded-t-xl shrink-0">
           <FluxMark className="w-8 h-8 shrink-0" />
           <div className="min-w-0 flex-1">
@@ -297,7 +289,6 @@ export function SupportWidget() {
           </button>
         </header>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 min-h-0">
           {loading && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-flux-muted text-sm">
@@ -341,7 +332,6 @@ export function SupportWidget() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div className="shrink-0 border-t border-flux-border p-3 bg-flux-black/40 rounded-b-2xl max-sm:rounded-b-xl">
           <form
             className="flex items-end gap-2"
@@ -376,12 +366,11 @@ export function SupportWidget() {
         </div>
       </div>
 
-      {/* Minimizado: bolha pequena */}
       {open && minimized && (
         <button
           type="button"
           onClick={() => setMinimized(false)}
-          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-flux-dark border border-flux-border pl-2 pr-4 py-2 shadow-lg hover:border-flux-red/50 transition-colors"
+          className="fixed bottom-24 right-4 z-50 flex items-center gap-2 rounded-full bg-flux-dark border border-flux-border pl-2 pr-4 py-2 shadow-lg hover:border-flux-red/50 transition-colors lg:bottom-5 lg:right-5"
         >
           <div className="w-10 h-10 rounded-full bg-flux-red flex items-center justify-center">
             <MessageCircle className="w-5 h-5 text-white" />
