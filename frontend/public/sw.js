@@ -3,7 +3,7 @@
  * - NUNCA intercepta /v1/*, /dashboard-api/*, /admin-api/*, /health
  * - Web Push: eventos push + notificationclick
  */
-const VERSION = "fluxpay-v2";
+const VERSION = "fluxpay-v3";
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
 const NEVER_CACHE = ["/v1/", "/dashboard-api/", "/admin-api/", "/health", "/auth/"];
