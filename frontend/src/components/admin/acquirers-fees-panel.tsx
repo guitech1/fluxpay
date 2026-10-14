@@ -48,7 +48,9 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
         `/acquirers/${id}/health`,
         { method: "POST" }
       );
-      setMsg(`${id}: ${res.data.status}${res.data.latencyMs != null ? ` (${res.data.latencyMs}ms)` : ""}${res.data.message ? ` — ${res.data.message}` : ""}`);
+      setMsg(
+        `${id}: ${res.data.status}${res.data.latencyMs != null ? ` (${res.data.latencyMs}ms)` : ""}${res.data.message ? ` — ${res.data.message}` : ""}`
+      );
       await reload();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Falha no health check");
@@ -151,7 +153,8 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
                 <td className="p-3">
                   {canConfigure && row.id !== "sandbox" ? (
                     <input
-                      type="number"\tableofcontents step="0.01"
+                      type="number"
+                      step="0.01"
                       className="input w-24"
                       defaultValue={row.costPercent}
                       disabled={busy === row.id}
@@ -294,7 +297,12 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Modo</span>
-            <select className="input w-full" value={mode} disabled={!canConfigure} onChange={(e) => setMode(e.target.value)}>
+            <select
+              className="input w-full"
+              value={mode}
+              disabled={!canConfigure}
+              onChange={(e) => setMode(e.target.value)}
+            >
               <option value="provider_plus_margin">provider_plus_margin</option>
               <option value="provider_only">provider_only</option>
               <option value="custom_total">custom_total</option>
@@ -302,19 +310,39 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
           </label>
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Margem FluxPay %</span>
-            <input className="input w-full" value={margin} disabled={!canConfigure} onChange={(e) => setMargin(e.target.value)} />
+            <input
+              className="input w-full"
+              value={margin}
+              disabled={!canConfigure}
+              onChange={(e) => setMargin(e.target.value)}
+            />
           </label>
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Fixo FluxPay (centavos)</span>
-            <input className="input w-full" value={fixed} disabled={!canConfigure} onChange={(e) => setFixed(e.target.value)} />
+            <input
+              className="input w-full"
+              value={fixed}
+              disabled={!canConfigure}
+              onChange={(e) => setFixed(e.target.value)}
+            />
           </label>
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Custom total % (modo custom_total)</span>
-            <input className="input w-full" value={customPct} disabled={!canConfigure} onChange={(e) => setCustomPct(e.target.value)} />
+            <input
+              className="input w-full"
+              value={customPct}
+              disabled={!canConfigure}
+              onChange={(e) => setCustomPct(e.target.value)}
+            />
           </label>
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Custom total fixo (centavos)</span>
-            <input className="input w-full" value={customFixed} disabled={!canConfigure} onChange={(e) => setCustomFixed(e.target.value)} />
+            <input
+              className="input w-full"
+              value={customFixed}
+              disabled={!canConfigure}
+              onChange={(e) => setCustomFixed(e.target.value)}
+            />
           </label>
         </div>
         {canConfigure ? (
@@ -338,7 +366,11 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Valor (centavos)</span>
-            <input className="input w-full" value={previewAmount} onChange={(e) => setPreviewAmount(e.target.value)} />
+            <input
+              className="input w-full"
+              value={previewAmount}
+              onChange={(e) => setPreviewAmount(e.target.value)}
+            />
           </label>
           <label className="text-sm space-y-1">
             <span className="text-flux-muted">Adquirente</span>
@@ -358,8 +390,12 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
         </div>
         {preview && (
           <div className="text-sm grid gap-1 sm:grid-cols-2">
-            <div>Taxa total: <strong>{money(preview.feeAmountCents)}</strong></div>
-            <div>Líquido lojista: <strong>{money(preview.netAmountCents)}</strong></div>
+            <div>
+              Taxa total: <strong>{money(preview.feeAmountCents)}</strong>
+            </div>
+            <div>
+              Líquido lojista: <strong>{money(preview.netAmountCents)}</strong>
+            </div>
             <div>Custo adquirente: {money(preview.providerCostCents)}</div>
             <div>Receita FluxPay: {money(preview.fluxpayRevenueCents)}</div>
             <div>Percentual total: {preview.totalPercent}%</div>
