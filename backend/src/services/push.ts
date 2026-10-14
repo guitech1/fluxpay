@@ -4,6 +4,7 @@
  */
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
+import webpush from "web-push";
 
 export type PushKind = "pix_generated" | "sale_paid" | "test_pix" | "test_sale";
 
@@ -55,7 +56,12 @@ interface SubRow {
   auth: string;
 }
 
-async function claimEventKey(eventKey: string, kind: PushKind, userId?: string, orgId?: string): Promise<boolean> {
+async function claimEventKey(
+  eventKey: string,
+  kind: PushKind,
+  userId?: string,
+  orgId?: string
+): Promise<boolean> {
   const { error } = await supabaseAdmin.from("push_notification_log").insert({
     event_key: eventKey,
     kind,
@@ -63,18 +69,13 @@ async function claimEventKey(eventKey: string, kind: PushKind, userId?: string, 
     organization_id: orgId || null,
   });
   if (error) {
-    if (error.code === "23505") return false; // já enviado
+    if (error.code === "23505") return false;
     console.error("[push] log insert failed:", error.message);
-    // Em falha de log, ainda tentamos enviar (melhor notificar a mais do que nunca)
     return true;
   }
   return true;
 }
 
-/**
- * Envia via web-push se a dependencia estiver instalada; senao regista e no-op.
- * web-push e opcional: `npm i web-push` no backend quando VAPID estiver activo.
- */
 async function sendToSubscription(
   sub: SubRow,
   payload: { title: string; body: string; data?: Record<string, unknown> }
@@ -85,13 +86,6 @@ async function sendToSubscription(
   }
 
   try {
-    // Dynamic import — evita crash se web-push nao estiver no package.json ainda
-    const webpush = await import("web-push").catch(() => null);
-    if (!webpush) {
-      console.warn("[push] pacote web-push ausente; instale com npm i web-push");
-      return "error";
-    }
-
     webpush.setVapidDetails(
       process.env.VAPID_SUBJECT as string,
       process.env.VAPID_PUBLIC_KEY as string,
@@ -173,7 +167,7 @@ export async function listUserSubscriptions(userId: string): Promise<SubRow[]> {
 }
 
 /**
- * Notifica todos os membros (owner/admin) da organizacao com subscricao valida.
+ * Notifica membros da organizacao com subscricao push valida.
  */
 export async function notifyOrganizationMembers(params: {
   organizationId: string;
@@ -193,15 +187,35 @@ export async function notifyOrganizationMembers(params: {
     .from("organization_members")
     .select("user_id, role")
     .eq("organization_id", params.organizationId)
-    .in("role", ["owner", "admin", "developer"]);
+    .in("role", ["owner", "admin", "developer", "viewer", "member"]);
 
   const userIds = [...new Set((members || []).map((m: any) => m.user_id).filter(Boolean))];
-  if (!userIds.length) return { sent: 0, skipped: false };
 
-  const { data: subs } = await supabaseAdmin
+  let subs: SubRow[] = [];
+  if (userIds.length) {
+    const { data } = await supabaseAdmin
+      .from("push_subscriptions")
+      .select("id, user_id, endpoint, p256dh, auth")
+      .in("user_id", userIds);
+    subs = (data || []) as SubRow[];
+  }
+  const { data: orgSubs } = await supabaseAdmin
     .from("push_subscriptions")
     .select("id, user_id, endpoint, p256dh, auth")
-    .in("user_id", userIds);
+    .eq("organization_id", params.organizationId);
+  const seen = new Set(subs.map((s) => s.id));
+  for (const s of (orgSubs || []) as SubRow[]) {
+    if (!seen.has(s.id)) subs.push(s);
+  }
+  if (!subs.length) {
+    console.warn(
+      "[push] nenhuma subscricao para org",
+      params.organizationId,
+      "users",
+      userIds.length
+    );
+    return { sent: 0, skipped: false };
+  }
 
   const tpl = TEMPLATES[params.kind];
   const payload = {
@@ -211,7 +225,7 @@ export async function notifyOrganizationMembers(params: {
   };
 
   let sent = 0;
-  for (const sub of (subs || []) as SubRow[]) {
+  for (const sub of subs) {
     const r = await sendToSubscription(sub, payload);
     if (r === "ok") sent += 1;
   }
