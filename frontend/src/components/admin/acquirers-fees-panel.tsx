@@ -7,6 +7,8 @@ type AcquirerRow = {
   id: string;
   displayName: string;
   enabled: boolean;
+  adminEnabled?: boolean;
+  credentialEnv?: string | null;
   priority: number;
   environment: "test" | "live";
   costPercent: number;
@@ -65,7 +67,7 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
         body: {
           costPercent: patch.costPercent ?? row.costPercent,
           costFixedCents: patch.costFixedCents ?? row.costFixedCents,
-          enabled: patch.enabled ?? row.enabled,
+          enabled: patch.enabled ?? row.adminEnabled ?? row.enabled,
           priority: patch.priority ?? row.priority,
         },
       });
@@ -84,7 +86,9 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
   return (
     <div className="space-y-4">
       <div className="card text-sm text-flux-muted">
-        Chaves vêm das variáveis de ambiente na Netlify. Aqui você vê o estado, prioridade de failover e custo do adquirente usado no cálculo de taxa.
+        Chaves vêm das variáveis de ambiente na Netlify (NEXUSPAG_API_KEY, PROFANUSPAY_API_KEY, etc.).
+        Sem a chave, o adquirente aparece como não configurado e não pode ficar activo em produção.
+        Prioridade menor = tenta primeiro no failover.
       </div>
       {msg && <div className="card text-sm">{msg}</div>}
       <div className="overflow-x-auto card p-0">
@@ -107,14 +111,20 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
                   <div className="font-medium">{row.displayName}</div>
                   <div className="text-xs text-flux-muted">{row.id} · {row.environment}</div>
                 </td>
-                <td className="p-3">{row.configured ? "sim" : "não"}</td>
+                <td className="p-3">
+                  {row.configured
+                    ? "sim"
+                    : row.credentialEnv
+                      ? `não (${row.credentialEnv})`
+                      : "não"}
+                </td>
                 <td className="p-3">
                   {row.id === "sandbox" ? (
                     "sempre"
                   ) : canConfigure ? (
                     <input
                       type="checkbox"
-                      checked={row.enabled}
+                      checked={row.adminEnabled ?? row.enabled}
                       disabled={busy === row.id}
                       onChange={(e) => save(row, { enabled: e.target.checked })}
                     />
@@ -141,8 +151,7 @@ export function AcquirersPanel({ canConfigure }: { canConfigure: boolean }) {
                 <td className="p-3">
                   {canConfigure && row.id !== "sandbox" ? (
                     <input
-                      type="number"
-                      step="0.01"
+                      type="number"\tableofcontents step="0.01"
                       className="input w-24"
                       defaultValue={row.costPercent}
                       disabled={busy === row.id}
@@ -209,7 +218,6 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // sync form when data loads
   const rule = data;
   const hydrated = rule
     ? `${rule.mode}|${rule.fluxpay_margin_percent}|${rule.fluxpay_fixed_cents}`
@@ -336,6 +344,7 @@ export function FeesPanel({ canConfigure }: { canConfigure: boolean }) {
             <span className="text-flux-muted">Adquirente</span>
             <select className="input w-full" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
               <option value="nexuspag">nexuspag</option>
+              <option value="profanuspay">profanuspay</option>
               <option value="gothampay">gothampay</option>
               <option value="smokepay">smokepay</option>
               <option value="kavropay">kavropay</option>
