@@ -21,8 +21,21 @@ router.get("/acquirers", async (_req, res) => {
         ...c,
         costPercent: row ? Number(row.cost_percent) : c.costPercent,
         costFixedCents: row ? Number(row.cost_fixed_cents) : c.costFixedCents,
-        enabled: row ? Boolean(row.enabled) && c.configured : c.enabled,
+        adminEnabled: c.id === "sandbox" ? true : row ? Boolean(row.enabled) : false,
+        enabled: c.id === "sandbox" ? true : (row ? Boolean(row.enabled) && c.configured : false),
         priority: row ? Number(row.priority) : c.priority,
+        credentialEnv:
+          c.id === "sandbox"
+            ? null
+            : (
+                {
+                  nexuspag: "NEXUSPAG_API_KEY",
+                  profanuspay: "PROFANUSPAY_API_KEY",
+                  gothampay: "GOTHAMPAY_API_KEY",
+                  smokepay: "SMOKEPAY_API_KEY",
+                  kavropay: "KAVROPAY_API_KEY",
+                } as Record<string, string>
+              )[c.id] || null,
       };
     }),
   });
@@ -40,8 +53,26 @@ router.post("/acquirers/:id/health", async (req, res) => {
 
 router.patch("/acquirers/:id", async (req, res) => {
   const id = String(req.params.id || "").toLowerCase();
-  if (!["nexuspag", "gothampay", "smokepay", "kavropay"].includes(id)) {
-    res.status(404).json({ error: { code: "not_found", message: "desconhecido" } });
+  if (!["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay"].includes(id)) {
+    res.status(404).json({ error: { code: "not_found", message: `Adquirente desconhecido: ${id}` } });
+    return;
+  }
+  const adapter = getAdapter(id);
+  const configured = Boolean(adapter?.isConfigured());
+  if (typeof (req.body || {}).enabled === "boolean" && req.body.enabled === true && !configured) {
+    const envHint: Record<string, string> = {
+      nexuspag: "NEXUSPAG_API_KEY",
+      profanuspay: "PROFANUSPAY_API_KEY",
+      gothampay: "GOTHAMPAY_API_KEY",
+      smokepay: "SMOKEPAY_API_KEY",
+      kavropay: "KAVROPAY_API_KEY",
+    };
+    res.status(400).json({
+      error: {
+        code: "validation_error",
+        message: `Nao e possivel ativar: falta ${envHint[id] || "API_KEY"} na Netlify.`,
+      },
+    });
     return;
   }
   const body = req.body || {};
@@ -58,13 +89,21 @@ router.patch("/acquirers/:id", async (req, res) => {
     .single();
 
   if (error) {
-    res.status(500).json({ error: { code: "api_error", message: "falha" } });
+    console.error("[admin-acquirers] upsert:", error.message);
+    res.status(500).json({ error: { code: "api_error", message: `Falha ao gravar: ${error.message}` } });
     return;
   }
 
   // Próxima cobrança já lê enabled/priority novos (sem esperar TTL).
   invalidateAcquirerRoutingCache();
-  res.json({ data });
+  res.json({
+    data: {
+      ...data,
+      adminEnabled: Boolean(data?.enabled),
+      enabled: Boolean(data?.enabled) && configured,
+      configured,
+    },
+  });
 });
 
 router.get("/fees/global", async (_req, res) => {
