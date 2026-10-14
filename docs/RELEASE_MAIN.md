@@ -1,6 +1,7 @@
 # Release main
 
-Merge #9 published at 2026-10-14.
-Commit: 989200638c737ca451800c4afb2dd2162c81f597
+- Merge #9 published.
+- SUPABASE_SERVICE_ROLE_KEY configured on Netlify (secret).
+- Hotfix: support FAB, mobile nav, push enable, API boot diagnostics.
 
-This file forces a Netlify production rebuild for usefluxpay.com.
+Redeploy triggered: 2026-10-14.
