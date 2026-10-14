@@ -1,3 +1,3 @@
-# Release main
+# Release
 
-Redeploy: service role on production context.
+Production deploy: NEXUSPAG, GOTHAMPAY, SMOKEPAY, PROFANUSPAY, KAVROPAY API keys on Netlify production.
