@@ -261,5 +261,12 @@ export async function sendTestNotification(params: {
     const r = await sendToSubscription(sub, payload);
     if (r === "ok") sent += 1;
   }
+  if (sent === 0) {
+    throw new AppError(
+      502,
+      "push_delivery_failed",
+      "Nenhuma notificacao foi entregue. As subscricoes podem estar expiradas — desative e reative as notificacoes no navegador."
+    );
+  }
   return { sent };
 }
