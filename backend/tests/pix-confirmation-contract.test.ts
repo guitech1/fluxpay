@@ -206,5 +206,5 @@ test("webhooks: pagamento ainda não encontrado responde 503 para permitir retry
   const unmatchedPath = src.slice(start, end);
   assert.match(unmatchedPath, /processing_error:\s*"payment_not_found"/);
   assert.match(unmatchedPath, /status\(503\)/);
-  assert.ok(!/processed_at\\s*:/.test(unmatchedPath), "evento não encontrado não deve ser marcado como processado");
+  assert.ok(!/processed_at\s*:/.test(unmatchedPath), "evento não encontrado não deve ser marcado como processado");
 });
