@@ -152,7 +152,7 @@ describe("webhook routes authenticate provider callbacks", () => {
 describe("push send classifies VAPID auth failures", () => {
   it("classifies 401/403 as auth and retains subscriptions for recovery", () => {
     const src = readFileSync(join(root, "backend/src/services/push.ts"), "utf8");
-    assert.match(src, /status === 401 \\|\\| status === 403/);
+    assert.match(src, /status === 401 \|\| status === 403/);
     assert.match(src, /authFail/);
     assert.match(src, /subscription retained/);
     assert.match(src, /diagnoseUserPush/);
