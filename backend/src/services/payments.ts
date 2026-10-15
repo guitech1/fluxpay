@@ -3,7 +3,7 @@
  * Push: PIX gerado no create; venda paga em markPixPaymentSucceeded (notify automatico).
  */
 import { createPayment as createPaymentCore } from "./payments-create.js";
-import { notifyPixGeneratedSafe, notifySalePaidSafe } from "./push-hooks.js";
+import { notifyPixGeneratedAwaited, notifySalePaidAwaited } from "./push-hooks.js";
 import type { CreatePaymentInput, Payment, Environment } from "../types/index.js";
 
 export async function createPayment(
@@ -16,10 +16,11 @@ export async function createPayment(
   try {
     const isPix = payment.payment_type === "pix" || input.payment_method?.type === "pix";
     if (isPix && payment.status === "pending" && (payment as any).pix_copy_paste) {
-      notifyPixGeneratedSafe({ organizationId, paymentId: payment.id });
+      // Await so Netlify Function does not freeze before mobile FCM delivery.
+      await notifyPixGeneratedAwaited({ organizationId, paymentId: payment.id });
     }
     if (payment.status === "succeeded") {
-      notifySalePaidSafe({
+      await notifySalePaidAwaited({
         organizationId,
         paymentId: payment.id,
         amountCents: typeof payment.amount === "number" ? payment.amount : undefined,
