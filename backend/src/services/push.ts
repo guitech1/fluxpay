@@ -76,7 +76,7 @@ async function claimEventKey(
 async function sendToSubscription(
   sub: SubRow,
   payload: { title: string; body: string; data?: Record<string, unknown> }
-): Promise<"ok" | "gone" | "error"> {
+): Promise<"ok" | "gone" | "auth" | "error"> {
   if (!vapidConfigured()) {
     console.warn("[push] VAPID nao configurado — skip envio");
     return "error";
@@ -117,7 +117,26 @@ async function sendToSubscription(
       console.warn("[push] subscription gone id=", sub.id, "status=", status);
       return "gone";
     }
-    console.error("[push] send failed status=", status, "msg=", err?.message || String(err));
+    if (status === 401 || status === 403) {
+      // Do not delete the subscription on auth failures: the server's VAPID
+      // key pair may be misconfigured, and deleting every device subscription
+      // would make recovery harder without fixing the root cause.
+      console.error(
+        "[push] provider rejected Web Push authorization; subscription retained. Check that VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are a matching pair. id=",
+        sub.id,
+        "status=",
+        status
+      );
+      return "auth";
+    }
+    console.error(
+      "[push] send failed status=",
+      status,
+      "body=",
+      typeof err?.body === "string" ? err.body.slice(0, 120) : undefined,
+      "msg=",
+      err?.message || String(err)
+    );
     return "error";
   }
 }
@@ -164,9 +183,20 @@ export async function listUserSubscriptions(userId: string): Promise<SubRow[]> {
   return (data || []) as SubRow[];
 }
 
-/**
- * Notifica membros da organizacao com subscricao push valida.
- */
+export async function hasUserSubscription(userId: string, endpoint: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from("push_subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("endpoint", endpoint)
+    .maybeSingle();
+  if (error) {
+    console.error("[push] subscription status lookup failed:", error.message);
+    throw new AppError(500, "api_error", "Nao foi possivel verificar a subscricao deste dispositivo.");
+  }
+  return Boolean(data);
+}
+
 export async function notifyOrganizationMembers(params: {
   organizationId: string;
   kind: PushKind;
@@ -230,7 +260,6 @@ export async function notifyOrganizationMembers(params: {
   return { sent, skipped: false };
 }
 
-/** Teste de demonstracao — so para o proprio utilizador autenticado. */
 export async function sendTestNotification(params: {
   userId: string;
   kind: "test_pix" | "test_sale";
@@ -257,19 +286,46 @@ export async function sendTestNotification(params: {
 
   let sent = 0;
   let gone = 0;
+  let authFail = 0;
   for (const sub of subs) {
     const r = await sendToSubscription(sub, payload);
     if (r === "ok") sent += 1;
     else if (r === "gone") gone += 1;
+    else if (r === "auth") authFail += 1;
   }
   if (sent === 0) {
     throw new AppError(
       502,
       "push_delivery_failed",
-      gone > 0
-        ? "As subscricoes deste dispositivo expiraram. Active as notificacoes de novo."
-        : "Nenhum dispositivo recebeu a notificacao. Verifique a permissao no telemovel."
+      authFail > 0
+        ? "A subscricao deste dispositivo e invalida (chave VAPID ou autorizacao). Clique em Activar notificacoes novamente."
+        : gone > 0
+          ? "As subscricoes deste dispositivo expiraram. Active as notificacoes de novo."
+          : "Nenhum dispositivo recebeu a notificacao. Verifique a permissao no navegador/telemovel e se o VAPID esta configurado no servidor."
     );
   }
   return { sent };
+}
+
+/** Diagnostico seguro para o utilizador autenticado — sem chaves nem endpoints completos. */
+export async function diagnoseUserPush(userId: string): Promise<{
+  vapid_configured: boolean;
+  subscription_count: number;
+  endpoint_hosts: string[];
+}> {
+  const subs = await listUserSubscriptions(userId);
+  const hosts: string[] = [];
+  for (const s of subs) {
+    try {
+      const host = new URL(s.endpoint).host;
+      if (host && !hosts.includes(host)) hosts.push(host);
+    } catch {
+      /* ignore malformed */
+    }
+  }
+  return {
+    vapid_configured: vapidConfigured(),
+    subscription_count: subs.length,
+    endpoint_hosts: hosts,
+  };
 }

@@ -8,6 +8,8 @@ import {
   listUserSubscriptions,
   sendTestNotification,
   getVapidPublicKey,
+  diagnoseUserPush,
+  hasUserSubscription,
 } from "../services/push.js";
 
 const router = Router();
@@ -49,6 +51,51 @@ router.get("/status", async (req, res, next) => {
         configured: Boolean(getVapidPublicKey()),
         subscription_count: subs.length,
         has_subscription: subs.length > 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/subscription-status", requireRole("owner", "admin", "developer", "viewer"), async (req, res, next) => {
+  try {
+    const schema = z.object({ endpoint: z.string().url().max(2048) });
+    const body = schema.parse(req.body);
+    const hasSubscription = await hasUserSubscription(req.dashboardAuth!.userId, body.endpoint);
+    res.json({ data: { has_subscription: hasSubscription } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Diagnostico autenticado — sem chaves privadas, sem endpoints completos, sem PII.
+ * Use para verificar se o backend ve a subscricao e se VAPID esta presente no runtime.
+ */
+router.get("/diagnostics", requireRole("owner", "admin", "developer", "viewer"), async (req, res, next) => {
+  try {
+    const d = await diagnoseUserPush(req.dashboardAuth!.userId);
+    res.json({
+      data: {
+        vapid_configured: d.vapid_configured,
+        subscription_count: d.subscription_count,
+        has_subscription: d.subscription_count > 0,
+        endpoint_hosts: d.endpoint_hosts,
+        organization_id_present: Boolean(req.dashboardAuth!.organizationId),
+        hints: [
+          !d.vapid_configured
+            ? "VAPID incompleto no runtime da Function (Netlify). Confirme VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY e VAPID_SUBJECT nos scopes Functions + Runtime, depois redeploy."
+            : null,
+          d.subscription_count === 0
+            ? "Nenhuma subscricao guardada para este utilizador. Active as notificacoes neste dispositivo (permissoes + Activar)."
+            : null,
+          d.endpoint_hosts.some((h) => h.includes("mozilla") || h.includes("fcm") || h.includes("windows"))
+            ? null
+            : d.subscription_count > 0
+              ? "Hosts de endpoint desconhecidos — confirme que o browser gerou uma subscricao Web Push padrao."
+              : null,
+        ].filter(Boolean),
       },
     });
   } catch (err) {

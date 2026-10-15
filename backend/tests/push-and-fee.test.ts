@@ -135,7 +135,7 @@ describe("service worker push contract", () => {
     assert.match(sw, /NEVER_CACHE/);
     assert.match(sw, /\/v1\//);
     assert.match(sw, /renotify/);
-    assert.match(sw, /fluxpay-v4/);
+    assert.match(sw, /fluxpay-v5/);
   });
 });
 
@@ -146,5 +146,52 @@ describe("webhook routes authenticate provider callbacks", () => {
     assert.match(src, /router\.post\(\s*"\/provider"/);
     assert.match(src, /verifyProviderWebhook|verifyWebhookSignature/);
     assert.match(src, /notifyAfterPixConfirmed/);
+  });
+});
+
+describe("push send classifies VAPID auth failures", () => {
+  it("classifies 401/403 as auth and retains subscriptions for recovery", () => {
+    const src = readFileSync(join(root, "backend/src/services/push.ts"), "utf8");
+    assert.match(src, /status === 401 \|\| status === 403/);
+    assert.match(src, /authFail/);
+    assert.match(src, /subscription retained/);
+    assert.match(src, /diagnoseUserPush/);
+    const start = src.indexOf("if (status === 401 || status === 403)");
+    const end = src.indexOf('console.error(', start);
+    assert.doesNotMatch(src.slice(start, end), /from\("push_subscriptions"\)\.delete/);
+  });
+});
+
+describe("push diagnostics route is authenticated", () => {
+  it("exposes /diagnostics without private keys", () => {
+    const src = readFileSync(join(root, "backend/src/routes/push-dashboard.ts"), "utf8");
+    assert.match(src, /\/diagnostics/);
+    assert.match(src, /requireRole/);
+    assert.doesNotMatch(src, /process.env.VAPID_PRIVATE_KEY/);
+    assert.match(src, /endpoint_hosts/);
+  });
+});
+
+describe("frontend forces VAPID-matched resubscribe", () => {
+  it("unsubscribes when applicationServerKey mismatches", () => {
+    const src = readFileSync(join(root, "frontend/src/components/pwa/NotificationSettings.tsx"), "utf8");
+    assert.match(src, /applicationServerKeyMatches/);
+    assert.match(src, /unsubscribe/);
+    assert.match(src, /updateViaCache:\s*"none"/);
+    assert.match(src, /isIosSafari/);
+    assert.match(src, /isStandalonePwa/);
+  });
+});
+
+describe("push subscription status is device-specific", () => {
+  it("checks the authenticated user's exact endpoint and does not rely on any-device count", () => {
+    const route = readFileSync(join(root, "backend/src/routes/push-dashboard.ts"), "utf8");
+    const service = readFileSync(join(root, "backend/src/services/push.ts"), "utf8");
+    const frontend = readFileSync(join(root, "frontend/src/components/pwa/NotificationSettings.tsx"), "utf8");
+    assert.match(route, /router\.post\("\/subscription-status"/);
+    assert.match(route, /hasUserSubscription\(req\.dashboardAuth!\.userId, body\.endpoint\)/);
+    assert.match(service, /\.eq\("user_id", userId\)[\s\S]*\.eq\("endpoint", endpoint\)/);
+    assert.match(frontend, /\/push\/subscription-status/);
+    assert.match(frontend, /getSubscription\(\)/);
   });
 });
