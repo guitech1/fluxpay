@@ -1,8 +1,33 @@
 /**
  * Empacota o Express. Import dinamico para capturar falha de boot (env, etc.)
  * e devolver JSON legivel em vez de 502 opaco Runtime.ExitError.
+ *
+ * Nota operacional: variaveis definidas no painel Netlify so entram em
+ * process.env da funcao apos um NOVO deploy. Sem rebuild, missing_env
+ * continua a listar chaves que ja existem no UI.
  */
 const FUNCTION_PREFIX = "/.netlify/functions/api";
+
+/** Chaves obrigatorias para o backend subir (alinhado a backend/src/config/env.ts). */
+const REQUIRED_BOOT_ENV = [
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_ANON_KEY",
+  "API_BASE_URL",
+  "FRONTEND_URL",
+] as const;
+
+/** Chaves opcionais para Web Push (nao bloqueiam boot; sem elas o envio e skip). */
+const OPTIONAL_PUSH_ENV = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"] as const;
+
+function envPresence(): {
+  missing_required: string[];
+  missing_push: string[];
+} {
+  const missing_required = REQUIRED_BOOT_ENV.filter((k) => !process.env[k]?.trim());
+  const missing_push = OPTIONAL_PUSH_ENV.filter((k) => !process.env[k]?.trim());
+  return { missing_required, missing_push };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let cachedHandler: any = null;
@@ -34,13 +59,7 @@ export const handler = async (event: Record<string, unknown>, context: unknown) 
     return await h(event, context);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const missingEnv = [
-      "SUPABASE_URL",
-      "SUPABASE_SERVICE_ROLE_KEY",
-      "SUPABASE_ANON_KEY",
-      "API_BASE_URL",
-      "FRONTEND_URL",
-    ].filter((k) => !process.env[k]);
+    const presence = envPresence();
     return {
       statusCode: 503,
       headers: { "content-type": "application/json" },
@@ -49,7 +68,12 @@ export const handler = async (event: Record<string, unknown>, context: unknown) 
           type: "api_boot_error",
           message: "API indisponivel no arranque.",
           detail: message.slice(0, 500),
-          missing_env: missingEnv,
+          missing_env: presence.missing_required,
+          push_env_incomplete: presence.missing_push.length > 0,
+          hint:
+            presence.missing_required.length > 0
+              ? "Defina as variaveis em falta no site Netlify (scopes incl. Functions) e faca um novo deploy. Valores adicionados no UI apos o ultimo deploy nao existem em process.env ate rebuild."
+              : "Boot falhou por outro motivo (ver detail). Confirme que o build publicou backend/dist.",
         },
       }),
     };
