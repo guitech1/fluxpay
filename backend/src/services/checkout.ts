@@ -191,7 +191,16 @@ export async function simulateCheckoutPayment(sessionId: string): Promise<{ stat
     throw new AppError(409, "invalid_request", "Esta cobranca nao esta mais pendente.");
   }
 
-  await markPixPaymentSucceeded(payment as Payment);
+  try {
+    await markPixPaymentSucceeded(payment as Payment);
+  } catch (err) {
+    console.error("[checkout] confirmacao simulada falhou:", err);
+    throw new AppError(
+      500,
+      "api_error",
+      "Nao foi possivel confirmar o pagamento de teste. Tente novamente."
+    );
+  }
 
   await supabaseAdmin
     .from("checkout_sessions")
