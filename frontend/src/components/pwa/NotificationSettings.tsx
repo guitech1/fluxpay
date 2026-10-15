@@ -165,16 +165,32 @@ export function NotificationSettings() {
     if (!ok) return;
     setPermission(Notification.permission);
     try {
-      const st = await dashboardFetch<{ data: { configured: boolean; has_subscription: boolean } }>(
-        "/push/status"
-      );
+      const st = await dashboardFetch<{ data: { configured: boolean } }>("/push/status");
       setConfigured(st.data.configured);
-      setHasSub(st.data.has_subscription);
-      if (st.data.has_subscription) {
+
+      // Subscription state must be device-specific, not just "this user has
+      // any subscription" (e.g. a desktop subscription must not hide mobile setup).
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      const localSub = reg ? await reg.pushManager.getSubscription() : null;
+      if (!localSub?.endpoint) {
+        setHasSub(false);
+        localStorage.removeItem(SUBSCRIBED_KEY);
+        return;
+      }
+      const device = await dashboardFetch<{ data: { has_subscription: boolean } }>(
+        "/push/subscription-status",
+        { method: "POST", body: { endpoint: localSub.endpoint } }
+      );
+      setHasSub(device.data.has_subscription);
+      if (device.data.has_subscription) {
         localStorage.setItem(SUBSCRIBED_KEY, "1");
+      } else {
+        localStorage.removeItem(SUBSCRIBED_KEY);
       }
     } catch {
       setConfigured(false);
+      setHasSub(false);
+      localStorage.removeItem(SUBSCRIBED_KEY);
     }
   }, []);
 
