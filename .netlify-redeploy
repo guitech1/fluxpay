@@ -1,3 +1,4 @@
-redeploy-trigger=2026-10-11T20:05Z
-# Rebuild after SUPABASE + multi-acquirer keys set on Netlify fluxpay-sohn.
-# Functions must rebuild so process.env is available at runtime (not empty at bundle time).
+redeploy-trigger=2026-10-15T14:44Z
+# Rebuild after SUPABASE_SERVICE_ROLE_KEY, VAPID_PRIVATE_KEY and acquirer API keys
+# set on Netlify site fluxpay-sohn (0ee3ea2a-31a0-451b-9fc0-c99802b34e64).
+# Functions must rebuild so process.env is available at runtime.
