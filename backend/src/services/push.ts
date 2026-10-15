@@ -118,9 +118,11 @@ async function sendToSubscription(
       return "gone";
     }
     if (status === 401 || status === 403) {
-      await supabaseAdmin.from("push_subscriptions").delete().eq("id", sub.id);
-      console.warn(
-        "[push] subscription auth failed (likely VAPID/key mismatch) id=",
+      // Do not delete the subscription on auth failures: the server's VAPID
+      // key pair may be misconfigured, and deleting every device subscription
+      // would make recovery harder without fixing the root cause.
+      console.error(
+        "[push] provider rejected Web Push authorization; subscription retained. Check that VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are a matching pair. id=",
         sub.id,
         "status=",
         status
