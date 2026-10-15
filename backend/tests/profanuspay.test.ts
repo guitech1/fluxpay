@@ -3,8 +3,14 @@ import assert from "node:assert/strict";
 import { parseActivePool, DEFAULT_PRIORITY, filterActiveAcquirers } from "../src/providers/routing.js";
 
 describe("ProfanusPay no pool de adquirentes", () => {
-  it("pool default inclui profanuspay", () => {
+  it("pool default exclui profanuspay até validação do endpoint", () => {
     const pool = parseActivePool(undefined);
+    assert.equal(pool.includes("profanuspay"), false);
+    assert.deepEqual(pool, ["nexuspag", "gothampay", "smokepay", "kavropay"]);
+  });
+
+  it("env FLUXPAY_ACTIVE_ACQUIRERS ainda pode activar profanuspay explicitamente", () => {
+    const pool = parseActivePool("nexuspag,profanuspay,gothampay");
     assert.ok(pool.includes("profanuspay"));
   });
 
