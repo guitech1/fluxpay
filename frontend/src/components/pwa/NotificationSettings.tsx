@@ -25,11 +25,10 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
     scope: "/",
     updateViaCache: "none",
   });
-  try {
-    void reg.update();
-  } catch (_) {
-    /* ignore */
-  }
+  // update() is asynchronous; handle its rejection as well as sync failures.
+  void reg.update().catch(() => {
+    /* keep using the current registration if the update check fails */
+  });
   if (reg.installing) {
     await new Promise<void>((resolve, reject) => {
       const sw = reg.installing!;
