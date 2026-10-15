@@ -105,7 +105,29 @@ router.post(
         return;
       }
 
-      await markPixPaymentSucceeded(payment);
+      try {
+        await markPixPaymentSucceeded(payment);
+      } catch (confirmErr) {
+        const msg =
+          confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+        await supabaseAdmin
+          .from("provider_events")
+          .update({
+            processing_error: `admin_reprocess_confirm_failed: ${msg}`.slice(0, 500),
+            payment_id: payment.id,
+            organization_id: payment.organization_id,
+            environment: payment.environment,
+          })
+          .eq("id", event.id);
+        res.status(500).json({
+          error: {
+            type: "api_error",
+            message: "Confirmacao do pagamento falhou. Evento permanece recuperavel.",
+          },
+        });
+        return;
+      }
+
       await supabaseAdmin
         .from("provider_events")
         .update({
