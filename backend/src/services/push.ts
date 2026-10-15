@@ -118,9 +118,6 @@ async function sendToSubscription(
       return "gone";
     }
     if (status === 401 || status === 403) {
-      // Do not delete the subscription on auth failures: the server's VAPID
-      // key pair may be misconfigured, and deleting every device subscription
-      // would make recovery harder without fixing the root cause.
       console.error(
         "[push] provider rejected Web Push authorization; subscription retained. Check that VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are a matching pair. id=",
         sub.id,
@@ -252,11 +249,10 @@ export async function notifyOrganizationMembers(params: {
     data: { kind: params.kind, url: "/dashboard/payments" },
   };
 
-  let sent = 0;
-  for (const sub of subs) {
-    const r = await sendToSubscription(sub, payload);
-    if (r === "ok") sent += 1;
-  }
+  // Parallel send: serverless freezes after response; sequential order often
+  // delivers only the first device (usually desktop) before freeze.
+  const results = await Promise.all(subs.map((sub) => sendToSubscription(sub, payload)));
+  const sent = results.filter((r) => r === "ok").length;
   return { sent, skipped: false };
 }
 
@@ -284,11 +280,11 @@ export async function sendTestNotification(params: {
     data: { kind: params.kind, demo: true, url: "/dashboard/payments" },
   };
 
+  const results = await Promise.all(subs.map((sub) => sendToSubscription(sub, payload)));
   let sent = 0;
   let gone = 0;
   let authFail = 0;
-  for (const sub of subs) {
-    const r = await sendToSubscription(sub, payload);
+  for (const r of results) {
     if (r === "ok") sent += 1;
     else if (r === "gone") gone += 1;
     else if (r === "auth") authFail += 1;
