@@ -15,6 +15,8 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 const DISMISS_KEY = "fluxpay_push_dismissed_at";
 const DISMISS_MS = 12 * 60 * 60 * 1000;
+/** Apos ativar com sucesso, nao reabrir o banner neste dispositivo. */
+const SUBSCRIBED_KEY = "fluxpay_push_subscribed";
 
 async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
   if (!("serviceWorker" in navigator)) {
@@ -37,6 +39,51 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
     });
   }
   return navigator.serviceWorker.ready;
+}
+
+/** Fluxo completo: permissao + subscribe no browser + gravar no backend. */
+async function completePushSubscribe(): Promise<void> {
+  const reg = await ensureServiceWorker();
+  let perm = Notification.permission;
+  if (perm === "default") {
+    perm = await Notification.requestPermission();
+  }
+  if (perm !== "granted") {
+    throw new Error(
+      perm === "denied"
+        ? "Notificacoes bloqueadas neste site. No Chrome: cadeado na barra de endereco → Notificacoes → Permitir."
+        : "Permissao nao concedida."
+    );
+  }
+
+  const keyRes = await dashboardFetch<{ data: { publicKey: string } }>("/push/vapid-public-key");
+  const publicKey =
+    keyRes?.data?.publicKey || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
+  if (!publicKey) {
+    throw new Error("Chave VAPID publica indisponivel. Contacte o suporte FluxPay.");
+  }
+
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+    });
+  }
+  const json = sub.toJSON();
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+    throw new Error("O navegador nao devolveu uma subscricao push valida.");
+  }
+
+  await dashboardFetch("/push/subscribe", {
+    method: "POST",
+    body: {
+      endpoint: json.endpoint,
+      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+    },
+  });
+  localStorage.setItem(SUBSCRIBED_KEY, "1");
+  localStorage.removeItem(DISMISS_KEY);
 }
 
 export function NotificationSettings() {
@@ -63,6 +110,9 @@ export function NotificationSettings() {
       );
       setConfigured(st.data.configured);
       setHasSub(st.data.has_subscription);
+      if (st.data.has_subscription) {
+        localStorage.setItem(SUBSCRIBED_KEY, "1");
+      }
     } catch {
       setConfigured(false);
     }
@@ -78,44 +128,8 @@ export function NotificationSettings() {
     setMsg(null);
     try {
       if (!supported) throw new Error("Este navegador nao suporta notificacoes push.");
-      const reg = await ensureServiceWorker();
-      const perm = await Notification.requestPermission();
-      setPermission(perm);
-      if (perm !== "granted") {
-        throw new Error(
-          perm === "denied"
-            ? "Notificacoes bloqueadas neste site. No Chrome: cadeado na barra de endereco → Notificacoes → Permitir, depois tente de novo."
-            : "Permissao nao concedida."
-        );
-      }
-      localStorage.removeItem(DISMISS_KEY);
-
-      const keyRes = await dashboardFetch<{ data: { publicKey: string } }>("/push/vapid-public-key");
-      const publicKey =
-        keyRes?.data?.publicKey || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
-      if (!publicKey) {
-        throw new Error("Chave VAPID publica indisponivel. Contacte o suporte FluxPay.");
-      }
-
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
-        });
-      }
-      const json = sub.toJSON();
-      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
-        throw new Error("O navegador nao devolveu uma subscricao push valida.");
-      }
-
-      await dashboardFetch("/push/subscribe", {
-        method: "POST",
-        body: {
-          endpoint: json.endpoint,
-          keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
-        },
-      });
+      await completePushSubscribe();
+      setPermission(Notification.permission);
       setHasSub(true);
       setConfigured(true);
       setMsg("Notificacoes activadas neste dispositivo. Use os botoes de teste abaixo.");
@@ -227,7 +241,11 @@ export function NotificationSettings() {
   );
 }
 
-/** Banner: aparece enquanto nao houver subscricao (exceto se o browser bloqueou). */
+/**
+ * Banner no topo do dashboard.
+ * So aparece se ainda nao houver inscricao no backend e o utilizador nao dispensou recentemente.
+ * Ao clicar em Activar: completa permissao + subscribe + grava no backend (nao reaparece).
+ */
 export function NotificationPromptBanner() {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -237,6 +255,7 @@ export function NotificationPromptBanner() {
     if (typeof window === "undefined") return;
     if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
     if (Notification.permission === "denied") return;
+    if (localStorage.getItem(SUBSCRIBED_KEY) === "1") return;
 
     const dismissedAt = Number(localStorage.getItem(DISMISS_KEY) || "0");
     if (dismissedAt && Date.now() - dismissedAt < DISMISS_MS) return;
@@ -245,7 +264,13 @@ export function NotificationPromptBanner() {
     (async () => {
       try {
         const st = await dashboardFetch<{ data: { has_subscription: boolean } }>("/push/status");
-        if (!cancelled && !st.data.has_subscription) setShow(true);
+        if (cancelled) return;
+        if (st.data.has_subscription) {
+          localStorage.setItem(SUBSCRIBED_KEY, "1");
+          setShow(false);
+          return;
+        }
+        setShow(true);
       } catch {
         if (!cancelled && Notification.permission !== "granted") setShow(true);
       }
@@ -259,14 +284,8 @@ export function NotificationPromptBanner() {
     setBusy(true);
     setErr(null);
     try {
-      await ensureServiceWorker();
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") {
-        setErr("Permissao nao concedida. Pode activar depois em Definicoes.");
-        return;
-      }
-      localStorage.removeItem(DISMISS_KEY);
-      window.location.href = "/dashboard/settings#notificacoes";
+      await completePushSubscribe();
+      setShow(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Falha ao activar.");
     } finally {
@@ -302,7 +321,7 @@ export function NotificationPromptBanner() {
           disabled={busy}
           onClick={() => void activateInline()}
         >
-          {busy ? "A pedir…" : "Activar"}
+          {busy ? "A activar…" : "Activar"}
         </button>
       </div>
     </div>
