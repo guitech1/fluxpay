@@ -78,3 +78,25 @@ describe("HomeAdvantagesBanner integration contract", () => {
     assert.match(banner, /Saldo disponível/);
   });
 });
+
+describe("service worker push contract", () => {
+  it("registers push and notificationclick handlers and skips API paths", () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const sw = fs.readFileSync(path.join(root, "frontend/public/sw.js"), "utf8");
+    assert.match(sw, /addEventListener\(\s*["']push["']/);
+    assert.match(sw, /addEventListener\(\s*["']notificationclick["']/);
+    assert.match(sw, /showNotification/);
+    assert.match(sw, /NEVER_CACHE/);
+    assert.match(sw, /"\/v1\/"/);
+    assert.match(sw, /NEVER_CACHE\.some/);
+  });
+});
+
+describe("test send zero-delivery contract", () => {
+  it("documents that zero successful sends must surface as failure to the client", () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const src = fs.readFileSync(path.join(root, "backend/src/services/push.ts"), "utf8");
+    assert.match(src, /push_delivery_failed/);
+    assert.match(src, /sent === 0/);
+  });
+});
