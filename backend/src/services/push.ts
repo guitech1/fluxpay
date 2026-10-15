@@ -5,6 +5,9 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import webpush from "web-push";
+import { vapidConfigured, getVapidPublicKey } from "./vapid-config.js";
+
+export { vapidConfigured, getVapidPublicKey };
 
 export type PushKind = "pix_generated" | "sale_paid" | "test_pix" | "test_sale";
 
@@ -35,18 +38,6 @@ const TEMPLATES: Record<
         : "DINHEIRO NA TELA! 🤑🔥\nPagamento aprovado! Bora vender mais!",
   },
 };
-
-function vapidConfigured(): boolean {
-  return Boolean(
-    process.env.VAPID_PUBLIC_KEY &&
-      process.env.VAPID_PRIVATE_KEY &&
-      process.env.VAPID_SUBJECT
-  );
-}
-
-export function getVapidPublicKey(): string | null {
-  return process.env.VAPID_PUBLIC_KEY || null;
-}
 
 interface SubRow {
   id: string;
@@ -238,6 +229,14 @@ export async function sendTestNotification(params: {
   kind: "test_pix" | "test_sale";
   amountLabel?: string;
 }): Promise<{ sent: number }> {
+  if (!vapidConfigured()) {
+    throw new AppError(
+      503,
+      "config_error",
+      "Web Push nao configurado neste ambiente (faltam VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY ou VAPID_SUBJECT). Defina no Netlify e faca deploy."
+    );
+  }
+
   const eventKey = `test:${params.userId}:${params.kind}:${Date.now()}`;
   await claimEventKey(eventKey, params.kind, params.userId);
 
