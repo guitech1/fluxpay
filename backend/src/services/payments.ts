@@ -1,6 +1,6 @@
 /**
  * Payments service public API.
- * Push: PIX gerado no create; venda paga em markPixPaymentSucceeded (queries).
+ * Push: PIX gerado no create; venda paga em markPixPaymentSucceeded (notify automatico).
  */
 import { createPayment as createPaymentCore } from "./payments-create.js";
 import { notifyPixGeneratedSafe, notifySalePaidSafe } from "./push-hooks.js";
