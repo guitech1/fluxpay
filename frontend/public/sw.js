@@ -3,7 +3,7 @@
  * - NUNCA intercepta /v1/*, /dashboard-api/*, /admin-api/*, /health
  * - Web Push: eventos push + notificationclick
  */
-const VERSION = "fluxpay-v3";
+const VERSION = "fluxpay-v4";
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
 const NEVER_CACHE = ["/v1/", "/dashboard-api/", "/admin-api/", "/health", "/auth/"];
@@ -89,8 +89,11 @@ self.addEventListener("push", (event) => {
       body: data.body,
       icon: data.icon || "/icons/icon-192.png",
       badge: data.badge || "/icons/icon-192.png",
-      data: data.data || {},
-      vibrate: [100, 50, 100],
+      data: data.data || { url: "/dashboard/payments" },
+      vibrate: [120, 40, 120],
+      tag: (data.data && data.data.kind) || "fluxpay",
+      renotify: true,
+      requireInteraction: false,
     })
   );
 });
