@@ -182,3 +182,16 @@ describe("frontend forces VAPID-matched resubscribe", () => {
     assert.match(src, /isStandalonePwa/);
   });
 });
+
+describe("push subscription status is device-specific", () => {
+  it("checks the authenticated user's exact endpoint and does not rely on any-device count", () => {
+    const route = readFileSync(join(root, "backend/src/routes/push-dashboard.ts"), "utf8");
+    const service = readFileSync(join(root, "backend/src/services/push.ts"), "utf8");
+    const frontend = readFileSync(join(root, "frontend/src/components/pwa/NotificationSettings.tsx"), "utf8");
+    assert.match(route, /router\.post\("\/subscription-status"/);
+    assert.match(route, /hasUserSubscription\(req\.dashboardAuth!\.userId, body\.endpoint\)/);
+    assert.match(service, /\.eq\("user_id", userId\)[\s\S]*\.eq\("endpoint", endpoint\)/);
+    assert.match(frontend, /\/push\/subscription-status/);
+    assert.match(frontend, /getSubscription\(\)/);
+  });
+});
