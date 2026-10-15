@@ -9,6 +9,7 @@ import {
   sendTestNotification,
   getVapidPublicKey,
   diagnoseUserPush,
+  hasUserSubscription,
 } from "../services/push.js";
 
 const router = Router();
@@ -52,6 +53,17 @@ router.get("/status", async (req, res, next) => {
         has_subscription: subs.length > 0,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/subscription-status", requireRole("owner", "admin", "developer", "viewer"), async (req, res, next) => {
+  try {
+    const schema = z.object({ endpoint: z.string().url().max(2048) });
+    const body = schema.parse(req.body);
+    const hasSubscription = await hasUserSubscription(req.dashboardAuth!.userId, body.endpoint);
+    res.json({ data: { has_subscription: hasSubscription } });
   } catch (err) {
     next(err);
   }
