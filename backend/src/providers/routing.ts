@@ -82,5 +82,6 @@ export function parseActivePool(envValue: string | undefined): string[] {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
   }
-  return ["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay"];
+  // Default sem profanuspay até validação independente do endpoint oficial.
+  return ["nexuspag", "gothampay", "smokepay", "kavropay"];
 }
