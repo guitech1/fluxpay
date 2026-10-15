@@ -17,9 +17,14 @@ export function ServiceWorkerRegister() {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
     const register = () => {
-      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((err) => {
-        console.warn("Service worker nao registrado:", err);
-      });
+      navigator.serviceWorker
+        .register("/sw.js", { scope: "/", updateViaCache: "none" })
+        .then((reg) => {
+          try { void reg.update(); } catch (_) {}
+        })
+        .catch((err) => {
+          console.warn("Service worker nao registrado:", err);
+        });
     };
 
     if (document.readyState === "complete") register();

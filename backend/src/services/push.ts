@@ -5,6 +5,7 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import webpush from "web-push";
+import { vapidConfigured as vapidConfiguredPure, getVapidPublicKey as getVapidPublicKeyPure } from "./vapid-config.js";
 
 export type PushKind = "pix_generated" | "sale_paid" | "test_pix" | "test_sale";
 
@@ -37,15 +38,11 @@ const TEMPLATES: Record<
 };
 
 function vapidConfigured(): boolean {
-  return Boolean(
-    process.env.VAPID_PUBLIC_KEY &&
-      process.env.VAPID_PRIVATE_KEY &&
-      process.env.VAPID_SUBJECT
-  );
+  return vapidConfiguredPure();
 }
 
 export function getVapidPublicKey(): string | null {
-  return process.env.VAPID_PUBLIC_KEY || null;
+  return getVapidPublicKeyPure();
 }
 
 interface SubRow {
@@ -104,7 +101,7 @@ async function sendToSubscription(
         icon: "/icons/icon-192.png",
         badge: "/icons/icon-192.png",
       }),
-      { TTL: 60 * 60 }
+      { TTL: 60 * 60 * 12, urgency: "high" }
     );
 
     await supabaseAdmin
@@ -117,9 +114,10 @@ async function sendToSubscription(
     const status = err?.statusCode || err?.status;
     if (status === 404 || status === 410) {
       await supabaseAdmin.from("push_subscriptions").delete().eq("id", sub.id);
+      console.warn("[push] subscription gone id=", sub.id, "status=", status);
       return "gone";
     }
-    console.error("[push] send failed:", err?.message || err);
+    console.error("[push] send failed status=", status, "msg=", err?.message || String(err));
     return "error";
   }
 }
@@ -187,7 +185,7 @@ export async function notifyOrganizationMembers(params: {
     .from("organization_members")
     .select("user_id, role")
     .eq("organization_id", params.organizationId)
-    .in("role", ["owner", "admin", "developer", "viewer", "member"]);
+    .in("role", ["owner", "admin", "developer", "viewer"]);
 
   const userIds = [...new Set((members || []).map((m: any) => m.user_id).filter(Boolean))];
 
@@ -254,13 +252,24 @@ export async function sendTestNotification(params: {
   const payload = {
     title: tpl.title,
     body: tpl.body(params.amountLabel),
-    data: { kind: params.kind, demo: true },
+    data: { kind: params.kind, demo: true, url: "/dashboard/payments" },
   };
 
   let sent = 0;
+  let gone = 0;
   for (const sub of subs) {
     const r = await sendToSubscription(sub, payload);
     if (r === "ok") sent += 1;
+    else if (r === "gone") gone += 1;
+  }
+  if (sent === 0) {
+    throw new AppError(
+      502,
+      "push_delivery_failed",
+      gone > 0
+        ? "As subscricoes deste dispositivo expiraram. Active as notificacoes de novo."
+        : "Nenhum dispositivo recebeu a notificacao. Verifique a permissao no telemovel."
+    );
   }
   return { sent };
 }

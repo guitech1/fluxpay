@@ -285,6 +285,16 @@ export async function markPixPaymentSucceeded(payment: Payment): Promise<void> {
   );
   if (error || !updated) {
     console.error("Falha ao confirmar PIX:", error);
+    return;
+  }
+  // Push automatico em todos os caminhos de confirmacao (webhook, reconcile,
+  // sandbox, admin, API). Idempotente via push_notification_log.event_key.
+  // Falha de push nunca invalida o pagamento.
+  try {
+    const { notifyAfterPixConfirmed } = await import("./payments-queries-notify.js");
+    notifyAfterPixConfirmed((updated as Payment) || payment);
+  } catch (err) {
+    console.error("[push] markPixPaymentSucceeded notify:", err);
   }
 }
 
