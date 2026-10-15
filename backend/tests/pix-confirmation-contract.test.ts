@@ -165,11 +165,12 @@ test("webhooks: falha de confirm grava processing_error e responde 500 sem proce
   const nexusErr = src.indexOf("[webhook/nexuspag] confirmacao PIX falhou");
   assert.ok(nexusErr > 0);
   const catchStart = src.indexOf("catch (confirmErr)", nexusErr);
-  const catchEnd = src.indexOf("\n        await markProcessed();", catchStart);
+  const catchEnd = src.indexOf("\n      case \"retry_later\":", catchStart);
   assert.ok(catchStart > nexusErr, "deve existir catch local para falha de confirmação");
-  assert.ok(catchEnd > catchStart, "o caminho de erro deve terminar antes do markProcessed");
+  assert.ok(catchEnd > catchStart, "o caminho de erro deve terminar antes do próximo caso");
   const errorPath = src.slice(catchStart, catchEnd);
   assert.match(errorPath, /status\(500\)/);
+  assert.match(errorPath, /return;/);
   assert.ok(!errorPath.includes("markProcessed()"));
 });
 
