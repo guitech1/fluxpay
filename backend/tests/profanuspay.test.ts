@@ -3,8 +3,14 @@ import assert from "node:assert/strict";
 import { parseActivePool, DEFAULT_PRIORITY, filterActiveAcquirers } from "../src/providers/routing.js";
 
 describe("ProfanusPay no pool de adquirentes", () => {
-  it("pool default inclui profanuspay", () => {
+  it("pool default EXCLUI profanuspay ate validacao do endpoint", () => {
     const pool = parseActivePool(undefined);
+    assert.ok(!pool.includes("profanuspay"));
+    assert.ok(pool.includes("nexuspag"));
+  });
+
+  it("env pode incluir profanuspay explicitamente", () => {
+    const pool = parseActivePool("nexuspag,profanuspay,gothampay");
     assert.ok(pool.includes("profanuspay"));
   });
 
