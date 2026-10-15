@@ -388,7 +388,6 @@ export function NotificationPromptBanner() {
     if (typeof window === "undefined") return;
     if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
     if (Notification.permission === "denied") return;
-    if (localStorage.getItem(SUBSCRIBED_KEY) === "1") return;
 
     const dismissedAt = Number(localStorage.getItem(DISMISS_KEY) || "0");
     if (dismissedAt && Date.now() - dismissedAt < DISMISS_MS) return;
@@ -396,16 +395,28 @@ export function NotificationPromptBanner() {
     let cancelled = false;
     (async () => {
       try {
-        const st = await dashboardFetch<{ data: { has_subscription: boolean } }>("/push/status");
+        const reg = await navigator.serviceWorker.getRegistration("/");
+        const localSub = reg ? await reg.pushManager.getSubscription() : null;
         if (cancelled) return;
-        if (st.data.has_subscription) {
+        if (!localSub?.endpoint) {
+          localStorage.removeItem(SUBSCRIBED_KEY);
+          setShow(true);
+          return;
+        }
+        const device = await dashboardFetch<{ data: { has_subscription: boolean } }>(
+          "/push/subscription-status",
+          { method: "POST", body: { endpoint: localSub.endpoint } }
+        );
+        if (cancelled) return;
+        if (device.data.has_subscription) {
           localStorage.setItem(SUBSCRIBED_KEY, "1");
           setShow(false);
           return;
         }
+        localStorage.removeItem(SUBSCRIBED_KEY);
         setShow(true);
       } catch {
-        if (!cancelled && Notification.permission !== "granted") setShow(true);
+        if (!cancelled) setShow(true);
       }
     })();
     return () => {
