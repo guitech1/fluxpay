@@ -1,1 +1,3 @@
-Triggered production deploy at 2026-10-15T16:47:00Z for homepage HomeAdvantagesBanner, ProfanusPay default exclusion, API boot diagnostics, and push static import.
+# Redeploy trigger
+# 2026-10-15 — NEXUSPAG / GOTHAMPAY / SMOKEPAY / KAVROPAY / PROFANUSPAY API keys upserted
+# ProfanusPay remains excluded from FLUXPAY_ACTIVE_ACQUIRERS until endpoint validation
