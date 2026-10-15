@@ -150,11 +150,15 @@ describe("webhook routes authenticate provider callbacks", () => {
 });
 
 describe("push send classifies VAPID auth failures", () => {
-  it("push.ts treats 401/403 as auth and removes subscription", () => {
+  it("classifies 401/403 as auth and retains subscriptions for recovery", () => {
     const src = readFileSync(join(root, "backend/src/services/push.ts"), "utf8");
-    assert.match(src, /status === 401 \|\| status === 403/);
+    assert.match(src, /status === 401 \\|\\| status === 403/);
     assert.match(src, /authFail/);
+    assert.match(src, /subscription retained/);
     assert.match(src, /diagnoseUserPush/);
+    const start = src.indexOf("if (status === 401 || status === 403)");
+    const end = src.indexOf('console.error(', start);
+    assert.doesNotMatch(src.slice(start, end), /from\("push_subscriptions"\)\.delete/);
   });
 });
 
