@@ -164,9 +164,13 @@ test("webhooks: falha de confirm grava processing_error e responde 500 sem proce
   assert.match(src, /pix_confirmation_failed/);
   const nexusErr = src.indexOf("[webhook/nexuspag] confirmacao PIX falhou");
   assert.ok(nexusErr > 0);
-  const afterNexus = src.slice(nexusErr, nexusErr + 900);
-  assert.match(afterNexus, /status\(500\)/);
-  assert.ok(!afterNexus.includes("markProcessed()"));
+  const catchStart = src.indexOf("catch (confirmErr)", nexusErr);
+  const catchEnd = src.indexOf("\n        await markProcessed();", catchStart);
+  assert.ok(catchStart > nexusErr, "deve existir catch local para falha de confirmação");
+  assert.ok(catchEnd > catchStart, "o caminho de erro deve terminar antes do markProcessed");
+  const errorPath = src.slice(catchStart, catchEnd);
+  assert.match(errorPath, /status\(500\)/);
+  assert.ok(!errorPath.includes("markProcessed()"));
 });
 
 test("webhooks: não importa notifyAfterPixConfirmed (evita notify duplicado)", () => {
@@ -192,4 +196,15 @@ test("reconcile: falha de confirm não marca processed_at", () => {
     !/processed_at:\s*new Date/.test(beforeContinue),
     "processed_at não deve ser setado no catch de falha"
   );
+});
+
+test("webhooks: pagamento ainda não encontrado responde 503 para permitir retry do provedor", () => {
+  const src = readFileSync(join(root, "backend/src/routes/webhooks.ts"), "utf8");
+  const start = src.indexOf('if (!payment) {');
+  const end = src.indexOf('// The authenticated secret must agree', start);
+  assert.ok(start >= 0 && end > start, "bloco de pagamento não encontrado deve existir");
+  const unmatchedPath = src.slice(start, end);
+  assert.match(unmatchedPath, /processing_error:\s*"payment_not_found"/);
+  assert.match(unmatchedPath, /status\(503\)/);
+  assert.ok(!/processed_at/.test(unmatchedPath), "evento não encontrado deve permanecer recuperável");
 });
