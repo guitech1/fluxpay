@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Shield, Zap, Code2, BarChart3, Webhook, Lock } from "lucide-react";
 import { FluxLogo } from "@/components/brand/FluxLogo";
-import { HeroImageSlot } from "@/components/home/HeroImageSlot";
+import { HomeAdvantagesBanner } from "@/components/home/HomeAdvantagesBanner";
 
 /**
  * Site público. O visitante vê a proposta do produto e dois caminhos: entrar
@@ -95,8 +95,8 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Slot da imagem — entre o texto de teste e "Cobranças PIX em segundos" */}
-        <HeroImageSlot />
+        {/* Banner de vantagens (arte de referência FluxPay) */}
+        <HomeAdvantagesBanner />
 
         {/* Benefícios */}
         <section className="max-w-6xl mx-auto px-5 sm:px-6 py-12 sm:py-16">
