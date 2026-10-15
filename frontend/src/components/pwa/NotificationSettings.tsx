@@ -15,20 +15,24 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 const DISMISS_KEY = "fluxpay_push_dismissed_at";
 const DISMISS_MS = 12 * 60 * 60 * 1000;
-/** Apos ativar com sucesso, nao reabrir o banner neste dispositivo. */
 const SUBSCRIBED_KEY = "fluxpay_push_subscribed";
 
 async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
   if (!("serviceWorker" in navigator)) {
     throw new Error("Este navegador nao suporta service worker.");
   }
-  let reg = await navigator.serviceWorker.getRegistration("/");
-  if (!reg) {
-    reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  const reg = await navigator.serviceWorker.register("/sw.js", {
+    scope: "/",
+    updateViaCache: "none",
+  });
+  try {
+    void reg.update();
+  } catch (_) {
+    /* ignore */
   }
   if (reg.installing) {
     await new Promise<void>((resolve, reject) => {
-      const sw = reg!.installing!;
+      const sw = reg.installing!;
       const t = setTimeout(() => reject(new Error("Timeout a activar service worker.")), 15000);
       sw.addEventListener("statechange", () => {
         if (sw.state === "activated" || sw.state === "installed") {
@@ -41,8 +45,55 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
   return navigator.serviceWorker.ready;
 }
 
-/** Fluxo completo: permissao + subscribe no browser + gravar no backend. */
+function applicationServerKeyMatches(
+  existing: PushSubscription,
+  expected: Uint8Array
+): boolean {
+  try {
+    const key = existing.options?.applicationServerKey;
+    if (!key) return false;
+    const view = key instanceof ArrayBuffer ? new Uint8Array(key) : new Uint8Array(key as ArrayBuffer);
+    if (view.byteLength !== expected.byteLength) return false;
+    for (let i = 0; i < view.byteLength; i++) {
+      if (view[i] !== expected[i]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isIosSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const iOS =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const webkit = /WebKit/.test(ua);
+  const chrome = /CriOS|Chrome/.test(ua);
+  return iOS && webkit && !chrome;
+}
+
+function isStandalonePwa(): boolean {
+  if (typeof window === "undefined") return false;
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return (
+    window.matchMedia("(display-mode: standalone)").matches || nav.standalone === true
+  );
+}
+
 async function completePushSubscribe(): Promise<void> {
+  if (isIosSafari() && !isStandalonePwa()) {
+    throw new Error(
+      "No iPhone/iPad, adicione o FluxPay a Tela de Inicio (Partilhar → Adicionar a Tela de Inicio) e abra a app a partir do icone. Safari no separador normal nao entrega Web Push."
+    );
+  }
+  if (!("PushManager" in window)) {
+    throw new Error(
+      "Este navegador nao expoe PushManager. No iOS use a app na Tela de Inicio (iOS 16.4+). No Android use Chrome com o site instalado ou aberto em HTTPS."
+    );
+  }
+
   const reg = await ensureServiceWorker();
   let perm = Notification.permission;
   if (perm === "default") {
@@ -51,7 +102,7 @@ async function completePushSubscribe(): Promise<void> {
   if (perm !== "granted") {
     throw new Error(
       perm === "denied"
-        ? "Notificacoes bloqueadas neste site. No Chrome: cadeado na barra de endereco → Notificacoes → Permitir."
+        ? "Notificacoes bloqueadas neste site. No Chrome: cadeado na barra de endereco → Notificacoes → Permitir. No telemovel: Definicoes do site → Notificacoes."
         : "Permissao nao concedida."
     );
   }
@@ -63,11 +114,20 @@ async function completePushSubscribe(): Promise<void> {
     throw new Error("Chave VAPID publica indisponivel. Contacte o suporte FluxPay.");
   }
 
+  const expectedKey = urlBase64ToUint8Array(publicKey);
   let sub = await reg.pushManager.getSubscription();
+  if (sub && !applicationServerKeyMatches(sub, expectedKey)) {
+    try {
+      await sub.unsubscribe();
+    } catch (_) {
+      /* ignore */
+    }
+    sub = null;
+  }
   if (!sub) {
     sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+      applicationServerKey: expectedKey as BufferSource,
     });
   }
   const json = sub.toJSON();
@@ -94,6 +154,7 @@ export function NotificationSettings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [diagMsg, setDiagMsg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (typeof window === "undefined") return;
@@ -121,6 +182,49 @@ export function NotificationSettings() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function runDiagnostics() {
+    setBusy(true);
+    setErr(null);
+    setDiagMsg(null);
+    try {
+      const browser = {
+        permission: typeof Notification !== "undefined" ? Notification.permission : "n/a",
+        sw: "serviceWorker" in navigator,
+        pushManager: "PushManager" in window,
+        standalone: isStandalonePwa(),
+        iosSafari: isIosSafari(),
+      };
+      let browserSub = false;
+      if (browser.sw && browser.pushManager) {
+        const reg = await navigator.serviceWorker.getRegistration("/");
+        const sub = reg ? await reg.pushManager.getSubscription() : null;
+        browserSub = Boolean(sub);
+      }
+      const d = await dashboardFetch<{
+        data: {
+          vapid_configured: boolean;
+          subscription_count: number;
+          endpoint_hosts: string[];
+          hints: string[];
+        };
+      }>("/push/diagnostics");
+      const lines = [
+        `Browser: permission=${browser.permission} SW=${browser.sw} PushManager=${browser.pushManager} sub=${browserSub} standalone=${browser.standalone}`,
+        `Servidor: vapid=${d.data.vapid_configured} subs=${d.data.subscription_count} hosts=${(d.data.endpoint_hosts || []).join(",") || "-"}`,
+        ...(d.data.hints || []),
+        browser.iosSafari && !browser.standalone
+          ? "iOS: abra a app a partir da Tela de Inicio para Web Push."
+          : "",
+      ].filter(Boolean);
+      setDiagMsg(lines.join(" | "));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Falha no diagnostico.");
+    } finally {
+      setBusy(false);
+      void refresh();
+    }
+  }
 
   async function enable() {
     setBusy(true);
@@ -187,6 +291,7 @@ export function NotificationSettings() {
 
       {err && <Alert tone="error">{err}</Alert>}
       {msg && <Alert tone="success">{msg}</Alert>}
+      {diagMsg && <p className="text-xs text-flux-muted break-all">{diagMsg}</p>}
 
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm text-flux-muted">
@@ -207,6 +312,16 @@ export function NotificationSettings() {
             onClick={() => void enable()}
           >
             {busy ? "A activar…" : "Activar notificacoes"}
+          </button>
+        )}
+        {hasSub && (
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            disabled={busy}
+            onClick={() => void enable()}
+          >
+            Re-activar neste dispositivo
           </button>
         )}
         {permission === "denied" && (
@@ -235,17 +350,20 @@ export function NotificationSettings() {
           >
             Testar venda paga
           </button>
+          <button
+            type="button"
+            className="btn-ghost text-sm"
+            disabled={busy}
+            onClick={() => void runDiagnostics()}
+          >
+            Diagnostico
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-/**
- * Banner no topo do dashboard.
- * So aparece se ainda nao houver inscricao no backend e o utilizador nao dispensou recentemente.
- * Ao clicar em Activar: completa permissao + subscribe + grava no backend (nao reaparece).
- */
 export function NotificationPromptBanner() {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
