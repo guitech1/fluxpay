@@ -183,6 +183,20 @@ export async function listUserSubscriptions(userId: string): Promise<SubRow[]> {
   return (data || []) as SubRow[];
 }
 
+export async function hasUserSubscription(userId: string, endpoint: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from("push_subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("endpoint", endpoint)
+    .maybeSingle();
+  if (error) {
+    console.error("[push] subscription status lookup failed:", error.message);
+    throw new AppError(500, "api_error", "Nao foi possivel verificar a subscricao deste dispositivo.");
+  }
+  return Boolean(data);
+}
+
 export async function notifyOrganizationMembers(params: {
   organizationId: string;
   kind: PushKind;
