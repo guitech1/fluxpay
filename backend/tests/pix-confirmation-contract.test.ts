@@ -176,16 +176,20 @@ test("webhooks: falha de confirm grava processing_error e responde 500 sem proce
   assert.ok(!errorPath.includes("markProcessed()"), "caminho de erro não deve chamar markProcessed");
   assert.match(errorPath, /recordConfirmFailure/);
 
-  // Provider path: confirm failure writes processing_error and returns 500 without finishEvent.
+  // Provider path: from the confirm failure log through the 500 response.
   const providerCatch = src.indexOf("[webhook/provider] confirmacao PIX falhou");
   assert.ok(providerCatch > 0, "provider deve ter catch de falha de confirmação");
-  const providerSlice = src.slice(providerCatch, providerCatch + 900);
+  const providerEnd = src.indexOf("await finishEvent()", providerCatch);
+  assert.ok(providerEnd > providerCatch, "provider catch deve terminar antes do finishEvent de sucesso");
+  const providerSlice = src.slice(providerCatch, providerEnd);
   assert.match(providerSlice, /status\(500\)/);
   assert.match(providerSlice, /pix_confirmation_failed/);
+  assert.match(providerSlice, /confirm_failed:/);
   assert.ok(
-    !/processed_at:\s*new Date/.test(providerSlice.split("res.status(500)")[0] || providerSlice),
+    !/processed_at:\s*new Date/.test(providerSlice),
     "provider não deve marcar processed_at no caminho de falha de confirm"
   );
+  assert.ok(!providerSlice.includes("finishEvent()"), "falha de confirm não deve chamar finishEvent");
 });
 
 test("webhooks: não importa notifyAfterPixConfirmed (evita notify duplicado)", () => {
