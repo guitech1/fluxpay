@@ -162,16 +162,30 @@ test("webhooks: falha de confirm grava processing_error e responde 500 sem proce
   const src = readFileSync(join(root, "backend/src/routes/webhooks.ts"), "utf8");
   assert.match(src, /confirm_failed:/);
   assert.match(src, /pix_confirmation_failed/);
+
+  // NexusPag path: only the catch body (stop before success-path markProcessed).
   const catchStart = src.indexOf("catch (confirmErr)");
-  const nexusErr = src.indexOf("[webhook/nexuspag] confirmacao PIX falhou", catchStart);
-  const catchEnd = src.indexOf("\n      case \"retry_later\":", catchStart);
   assert.ok(catchStart > 0, "deve existir catch local para falha de confirmação");
+  const nexusErr = src.indexOf("[webhook/nexuspag] confirmacao PIX falhou", catchStart);
   assert.ok(nexusErr > catchStart, "deve registrar a falha no catch");
-  assert.ok(catchEnd > catchStart, "o caminho de erro deve terminar antes do próximo caso");
-  const errorPath = src.slice(catchStart, catchEnd);
+  const catchBodyEnd = src.indexOf("\n        await markProcessed()", catchStart);
+  assert.ok(catchBodyEnd > catchStart, "catch deve terminar antes de markProcessed no sucesso");
+  const errorPath = src.slice(catchStart, catchBodyEnd);
   assert.match(errorPath, /status\(500\)/);
   assert.match(errorPath, /return;/);
-  assert.ok(!errorPath.includes("markProcessed()"));
+  assert.ok(!errorPath.includes("markProcessed()"), "caminho de erro não deve chamar markProcessed");
+  assert.match(errorPath, /recordConfirmFailure/);
+
+  // Provider path: confirm failure writes processing_error and returns 500 without finishEvent.
+  const providerCatch = src.indexOf("[webhook/provider] confirmacao PIX falhou");
+  assert.ok(providerCatch > 0, "provider deve ter catch de falha de confirmação");
+  const providerSlice = src.slice(providerCatch, providerCatch + 900);
+  assert.match(providerSlice, /status\(500\)/);
+  assert.match(providerSlice, /pix_confirmation_failed/);
+  assert.ok(
+    !/processed_at:\s*new Date/.test(providerSlice.split("res.status(500)")[0] || providerSlice),
+    "provider não deve marcar processed_at no caminho de falha de confirm"
+  );
 });
 
 test("webhooks: não importa notifyAfterPixConfirmed (evita notify duplicado)", () => {
@@ -201,11 +215,14 @@ test("reconcile: falha de confirm não marca processed_at", () => {
 
 test("webhooks: pagamento ainda não encontrado responde 503 para permitir retry do provedor", () => {
   const src = readFileSync(join(root, "backend/src/routes/webhooks.ts"), "utf8");
-  const start = src.indexOf('if (!payment) {');
-  const end = src.indexOf('// The authenticated secret must agree', start);
+  const start = src.indexOf("if (!payment) {");
+  const end = src.indexOf("// The authenticated secret must agree", start);
   assert.ok(start >= 0 && end > start, "bloco de pagamento não encontrado deve existir");
   const unmatchedPath = src.slice(start, end);
   assert.match(unmatchedPath, /processing_error:\s*"payment_not_found"/);
   assert.match(unmatchedPath, /status\(503\)/);
-  assert.ok(!/processed_at\s*:/.test(unmatchedPath), "evento não encontrado não deve ser marcado como processado");
+  assert.ok(
+    !/processed_at\s*:/.test(unmatchedPath),
+    "evento não encontrado não deve ser marcado como processado"
+  );
 });
