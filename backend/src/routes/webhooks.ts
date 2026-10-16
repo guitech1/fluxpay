@@ -16,7 +16,6 @@ import {
   markPixPaymentSucceeded,
 } from "../services/payments.js";
 import { decideWebhookAction } from "../services/provider-events.js";
-import { notifyAfterPixConfirmed } from "../services/payments-queries-notify.js";
 import {
   applyKycApproved,
   applyKycRejected,
@@ -174,7 +173,7 @@ router.post("/nexuspag", async (req, res, next) => {
     }
 
     // ---- Payment events (existente) ----
-    const txid = payload.txid;
+    const txid = payload.txid || payload.transaction_id || null;
     const externalId = payload.external_id || null;
 
     if (!txid && !externalId) {
@@ -249,6 +248,25 @@ router.post("/nexuspag", async (req, res, next) => {
         .eq("id", eventId);
     };
 
+    const recordConfirmFailure = async (message: string) => {
+      const update = {
+        processing_error: `confirm_failed: ${message}`.slice(0, 500),
+        payment_id: payment?.id ?? null,
+        organization_id: payment?.organization_id ?? null,
+        environment: payment?.environment ?? null,
+      };
+      const result = eventId
+        ? await supabaseAdmin.from("provider_events").update(update).eq("id", eventId)
+        : await supabaseAdmin
+            .from("provider_events")
+            .update(update)
+            .eq("provider", "nexuspag")
+            .eq("provider_event_id", providerEventId);
+      if (result.error) {
+        console.error("[webhook/nexuspag] falha ao registrar erro de confirmacao PIX:", result.error);
+      }
+    };
+
     const decision = decideWebhookAction({
       eventType,
       status: payload.status,
@@ -262,8 +280,28 @@ router.post("/nexuspag", async (req, res, next) => {
         return;
 
       case "confirm":
-        await markPixPaymentSucceeded(payment!);
-        notifyAfterPixConfirmed(payment!);
+        try {
+          await markPixPaymentSucceeded(payment!);
+        } catch (confirmErr) {
+          const msg =
+            confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+          console.error("[webhook/nexuspag] confirmacao PIX falhou:", confirmErr);
+          try {
+            await recordConfirmFailure(msg);
+          } catch (recordErr) {
+            console.error(
+              "[webhook/nexuspag] excecao ao registrar erro de confirmacao PIX:",
+              recordErr
+            );
+          }
+          res.status(500).json({
+            error: {
+              type: "api_error",
+              message: "Confirmacao do pagamento falhou. Evento permanece recuperavel.",
+            },
+          });
+          return;
+        }
         await markProcessed();
         res.status(200).json({ received: true });
         return;
@@ -275,7 +313,8 @@ router.post("/nexuspag", async (req, res, next) => {
           .eq("provider", "nexuspag")
           .eq("provider_event_id", providerEventId);
 
-        res.status(200).json({ received: true, pending_reconciliation: true });
+        // Retorne 5xx para a NexusPag tentar novamente; o cron pode estar desativado.
+        res.status(503).json({ received: true, pending_reconciliation: true });
         return;
 
       case "ignore":
@@ -414,7 +453,7 @@ router.post("/provider", async (req, res, next) => {
           .eq("id", providerEventRowId);
         if (error) console.error("[provider webhook] failed to defer unmatched event:", error);
       }
-      res.status(200).json({ received: true, matched: false, pending_reconciliation: true });
+      res.status(503).json({ received: true, matched: false, pending_reconciliation: true });
       return;
     }
 
@@ -449,8 +488,40 @@ router.post("/provider", async (req, res, next) => {
       return;
     }
 
-    await markPixPaymentSucceeded(payment);
-    notifyAfterPixConfirmed(payment);
+    try {
+      await markPixPaymentSucceeded(payment);
+    } catch (confirmErr) {
+      const msg =
+        confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+      console.error("[webhook/provider] confirmacao PIX falhou:", confirmErr);
+      if (providerEventRowId) {
+        try {
+          const { error: updateError } = await supabaseAdmin
+            .from("provider_events")
+            .update({
+              processing_error: `confirm_failed: ${msg}`.slice(0, 500),
+              payment_id: payment.id,
+              organization_id: payment.organization_id,
+              environment: payment.environment,
+            })
+            .eq("id", providerEventRowId);
+          if (updateError) {
+            console.error(
+              "[webhook/provider] falha ao registrar erro de confirmacao PIX:",
+              updateError
+            );
+          }
+        } catch (recordErr) {
+          console.error(
+            "[webhook/provider] excecao ao registrar erro de confirmacao PIX:",
+            recordErr
+          );
+        }
+      }
+      res.status(500).json({ error: "pix_confirmation_failed" });
+      return;
+    }
+
     await finishEvent();
     res.status(200).json({ received: true, matched: true, payment_id: payment.id });
   } catch (err) {
