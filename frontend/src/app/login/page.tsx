@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { FluxLogo } from "@/components/brand/FluxLogo";
 import { authError } from "@/lib/labels";
+import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 
 /**
  * O middleware manda quem tentou abrir uma pagina privada para ca com
@@ -25,22 +26,35 @@ function LoginForm() {
   const next = safeNext(useSearchParams().get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const siteKeyConfigured = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (siteKeyConfigured && !captchaToken) {
+      setError("Complete a verificação de segurança antes de continuar.");
+      return;
+    }
+
     setLoading(true);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: captchaToken ? { captchaToken } : undefined,
+    });
 
     setLoading(false);
 
     if (error) {
-      // Nunca a mensagem crua do Supabase Auth: authError traduz o que da
-      // para agir em cima e manda o resto para o console.
+      resetTurnstile();
+      setCaptchaToken(null);
       setError(authError(error.message));
       return;
     }
@@ -68,6 +82,7 @@ function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="voce@empresa.com"
+                autoComplete="email"
               />
             </div>
             <div>
@@ -79,8 +94,11 @@ function LoginForm() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                autoComplete="current-password"
               />
             </div>
+
+            <TurnstileWidget onToken={setCaptchaToken} />
 
             {error && (
               <div
@@ -91,7 +109,11 @@ function LoginForm() {
               </div>
             )}
 
-            <button type="submit" disabled={loading} className="btn-primary w-full">
+            <button
+              type="submit"
+              disabled={loading || (siteKeyConfigured && !captchaToken)}
+              className="btn-primary w-full"
+            >
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? "Entrando..." : "Entrar"}
             </button>
@@ -110,8 +132,6 @@ function LoginForm() {
 }
 
 export default function LoginPage() {
-  // useSearchParams exige um limite de Suspense para o Next conseguir
-  // pre-renderizar esta rota.
   return (
     <Suspense>
       <LoginForm />

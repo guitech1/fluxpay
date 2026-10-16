@@ -5,14 +5,18 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { authError } from "@/lib/labels";
 import { FluxLogo } from "@/components/brand/FluxLogo";
+import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 
 export default function SignupPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const siteKeyConfigured = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,22 +27,30 @@ export default function SignupPage() {
       return;
     }
 
+    if (siteKeyConfigured && !captchaToken) {
+      setError("Complete a verificação de segurança antes de continuar.");
+      return;
+    }
+
     setLoading(true);
     const supabase = createClient();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: { full_name: fullName },
+        ...(captchaToken ? { captchaToken } : {}),
+      },
     });
     setLoading(false);
 
     if (error) {
+      resetTurnstile();
+      setCaptchaToken(null);
       setError(authError(error.message));
       return;
     }
 
-    // Se a confirmacao de e-mail estiver desativada no projeto Supabase,
-    // ja existe sessao aqui e da para seguir direto pro onboarding.
     if (data.session) {
       window.location.href = "/onboarding";
       return;
@@ -82,6 +94,7 @@ export default function SignupPage() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Seu nome"
+                autoComplete="name"
               />
             </div>
             <div>
@@ -93,6 +106,7 @@ export default function SignupPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="voce@empresa.com"
+                autoComplete="email"
               />
             </div>
             <div>
@@ -105,8 +119,11 @@ export default function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Minimo 8 caracteres"
+                autoComplete="new-password"
               />
             </div>
+
+            <TurnstileWidget onToken={setCaptchaToken} />
 
             {error && (
               <div
@@ -117,7 +134,11 @@ export default function SignupPage() {
               </div>
             )}
 
-            <button type="submit" disabled={loading} className="btn-primary w-full">
+            <button
+              type="submit"
+              disabled={loading || (siteKeyConfigured && !captchaToken)}
+              className="btn-primary w-full"
+            >
               {loading ? "Criando..." : "Criar conta"}
             </button>
           </form>
