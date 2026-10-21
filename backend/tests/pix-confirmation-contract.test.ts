@@ -31,13 +31,12 @@ test("markPixPaymentSucceeded lanca erro quando RPC falha (nao return silencioso
   );
 });
 
-test("webhooks registram processing_error e respondem 500 em falha de confirmacao", () => {
+test("webhooks propagam falha de confirmacao e so marcam evento como processado apos sucesso", () => {
   const src = readFileSync(join(root, "backend/src/routes/webhooks.ts"), "utf8");
-  assert.match(src, /(?:pix_confirmation_failed|confirm_failed):/);
+  assert.match(src, /case "confirm":[\s\S]*?await markPixPaymentSucceeded\(payment!\);[\s\S]*?await markProcessed\(\);/);
+  // A excecao da confirmacao segue para o handler HTTP; nao se chama markProcessed no catch.
+  assert.match(src, /catch \(err\) \{\s*next\(err\);\s*\}/);
   assert.match(src, /status\(500\)/);
-  // Em falha de confirm, nao deve marcar processed_at no caminho de erro
-  // (finishEvent / markProcessed so apos sucesso)
-  assert.match(src, /pix_confirmation_failed/);
 });
 
 test("reconcile nao marca processed_at quando confirmacao falha", () => {
