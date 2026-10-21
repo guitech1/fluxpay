@@ -49,6 +49,9 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   robots: { index: true, follow: true },
+  other: {
+    "strix-verification": "strix-verify-982cd4d4dc402f3a87faee5a104c107a",
+  },
 };
 
 export const viewport: Viewport = {
