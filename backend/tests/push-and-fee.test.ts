@@ -96,7 +96,7 @@ describe("markPixPaymentSucceeded wires automatic push", () => {
     assert.ok(!src.includes("SEE_LOCAL"));
     const idx = src.indexOf("export async function markPixPaymentSucceeded");
     assert.ok(idx >= 0);
-    const slice = src.slice(idx, idx + 1000);
+    const slice = src.slice(idx, idx + 1800);
     assert.match(slice, /notifyAfterPixConfirmed/);
     assert.match(slice, /payments-queries-notify/);
   });

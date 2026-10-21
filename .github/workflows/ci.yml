@@ -78,6 +78,7 @@ jobs:
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011190000_025_atomic_withdrawal_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011200000_026_atomic_withdrawal_rejection.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011210000_027_refund_idempotency_keys.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261021120000_028_withdrawal_amount_fee_net_consistency.sql
           # Reapply 023 to assert its named CHECK constraint is safely idempotent.
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/migrations/20261011160000_023_unique_charge_and_safe_pix_confirmation.sql
       - name: Run SQL regression tests
@@ -90,6 +91,7 @@ jobs:
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/025_withdrawal_reservation.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/026_withdrawal_rejection.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/027_refund_idempotency.sql
+          psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/028_withdrawal_fee_on_top.sql
           psql -h localhost -U postgres -d fluxpay_test -v ON_ERROR_STOP=1 -f supabase/tests/028_rls_grants.sql
       - name: Execute real concurrent-session regressions
         env:
