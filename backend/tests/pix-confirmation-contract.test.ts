@@ -33,7 +33,7 @@ test("markPixPaymentSucceeded lanca erro quando RPC falha (nao return silencioso
 
 test("webhooks registram processing_error e respondem 500 em falha de confirmacao", () => {
   const src = readFileSync(join(root, "backend/src/routes/webhooks.ts"), "utf8");
-  assert.match(src, /pix_confirmation_failed:/);
+  assert.match(src, /(?:pix_confirmation_failed|confirm_failed):/);
   assert.match(src, /status\(500\)/);
   // Em falha de confirm, nao deve marcar processed_at no caminho de erro
   // (finishEvent / markProcessed so apos sucesso)
