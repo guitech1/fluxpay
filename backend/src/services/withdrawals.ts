@@ -126,6 +126,15 @@ function assertPixKey(type: PixKeyType, key: string): void {
   }
 }
 
+/**
+ * Regra financeira do saque (fee-on-top):
+ * - amountCents (entrada do usuário) = valor que o destinatário recebe (net).
+ * - fee = WITHDRAWAL_FEE_CENTS (fixa).
+ * - total reservado no saldo = amountCents + fee.
+ * - Colunas persistidas: amount = total, net = valor ao destinatário, fee = taxa.
+ * - Provider recebe sempre `net`.
+ * - Available (sum net do ledger) cai pelo total (amount).
+ */
 export async function requestWithdrawal(params: {
   organizationId: string;
   environment: Environment;
@@ -184,12 +193,16 @@ export async function requestWithdrawal(params: {
   }
 
   const feeAmount = WITHDRAWAL_FEE_CENTS;
+  // Valor que o usuário quer receber / enviado ao provider.
   const netAmount = params.amountCents;
+  // Total debitado/reservado na carteira (fee cobrada além do solicitado).
+  const totalAmount = params.amountCents + feeAmount;
+
   const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
     p_organization_id: params.organizationId,
     p_environment: params.environment,
     p_user_id: params.userId,
-    p_amount: params.amountCents,
+    p_amount: totalAmount,
     p_fee_amount: feeAmount,
     p_net_amount: netAmount,
     p_pix_key: params.pixKey.trim(),
@@ -200,8 +213,36 @@ export async function requestWithdrawal(params: {
 
   const row = Array.isArray(data) ? data[0] : data;
   if (error || !row) {
+    const msg = (error?.message || "").toLowerCase();
+    // Distingue saldo insuficiente de inconsistência amount/fee/net e outros 23514.
     if (error?.code === "23514") {
-      throw new AppError(400, "insufficient_funds", "Saldo disponivel insuficiente ou valor de saque invalido.");
+      if (msg.includes("insufficient") || msg.includes("saldo") || msg.includes("balance")) {
+        console.error("[withdrawals] insufficient funds:", {
+          organizationId: params.organizationId,
+          requestedNet: netAmount,
+          fee: feeAmount,
+          total: totalAmount,
+          code: error.code,
+        });
+        throw new AppError(
+          400,
+          "insufficient_funds",
+          "Saldo disponivel insuficiente para o valor solicitado mais a taxa de saque."
+        );
+      }
+      console.error("[withdrawals] amount consistency violation:", {
+        organizationId: params.organizationId,
+        requestedNet: netAmount,
+        fee: feeAmount,
+        total: totalAmount,
+        code: error.code,
+        message: error.message,
+      });
+      throw new AppError(
+        400,
+        "validation_error",
+        "Valor de saque, taxa e valor liquido inconsistentes. Tente novamente ou contate o suporte."
+      );
     }
     if (error?.code === "23505") {
       throw new AppError(409, "conflict", "O correlation_id ja pertence a outro pedido de saque.");
@@ -212,7 +253,14 @@ export async function requestWithdrawal(params: {
     if (error?.code === "23503") {
       throw new AppError(400, "validation_error", "Organizacao ou usuario do saque nao encontrado.");
     }
-    console.error("[withdrawals] atomic reservation failed:", error);
+    console.error("[withdrawals] atomic reservation failed:", {
+      code: error?.code,
+      message: error?.message,
+      organizationId: params.organizationId,
+      totalAmount,
+      netAmount,
+      feeAmount,
+    });
     throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
@@ -401,6 +449,7 @@ export async function approveAndExecuteWithdrawal(params: {
 
   let providerResult;
   try {
+    // Envia o valor líquido (o que o destinatário deve receber).
     providerResult = await createNexusPagWithdrawal({
       amountCents: w.net,
       pixKey: w.pix_key,
