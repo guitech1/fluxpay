@@ -23,6 +23,7 @@ function resolveApiBase(): string {
 
 /**
  * Chama uma rota do backend em /dashboard-api/*.
+ * Ambiente fixo em live — saldo/saque nunca misturam com sandbox.
  */
 export async function dashboardFetch<T = unknown>(
   path: string,
@@ -38,7 +39,6 @@ export async function dashboardFetch<T = unknown>(
   }
 
   const orgId = getCookie("fluxpay_org_id");
-  const environment = getCookie("fluxpay_env") || "test";
   const apiUrl = resolveApiBase();
 
   if (!orgId) {
@@ -55,7 +55,7 @@ export async function dashboardFetch<T = unknown>(
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
         "X-Organization-Id": orgId,
-        "X-Environment": environment,
+        "X-Environment": "live",
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
