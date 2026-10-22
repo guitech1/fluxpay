@@ -15,15 +15,10 @@ declare global {
 
 /**
  * Autentica requisicoes do PAINEL (dashboard) via sessao do Supabase Auth.
- * Diferente do apiKeyAuth (usado por integracoes externas com sk_/pk_), este
- * middleware verifica o access_token do usuario logado e exige o header
- * X-Organization-Id para saber em qual empresa ele quer operar — um mesmo
- * usuario pode pertencer a mais de uma organizacao.
  *
- * Usado apenas pelas rotas em routes/dashboard.ts, que expoem acoes que
- * precisam de logica de servidor (hash de chave, geracao de segredo,
- * chamada ao provider) e por isso nao podem ser feitas direto pelo
- * Supabase client do navegador.
+ * Em producao (NODE_ENV=production) o ambiente e SEMPRE live: o header
+ * X-Environment e o cookie de teste sao ignorados. Isso impede que o lojista
+ * opere sandbox/simulacao e veja saldo ficticio como se fosse dinheiro real.
  */
 export async function sessionAuth(
   req: Request,
@@ -33,7 +28,7 @@ export async function sessionAuth(
   try {
     const authHeader = req.headers.authorization;
     const orgId = req.headers["x-organization-id"] as string | undefined;
-    const environment = (req.headers["x-environment"] as string) || "test";
+    const requestedEnv = (req.headers["x-environment"] as string) || "live";
 
     if (!authHeader?.startsWith("Bearer ")) {
       res.status(401).json({
@@ -52,7 +47,16 @@ export async function sessionAuth(
       return;
     }
 
-    if (environment !== "test" && environment !== "live") {
+    const forceLive =
+      process.env.NODE_ENV === "production" &&
+      process.env.FLUXPAY_ALLOW_TEST_ENV !== "true";
+
+    let environment: "test" | "live";
+    if (forceLive) {
+      environment = "live";
+    } else if (requestedEnv === "test" || requestedEnv === "live") {
+      environment = requestedEnv;
+    } else {
       res.status(400).json({
         error: { type: "validation_error", message: "X-Environment deve ser 'test' ou 'live'." },
       });
@@ -99,10 +103,6 @@ export async function sessionAuth(
       return;
     }
 
-    // Acoes privilegiadas do painel (criar chave, reembolsar, convidar) ficam
-    // bloqueadas quando a conta nao esta ativa. A LEITURA do painel continua
-    // funcionando: ela passa pela RLS do Supabase, nao por aqui — o lojista
-    // suspenso ainda consegue ver o proprio historico e o motivo.
     const { data: org } = await supabaseAdmin
       .from("organizations")
       .select("status")
@@ -122,7 +122,7 @@ export async function sessionAuth(
 
     req.dashboardAuth = {
       organizationId: orgId,
-      environment: environment as "test" | "live",
+      environment,
       apiKeyId: "dashboard",
       apiKeyType: "secret",
       userId: userData.user.id,
