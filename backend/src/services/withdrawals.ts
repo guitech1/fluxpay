@@ -135,8 +135,10 @@ function assertPixKey(type: PixKeyType, key: string): void {
  * - Provider recebe sempre `net`.
  * - Available (sum net do ledger) cai pelo total (amount).
  *
- * Fluxo automático: após reservar o saldo, o saque é enviado ao adquirente
- * sem depender de aprovação manual no ADM.
+ * Fluxo com aprovação obrigatória do ADM:
+ * 1) Usuário solicita → status pending (saldo reservado, dinheiro NÃO sai).
+ * 2) ADM aprova → approveAndExecuteWithdrawal envia ao adquirente.
+ * 3) ADM rejeita → saldo é liberado de volta; dinheiro não sai.
  */
 export async function requestWithdrawal(params: {
   organizationId: string;
@@ -196,7 +198,9 @@ export async function requestWithdrawal(params: {
   }
 
   const feeAmount = WITHDRAWAL_FEE_CENTS;
+  // Valor que o usuário quer receber / enviado ao provider (após aprovação ADM).
   const netAmount = params.amountCents;
+  // Total debitado/reservado na carteira (fee cobrada além do solicitado).
   const totalAmount = params.amountCents + feeAmount;
 
   const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
@@ -264,30 +268,8 @@ export async function requestWithdrawal(params: {
     throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
-  const created = mapWithdrawalRow(row);
-
-  // Auto-execução: envia ao adquirente sem aprovação manual no ADM.
-  // Se o provider falhar, o pedido permanece reservado (processing/failed)
-  // e o ADM ainda pode reconciliar — o saldo já está bloqueado no ledger.
-  try {
-    return await approveAndExecuteWithdrawal({
-      withdrawalId: created.id,
-      adminUserId: params.userId,
-      note: "auto-approve on request",
-    });
-  } catch (err) {
-    console.error("[withdrawals] auto-execute failed after reservation:", {
-      withdrawalId: created.id,
-      organizationId: params.organizationId,
-      err: err instanceof Error ? err.message : err,
-    });
-    // Devolve o estado atual do pedido (pode já estar processing/failed).
-    try {
-      return await getWithdrawal(params.organizationId, params.environment, created.id);
-    } catch {
-      return created;
-    }
-  }
+  // Retorna pending: dinheiro só sai quando o ADM aprovar em /admin/withdrawals.
+  return mapWithdrawalRow(row);
 }
 
 export async function getWithdrawalByCorrelation(
@@ -472,6 +454,7 @@ export async function approveAndExecuteWithdrawal(params: {
 
   let providerResult;
   try {
+    // Envia o valor líquido (o que o destinatário deve receber).
     providerResult = await createNexusPagWithdrawal({
       amountCents: w.net,
       pixKey: w.pix_key,
