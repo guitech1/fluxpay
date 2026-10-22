@@ -6,9 +6,10 @@ export async function getCurrentOrgId(): Promise<string | null> {
   return cookieStore.get("fluxpay_org_id")?.value ?? null;
 }
 
-/** Ambiente selecionado no painel — "test" por padrao, alternavel pelo usuario. */
+/**
+ * Ambiente do painel. Sempre "live": o seletor de teste foi removido e o
+ * backend ignora X-Environment=test em producao. Cookie legado e ignorado.
+ */
 export async function getCurrentEnvironment(): Promise<"test" | "live"> {
-  const cookieStore = await cookies();
-  const value = cookieStore.get("fluxpay_env")?.value;
-  return value === "live" ? "live" : "test";
+  return "live";
 }
