@@ -1,20 +1,11 @@
 /**
- * Operacoes de cartao FluxPay apos o cadastro (approve/reject/block/transfer/list/present).
+ * Operacoes de cartao FluxPay apos o cadastro (approve/reject/block/list/present).
  */
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
-import { getBalance } from "./balance.js";
-import type { FluxPayCardStatus, SafeFluxPayCard } from "./fluxpay-card.js";
-import {
-  formatCardNumberDisplay,
-  getCardByOrganization,
-  getCardByNumber,
-} from "./fluxpay-card.js";
-
-const PASSWORD_MAX_FAILS = 5;
-const PASSWORD_LOCK_MINUTES = 15;
-const SCRYPT_KEYLEN = 64;
+import type { SafeFluxPayCard } from "./fluxpay-card.js";
+import { formatCardNumberDisplay } from "./fluxpay-card.js";
 
 const SAFE_SELECT =
   "id, organization_id, user_id, full_name, phone, status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
@@ -23,26 +14,6 @@ function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
   const copy = { ...row };
   delete copy.password_hash;
   return copy as unknown as SafeFluxPayCard;
-}
-
-function generatePublicTxId(): string {
-  return `FP-${randomBytes(5).toString("hex").toUpperCase()}`;
-}
-
-function verifyPassword(plain: string, stored: string): boolean {
-  try {
-    const parts = stored.split("$");
-    if (parts.length !== 3 || parts[0] !== "scrypt") return false;
-    const salt = parts[1]!;
-    const expected = parts[2]!;
-    const actual = scryptSync(plain, salt, SCRYPT_KEYLEN).toString("hex");
-    const a = Buffer.from(actual, "hex");
-    const b = Buffer.from(expected, "hex");
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
 }
 
 async function writeAudit(params: {
@@ -359,9 +330,7 @@ export async function listCardsForAdmin(params: {
   }
 
   return {
-    items: (data || []).map((r) => stripSensitive(r)),
+    items: (data || []).map((r) => stripSensitive(r as Record<string, unknown>)),
     total: count ?? (data || []).length,
   };
 }
-
-export { transfer } from "./fluxpay-card-transfer.js";
