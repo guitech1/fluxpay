@@ -16,7 +16,7 @@ function walletStatusLabel(status: string | null | undefined): {
   if (!status) {
     return {
       title: "Carteira nao solicitada",
-      description: "Abra sua conta digital para usar Pix e cartao virtual.",
+      description: "Abra sua conta digital para usar Pix e cartao virtual. O cadastro e obrigatorio para todos.",
       tone: "neutral",
     };
   }
@@ -24,14 +24,14 @@ function walletStatusLabel(status: string | null | undefined): {
     return {
       title: "Sua carteira esta aguardando aprovacao",
       description:
-        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis apos a aprovacao.",
+        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis somente apos a aprovacao administrativa.",
       tone: "pending",
     };
   }
   if (status === "rejected") {
     return {
       title: "Sua carteira foi reprovada",
-      description: "Entre em contato com o suporte para mais informacoes.",
+      description: "Entre em contato com o suporte para mais informacoes. Operacoes financeiras permanecem bloqueadas.",
       tone: "bad",
     };
   }
@@ -102,14 +102,16 @@ export default async function CarteiraDigitalPage() {
 
   const statusInfo = walletStatusLabel(walletStatus);
   const hasNoWallet = !walletStatus;
+  const isApproved = walletStatus === "approved";
+  const canOperate = isApproved;
 
   const more = [
-    ...(hasNoWallet
+    ...(hasNoWallet || walletStatus === "rejected"
       ? [
           {
             href: "/dashboard/carteira/cadastro",
-            label: "Solicitar carteira",
-            description: "Cadastro digital",
+            label: hasNoWallet ? "Solicitar carteira" : "Solicitar novamente",
+            description: "Cadastro digital obrigatorio",
             icon: UserPlus,
           },
         ]
@@ -135,13 +137,13 @@ export default async function CarteiraDigitalPage() {
       <div className={NOTE_CLASS[statusInfo.tone]}>
         <p style={{ fontWeight: 600 }}>{statusInfo.title}</p>
         <p style={{ marginTop: 4, opacity: 0.9 }}>{statusInfo.description}</p>
-        {hasNoWallet && (
+        {(hasNoWallet || walletStatus === "rejected") && (
           <Link
             href="/dashboard/carteira/cadastro"
             className="fxb-link-pill"
             style={{ display: "inline-flex", marginTop: 12 }}
           >
-            Solicitar carteira digital
+            {hasNoWallet ? "Solicitar carteira digital" : "Solicitar novamente"}
           </Link>
         )}
       </div>
@@ -153,22 +155,45 @@ export default async function CarteiraDigitalPage() {
             pending={formatCurrency(pending, currency)}
             total={formatCurrency(available + pending, currency)}
           >
-            <Link href="/dashboard/carteira/pix" className="fxb-act">
-              <span className="fxb-act-btn"><PixMark size={26} /></span>
-              <span className="fxb-act-label">Pix</span>
-            </Link>
-            <Link href="/dashboard/carteira/cartao" className="fxb-act">
-              <span className="fxb-act-btn"><CreditCard size={24} /></span>
-              <span className="fxb-act-label">Cartão</span>
-            </Link>
-            <Link href="/dashboard/carteira/extrato" className="fxb-act">
-              <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
-              <span className="fxb-act-label">Extrato</span>
-            </Link>
-            <Link href="/dashboard/carteira/comprovantes" className="fxb-act">
-              <span className="fxb-act-btn"><FileText size={24} /></span>
-              <span className="fxb-act-label">Comprovantes</span>
-            </Link>
+            {canOperate ? (
+              <>
+                <Link href="/dashboard/carteira/pix" className="fxb-act">
+                  <span className="fxb-act-btn"><PixMark size={26} /></span>
+                  <span className="fxb-act-label">Pix</span>
+                </Link>
+                <Link href="/dashboard/carteira/cartao" className="fxb-act">
+                  <span className="fxb-act-btn"><CreditCard size={24} /></span>
+                  <span className="fxb-act-label">Cartão</span>
+                </Link>
+                <Link href="/dashboard/carteira/extrato" className="fxb-act">
+                  <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
+                  <span className="fxb-act-label">Extrato</span>
+                </Link>
+                <Link href="/dashboard/carteira/comprovantes" className="fxb-act">
+                  <span className="fxb-act-btn"><FileText size={24} /></span>
+                  <span className="fxb-act-label">Comprovantes</span>
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><PixMark size={26} /></span>
+                  <span className="fxb-act-label">Pix</span>
+                </span>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><CreditCard size={24} /></span>
+                  <span className="fxb-act-label">Cartão</span>
+                </span>
+                <Link href="/dashboard/carteira/extrato" className="fxb-act">
+                  <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
+                  <span className="fxb-act-label">Extrato</span>
+                </Link>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><FileText size={24} /></span>
+                  <span className="fxb-act-label">Comprovantes</span>
+                </span>
+              </>
+            )}
           </BalanceHero>
 
           <section>
@@ -204,14 +229,20 @@ export default async function CarteiraDigitalPage() {
               <h2>Últimas movimentações</h2>
               <p>Entradas e saídas mais recentes</p>
             </div>
-            <Link href="/dashboard/carteira/extrato" className="fxb-link-pill">Ver extrato</Link>
+            {canOperate ? (
+              <Link href="/dashboard/carteira/extrato" className="fxb-link-pill">Ver extrato</Link>
+            ) : null}
           </div>
 
           {moves.length === 0 ? (
             <div className="fxb-empty">
               <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
               <h3>Nenhuma movimentação ainda</h3>
-              <p>Quando você receber ou enviar dinheiro, ele aparece aqui.</p>
+              <p>
+                {canOperate
+                  ? "Quando você receber ou enviar dinheiro, ele aparece aqui."
+                  : "As operações financeiras liberam após a aprovação da carteira."}
+              </p>
             </div>
           ) : (
             <div className="fxb-list">
