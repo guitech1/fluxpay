@@ -32,6 +32,10 @@ import rankingAdminRouter from "./routes/ranking-admin.js";
 import profileDashboardRouter from "./routes/profile-dashboard.js";
 import profilePublicRouter from "./routes/profile-public.js";
 import pushDashboardRouter from "./routes/push-dashboard.js";
+import digitalAccountDashboardRouter from "./routes/digital-account-dashboard.js";
+import nexusCardDashboardRouter from "./routes/nexus-card-dashboard.js";
+import adminWithdrawalApprovalRouter from "./routes/admin-withdrawal-approval.js";
+import cpfLookupDashboardRouter from "./routes/cpf-lookup-dashboard.js";
 
 const app = express();
 
@@ -117,7 +121,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "fluxpay-api",
-    version: "0.5.0",
+    version: "0.6.2-digital-bank",
     stores: {
       financial: "supabase",
       ranking_participants: label,
@@ -150,6 +154,9 @@ app.use("/dashboard-api/withdrawals", withdrawalsDashboardRouter);
 app.use("/dashboard-api/kyc", kycDashboardRouter);
 app.use("/dashboard-api/support", supportDashboardRouter);
 app.use("/dashboard-api/fluxpay-card", fluxpayCardDashboardRouter);
+app.use("/dashboard-api/digital-account", digitalAccountDashboardRouter);
+app.use("/dashboard-api/nexus-card", nexusCardDashboardRouter);
+app.use("/dashboard-api/cpf", cpfLookupDashboardRouter);
 app.use("/dashboard-api", paymentLinksDashboardRouter);
 app.use("/dashboard-api", scoreDashboardRouter);
 app.use("/dashboard-api", profileDashboardRouter);
@@ -162,6 +169,7 @@ app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 app.use("/admin-api", supportAdminRouter);
 app.use("/admin-api/fluxpay-card", fluxpayCardAdminRouter);
 app.use("/admin-api", rankingAdminRouter);
+app.use("/admin-api", adminWithdrawalApprovalRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

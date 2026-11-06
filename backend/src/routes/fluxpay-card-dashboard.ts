@@ -82,6 +82,9 @@ const createSchema = z.object({
   phone: z.string().min(8).max(20),
   password: z.string().min(8).max(128),
   password_confirmation: z.string().min(8).max(128),
+  cpf: z.string().min(11).max(14),
+  email: z.string().email().max(254),
+  birth_date: z.string().min(10).max(10),
 });
 
 router.post("/create", requireRole("owner", "admin"), async (req, res, next) => {
@@ -92,7 +95,7 @@ router.post("/create", requireRole("owner", "admin"), async (req, res, next) => 
       throw new AppError(
         400,
         "validation_error",
-        "Dados invalidos. Verifique nome, telefone e senha."
+        "Dados invalidos. Verifique nome, CPF, e-mail, data de nascimento, telefone e senha."
       );
     }
 
@@ -103,6 +106,9 @@ router.post("/create", requireRole("owner", "admin"), async (req, res, next) => 
       phone: parsed.data.phone,
       password: parsed.data.password,
       passwordConfirmation: parsed.data.password_confirmation,
+      cpf: parsed.data.cpf,
+      email: parsed.data.email,
+      birthDate: parsed.data.birth_date,
       ipAddress: clientIp(req),
     });
 

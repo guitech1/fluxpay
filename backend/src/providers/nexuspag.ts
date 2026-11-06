@@ -282,3 +282,107 @@ export async function getNexusPagKycVerification(id: string): Promise<NexusPagKy
 
   return { ...mapKyc(data.verification), rawResponse: data };
 }
+
+// ---------------------------------------------------------------------------
+// Cartao virtual pre-pago (documentacao oficial NexusPag)
+// GET/POST /api/cards, POST /api/cards/details, recharges
+// ---------------------------------------------------------------------------
+
+export interface NexusPagCardInfo {
+  status: string | null;
+  last4: string | null;
+  printedName: string | null;
+  balanceCents: number | null;
+  canCreate: boolean;
+  minBalanceToCreateCents: number | null;
+  raw: unknown;
+}
+
+export async function getNexusPagCard(): Promise<NexusPagCardInfo> {
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/cards`, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    throw new Error(`NexusPag cartao HTTP ${res.status}: ${JSON.stringify(data)}`);
+  }
+  const card = data?.card ?? null;
+  const rules = data?.rules ?? {};
+  return {
+    status: card?.status ?? null,
+    last4: card?.last4 ?? card?.final ?? null,
+    printedName: card?.name ?? card?.printed_name ?? null,
+    balanceCents: card?.balance != null ? reaisToCents(Number(card.balance)) : null,
+    canCreate: Boolean(data?.can_create ?? rules?.can_create),
+    minBalanceToCreateCents:
+      rules?.min_balance_to_create != null
+        ? reaisToCents(Number(rules.min_balance_to_create))
+        : null,
+    raw: data,
+  };
+}
+
+export async function requestNexusPagCard(): Promise<NexusPagCardInfo> {
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/cards`, {
+    method: "POST",
+    headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    throw new Error(`NexusPag pedir cartao HTTP ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return getNexusPagCard();
+}
+
+/** Retorna dados sensiveis (numero, CVV, validade). Nunca logar o retorno. */
+export async function getNexusPagCardDetails(): Promise<{
+  number: string | null;
+  cvv: string | null;
+  expiry: string | null;
+  raw: unknown;
+}> {
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/cards/details`, {
+    method: "POST",
+    headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    throw new Error(`NexusPag detalhes cartao HTTP ${res.status}`);
+  }
+  return {
+    number: data?.number ?? data?.card_number ?? null,
+    cvv: data?.cvv ?? null,
+    expiry: data?.expiry ?? data?.expiration ?? null,
+    raw: data,
+  };
+}
+
+export async function createNexusPagCardRecharge(params: {
+  amountCents: number;
+  idempotencyKey?: string;
+}): Promise<{ id: string; status: string; raw: unknown }> {
+  const body: Record<string, unknown> = {
+    amount: centsToReais(params.amountCents),
+  };
+  if (params.idempotencyKey) body.idempotency_key = params.idempotencyKey;
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/cards/recharges`, {
+    method: "POST",
+    headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    throw new Error(`NexusPag recarga cartao HTTP ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return {
+    id: data?.id ?? data?.recharge?.id ?? "",
+    status: data?.status ?? data?.recharge?.status ?? "pending",
+    raw: data,
+  };
+}

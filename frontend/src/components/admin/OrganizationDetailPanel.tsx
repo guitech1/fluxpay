@@ -14,6 +14,7 @@ import {
 } from "./common";
 import { StatusBadge } from "@/components/dashboard/ui";
 import { ReleaseBalanceButton } from "./ReleaseBalanceButton";
+import { WithdrawalApprovalToggle } from "./WithdrawalApprovalToggle";
 
 const short = (v: string | null | undefined) => (v ? v.slice(0, 8) : "—");
 
@@ -145,6 +146,8 @@ export function OrganizationDetailPanel({ id, canAct }: { id: string; canAct: bo
           </div>
         )}
       </div>
+
+      <WithdrawalApprovalToggle organizationId={id} canAct={canAct} />
 
       <div className="card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
