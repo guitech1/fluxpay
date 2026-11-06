@@ -31,7 +31,7 @@ function walletStatusLabel(status: string | null | undefined): {
   if (status === "rejected") {
     return {
       title: "Sua carteira foi reprovada",
-      description: "Entre em contato com o suporte para mais informacoes. Operacoes financeiras permanecem bloqueadas.",
+      description: "Revise seus dados e envie uma nova solicitacao. As operacoes permanecem bloqueadas ate a aprovacao.",
       tone: "bad",
     };
   }
@@ -87,22 +87,25 @@ export default async function CarteiraDigitalPage() {
   const moves = (txData || []) as WalletMove[];
 
   let walletStatus: string | null = null;
-  try {
-    const { data: row } = await supabase
-      .from("fluxpay_cards")
-      .select("status")
-      .eq("organization_id", organization.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    walletStatus = row?.status ?? null;
-  } catch {
-    walletStatus = null;
+  let walletLookupFailed = false;
+  const { data: walletRow, error: walletLookupError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (walletLookupError) {
+    walletLookupFailed = true;
+    console.error("[carteira] failed to read wallet application status", walletLookupError);
+  } else {
+    walletStatus = walletRow?.status ?? null;
   }
 
-  const statusInfo = walletStatusLabel(walletStatus);
-  const hasNoWallet = !walletStatus;
-  const isApproved = walletStatus === "approved";
+  const statusInfo = walletStatusLabel(walletLookupFailed ? "unknown" : walletStatus);
+  const hasNoWallet = !walletLookupFailed && !walletStatus;
+  const isApproved = !walletLookupFailed && walletStatus === "approved";
   const canOperate = isApproved;
 
   const more = [
@@ -111,12 +114,14 @@ export default async function CarteiraDigitalPage() {
           {
             href: "/dashboard/carteira/cadastro",
             label: hasNoWallet ? "Solicitar carteira" : "Solicitar novamente",
-            description: "Cadastro digital obrigatorio",
+            description: "Cadastro digital obrigatório",
             icon: UserPlus,
           },
         ]
       : []),
-    { href: "/dashboard/carteira/config", label: "Configurações", description: "Aparência e PIN Pix", icon: Settings2 },
+    ...(canOperate
+      ? [{ href: "/dashboard/carteira/config", label: "Configurações", description: "Aparência e PIN Pix", icon: Settings2 }]
+      : []),
   ];
 
   return (
@@ -151,9 +156,9 @@ export default async function CarteiraDigitalPage() {
       <div className="fxb-cols">
         <div className="fxb-col">
           <BalanceHero
-            available={formatCurrency(available, currency)}
-            pending={formatCurrency(pending, currency)}
-            total={formatCurrency(available + pending, currency)}
+            available={formatCurrency(canOperate ? available : 0, currency)}
+            pending={formatCurrency(canOperate ? pending : 0, currency)}
+            total={formatCurrency(canOperate ? available + pending : 0, currency)}
           >
             {canOperate ? (
               <>
@@ -165,10 +170,10 @@ export default async function CarteiraDigitalPage() {
                   <span className="fxb-act-btn"><CreditCard size={24} /></span>
                   <span className="fxb-act-label">Cartão</span>
                 </Link>
-                <Link href="/dashboard/carteira/extrato" className="fxb-act">
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
                   <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
                   <span className="fxb-act-label">Extrato</span>
-                </Link>
+                </span>
                 <Link href="/dashboard/carteira/comprovantes" className="fxb-act">
                   <span className="fxb-act-btn"><FileText size={24} /></span>
                   <span className="fxb-act-label">Comprovantes</span>
@@ -234,7 +239,13 @@ export default async function CarteiraDigitalPage() {
             ) : null}
           </div>
 
-          {moves.length === 0 ? (
+          {!canOperate ? (
+            <div className="fxb-empty">
+              <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
+              <h3>Movimentações indisponíveis</h3>
+              <p>O saldo e o histórico financeiro serão exibidos após a aprovação da Carteira Digital.</p>
+            </div>
+          ) : moves.length === 0 ? (
             <div className="fxb-empty">
               <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
               <h3>Nenhuma movimentação ainda</h3>
