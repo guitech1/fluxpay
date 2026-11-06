@@ -27,14 +27,9 @@ export default async function CarteiraPixPage() {
           <ArrowLeft className="w-4 h-4" />
         </Link>
         <PageHeader
-          title="Pix · Transferência"
-          description="Saída por chave Pix (API de saque NexusPag)"
+          title="Pix"
+          description="Transferência por chave Pix"
         />
-      </div>
-
-      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-flux-muted">
-        Somente transferência por chave. QR Code e copia-e-cola de cobranças de terceiros não estão
-        disponíveis na API documentada da NexusPag.
       </div>
 
       <PixTransferForm
