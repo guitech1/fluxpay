@@ -27,6 +27,7 @@ export interface FluxPayCardRow {
   cpf: string | null;
   birth_date: string | null;
   email: string | null;
+  organization_name?: string | null;
   created_at: string;
   updated_at: string;
 }
