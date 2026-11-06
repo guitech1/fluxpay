@@ -7,7 +7,7 @@ import {
   Wallet,
   Banknote,
   Link2,
-  ArrowUpRight,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FluxMark } from "@/components/brand/FluxLogo";
@@ -19,11 +19,11 @@ const ITEMS: {
   center?: boolean;
 }[] = [
   { href: "/dashboard/payments", label: "Pagamentos", icon: CreditCard },
-  { href: "/dashboard/wallet", label: "Carteira", icon: Wallet },
+  { href: "/dashboard/carteira", label: "Digital", icon: Landmark },
   { href: "/dashboard", label: "FluxPay", icon: FluxMark, center: true },
   { href: "/dashboard/fluxpay-card", label: "Card", icon: Banknote },
+  { href: "/dashboard/wallet", label: "Extrato", icon: Wallet },
   { href: "/dashboard/payment-links", label: "Link", icon: Link2 },
-  { href: "/dashboard/wallet?saque=1", label: "Saque", icon: ArrowUpRight },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -32,9 +32,6 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
-/**
- * Barra inferior fixa — mobile only. router.push + useTransition para feedback imediato.
- */
 export function MobileBottomNav() {
   const pathname = usePathname();
   const router = useRouter();
