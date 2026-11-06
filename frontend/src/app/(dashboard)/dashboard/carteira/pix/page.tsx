@@ -27,7 +27,8 @@ export default async function CarteiraPixPage() {
   const primary = balances[0];
   const currency = primary?.currency || organization.default_currency || "BRL";
   const walletStatus = cardRow?.status ?? null;
-  const isApproved = walletStatus === "approved";
+  const isApproved = !cardError && walletStatus === "approved";
+  const statusUnknown = Boolean(cardError);
 
   return (
     <div className="fxb-narrow">
@@ -40,24 +41,28 @@ export default async function CarteiraPixPage() {
       {!isApproved ? (
         <div className="fxb-note fxb-note--warn">
           <p style={{ fontWeight: 600 }}>
-            {!walletStatus
-              ? "Cadastro obrigatorio"
-              : walletStatus === "pending_review"
+            {statusUnknown
+              ? "Não foi possível consultar a carteira"
+              : !walletStatus
+                ? "Cadastro obrigatório"
+                : walletStatus === "pending_review"
                 ? "Aguardando aprovacao"
                 : walletStatus === "rejected"
                   ? "Carteira reprovada"
                   : "Carteira bloqueada"}
           </p>
           <p style={{ marginTop: 4 }}>
-            {!walletStatus
-              ? "Solicite sua carteira digital e aguarde a aprovacao administrativa para enviar Pix."
-              : walletStatus === "pending_review"
+            {statusUnknown
+              ? "Atualize a página ou tente novamente mais tarde. O envio de Pix permanece bloqueado."
+              : !walletStatus
+                ? "Solicite sua carteira digital e aguarde a aprovacao administrativa para enviar Pix."
+                : walletStatus === "pending_review"
                 ? "As transferencias Pix liberam somente apos a aprovacao da sua carteira."
                 : walletStatus === "rejected"
                   ? "Sua solicitacao foi reprovada. Fale com o suporte ou solicite novamente."
                   : "Operacoes financeiras estao indisponiveis enquanto a carteira estiver bloqueada."}
           </p>
-          {(!walletStatus || walletStatus === "rejected") && (
+          {!statusUnknown && (!walletStatus || walletStatus === "rejected") && (
             <Link
               href="/dashboard/carteira/cadastro"
               className="fxb-link-pill"
