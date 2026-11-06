@@ -372,4 +372,13 @@ export async function createCard(params: {
   return stripSensitive(data);
 }
 
-/* PART2_CONTINUES */
+// Re-export operacoes (approve/reject/block/transfer/list/present)
+export {
+  approveCard,
+  rejectCard,
+  blockCard,
+  unblockCard,
+  transfer,
+  presentCard,
+  listCardsForAdmin,
+} from "./fluxpay-card-ops.js";
