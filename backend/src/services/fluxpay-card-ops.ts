@@ -315,7 +315,7 @@ export async function listCardsForAdmin(params: {
 }): Promise<{ items: SafeFluxPayCard[]; total: number }> {
   let query = supabaseAdmin
     .from("fluxpay_cards")
-    .select(SAFE_SELECT, { count: "exact" })
+    .select(`${SAFE_SELECT}, organization:organizations(name)`, { count: "exact" })
     .order("created_at", { ascending: false })
     .range(params.offset ?? 0, (params.offset ?? 0) + (params.limit ?? 50) - 1);
 
@@ -330,7 +330,7 @@ export async function listCardsForAdmin(params: {
   }
 
   return {
-    items: (data || []).map((r) => stripSensitive(r as Record<string, unknown>)),
+    items: (data || []).map((r) => {\n      const row = r as unknown as Record<string, unknown>;\n      const organization = row.organization as { name?: string } | null;\n      return {\n        ...stripSensitive(row),\n        organization_name: organization?.name ?? null,\n      };\n    }),
     total: count ?? (data || []).length,
   };
 }
