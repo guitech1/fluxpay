@@ -1,7 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
-import { getBalance } from "./balance.js";
 
 export type FluxPayCardStatus =
   | "pending_review"
@@ -35,8 +34,6 @@ export interface FluxPayCardRow {
 export type SafeFluxPayCard = FluxPayCardRow;
 
 const PASSWORD_MIN_LENGTH = 8;
-const PASSWORD_MAX_FAILS = 5;
-const PASSWORD_LOCK_MINUTES = 15;
 const SCRYPT_KEYLEN = 64;
 
 const SAFE_SELECT =
@@ -46,22 +43,6 @@ function hashPassword(plain: string): string {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(plain, salt, SCRYPT_KEYLEN).toString("hex");
   return `scrypt$${salt}$${hash}`;
-}
-
-function verifyPassword(plain: string, stored: string): boolean {
-  try {
-    const parts = stored.split("$");
-    if (parts.length !== 3 || parts[0] !== "scrypt") return false;
-    const salt = parts[1]!;
-    const expected = parts[2]!;
-    const actual = scryptSync(plain, salt, SCRYPT_KEYLEN).toString("hex");
-    const a = Buffer.from(actual, "hex");
-    const b = Buffer.from(expected, "hex");
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
 }
 
 function assertPasswordStrength(password: string): void {
@@ -178,10 +159,6 @@ function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
 export function formatCardNumberDisplay(num: string | null): string | null {
   if (!num) return null;
   return num.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
-}
-
-function generatePublicTxId(): string {
-  return `FP-${randomBytes(5).toString("hex").toUpperCase()}`;
 }
 
 async function writeAudit(params: {
@@ -372,13 +349,14 @@ export async function createCard(params: {
   return stripSensitive(data);
 }
 
-// Re-export operacoes (approve/reject/block/transfer/list/present)
+// Re-exports sem ciclo: ops nao reexporta transfer; transfer importa so helpers deste arquivo
 export {
   approveCard,
   rejectCard,
   blockCard,
   unblockCard,
-  transfer,
   presentCard,
   listCardsForAdmin,
 } from "./fluxpay-card-ops.js";
+
+export { transfer } from "./fluxpay-card-transfer.js";
