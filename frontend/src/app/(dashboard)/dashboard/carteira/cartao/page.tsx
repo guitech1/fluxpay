@@ -6,11 +6,13 @@ import { ArrowLeft, Loader2, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { VirtualCard } from "@/components/fluxpay-card/VirtualCard";
 
 interface CardView {
+  issued?: boolean;
   status: string | null;
   last4: string | null;
   printed_name: string | null;
   balance_cents: number | null;
   can_create: boolean;
+  can_request?: boolean;
   min_balance_to_create_cents: number | null;
 }
 
@@ -33,10 +35,10 @@ export default function CarteiraCartaoPage() {
     try {
       const res = await fetch("/dashboard-api/nexus-card", { credentials: "include" });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel carregar o cartao.");
       setCard(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao carregar cartão");
+      setError(e instanceof Error ? e.message : "Nao foi possivel carregar o cartao.");
       setCard(null);
     } finally {
       setLoading(false);
@@ -57,10 +59,10 @@ export default function CarteiraCartaoPage() {
         headers: { "Content-Type": "application/json" },
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel solicitar o cartao.");
       setCard(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao pedir cartão");
+      setError(e instanceof Error ? e.message : "Nao foi possivel solicitar o cartao.");
     } finally {
       setBusy(false);
     }
@@ -76,11 +78,11 @@ export default function CarteiraCartaoPage() {
         headers: { "Content-Type": "application/json" },
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel revelar os dados.");
       setDetails(json.data);
       setShowDetails(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao revelar dados");
+      setError(e instanceof Error ? e.message : "Nao foi possivel revelar os dados.");
     } finally {
       setBusy(false);
     }
@@ -89,7 +91,7 @@ export default function CarteiraCartaoPage() {
   async function recharge() {
     const cents = Math.round(parseFloat(rechargeCents.replace(",", ".")) * 100);
     if (!Number.isFinite(cents) || cents < 100) {
-      setError("Informe um valor mínimo de R$ 1,00 para recarga.");
+      setError("Informe um valor minimo de R$ 1,00 para recarga.");
       return;
     }
     setBusy(true);
@@ -105,15 +107,18 @@ export default function CarteiraCartaoPage() {
         }),
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel recarregar o cartao.");
       setRechargeCents("");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha na recarga");
+      setError(e instanceof Error ? e.message : "Nao foi possivel recarregar o cartao.");
     } finally {
       setBusy(false);
     }
   }
+
+  const isIssued = Boolean(card?.issued || card?.status || card?.last4);
+  const canRequest = Boolean(card?.can_request ?? card?.can_create) && !isIssued;
 
   const displayNumber =
     showDetails && details?.number
@@ -125,7 +130,7 @@ export default function CarteiraCartaoPage() {
   const virtualStatus =
     card?.status === "blocked" || card?.status === "inactive"
       ? "blocked"
-      : card?.status
+      : isIssued
         ? "approved"
         : "pending_review";
 
@@ -139,10 +144,8 @@ export default function CarteiraCartaoPage() {
           <ArrowLeft className="w-4 h-4" />
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">Cartão virtual</h1>
-          <p className="text-sm text-flux-muted">
-            Cartão real NexusPag · visual FluxPay Card
-          </p>
+          <h1 className="text-xl font-semibold">Cartao virtual</h1>
+          <p className="text-sm text-flux-muted">Cartao pre-pago da sua Carteira Digital</p>
         </div>
       </div>
 
@@ -152,30 +155,39 @@ export default function CarteiraCartaoPage() {
         </div>
       ) : (
         <>
-          <VirtualCard
-            fullName={card?.printed_name || "—"}
-            cardNumber={displayNumber}
-            status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
-          />
+          {isIssued ? (
+            <VirtualCard
+              fullName={card?.printed_name || "—"}
+              cardNumber={displayNumber}
+              status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
+            />
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-red-600/15 via-black to-black p-6 space-y-3">
+              <p className="text-sm font-medium">Cartao virtual FluxPay</p>
+              <p className="text-sm text-flux-muted leading-relaxed">
+                Solicite seu cartao pre-pago para usar o saldo da carteira em compras online.
+                E necessario ter pelo menos R$ 100,00 de saldo disponivel.
+              </p>
+            </div>
+          )}
 
           {showDetails && details && (
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm space-y-1">
               <p>
-                <span className="text-flux-muted">Validade:</span>{" "}
-                {details.expiry || "—"}
+                <span className="text-flux-muted">Validade:</span> {details.expiry || "—"}
               </p>
               <p>
                 <span className="text-flux-muted">CVV:</span> {details.cvv || "—"}
               </p>
               <p className="text-xs text-flux-muted pt-1">
-                Dados sensíveis: não compartilhe e oculte após o uso.
+                Dados sensiveis: nao compartilhe e oculte apos o uso.
               </p>
             </div>
           )}
 
-          {card?.balance_cents != null && (
+          {isIssued && card?.balance_cents != null && (
             <p className="text-sm text-flux-muted">
-              Saldo no cartão:{" "}
+              Saldo no cartao:{" "}
               {(card.balance_cents / 100).toLocaleString("pt-BR", {
                 style: "currency",
                 currency: "BRL",
@@ -190,12 +202,12 @@ export default function CarteiraCartaoPage() {
           )}
 
           <div className="flex flex-wrap gap-2">
-            {!card?.status && card?.can_create && (
+            {canRequest && (
               <button type="button" disabled={busy} onClick={requestCard} className="btn-primary">
-                {busy ? "Solicitando…" : "Pedir cartão virtual"}
+                {busy ? "Solicitando…" : "Solicitar cartao virtual"}
               </button>
             )}
-            {card?.status && (
+            {isIssued && (
               <button
                 type="button"
                 disabled={busy}
@@ -203,7 +215,7 @@ export default function CarteiraCartaoPage() {
                 className="btn-secondary inline-flex items-center gap-2"
               >
                 {showDetails ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                {showDetails ? "Ocultar dados" : "Ver número e CVV"}
+                {showDetails ? "Ocultar dados" : "Ver numero e CVV"}
               </button>
             )}
             <button
@@ -216,9 +228,9 @@ export default function CarteiraCartaoPage() {
             </button>
           </div>
 
-          {card?.status && (
+          {isIssued && (
             <div className="rounded-xl border border-white/10 p-4 space-y-3">
-              <p className="text-sm font-medium">Recarregar cartão</p>
+              <p className="text-sm font-medium">Recarregar cartao</p>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -235,13 +247,9 @@ export default function CarteiraCartaoPage() {
             </div>
           )}
 
-          {!card?.can_create && !card?.status && (
+          {!isIssued && !canRequest && !error && (
             <p className="text-sm text-flux-muted">
-              A conta Nexus precisa do saldo mínimo para solicitar o cartão
-              {card?.min_balance_to_create_cents != null
-                ? ` (R$ ${(card.min_balance_to_create_cents / 100).toFixed(2)})`
-                : ""}
-              .
+              Sua solicitacao esta sendo processada ou a carteira ainda nao esta pronta para emissao.
             </p>
           )}
         </>
