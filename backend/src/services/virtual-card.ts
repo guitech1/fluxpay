@@ -7,13 +7,13 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import { getBalance } from "./balance.js";
+import type { NexusPagCardInfo } from "../providers/nexuspag.js";
 import {
   getShopCard,
   requestShopCard,
   getShopCardDetails,
   createShopCardRecharge,
-  type NexusPagCardInfo,
-} from "../providers/nexuspag.js";
+} from "../providers/nexuspag-shop-card.js";
 
 export const VIRTUAL_CARD_MIN_BALANCE_CENTS = 10_000; // R$ 100,00
 
