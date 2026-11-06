@@ -34,6 +34,7 @@ import profilePublicRouter from "./routes/profile-public.js";
 import pushDashboardRouter from "./routes/push-dashboard.js";
 import digitalAccountDashboardRouter from "./routes/digital-account-dashboard.js";
 import nexusCardDashboardRouter from "./routes/nexus-card-dashboard.js";
+import adminWithdrawalApprovalRouter from "./routes/admin-withdrawal-approval.js";
 
 const app = express();
 
@@ -119,7 +120,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "fluxpay-api",
-    version: "0.6.0-digital-bank",
+    version: "0.6.1-digital-bank",
     stores: {
       financial: "supabase",
       ranking_participants: label,
@@ -166,6 +167,7 @@ app.use("/admin-api/withdrawals", withdrawalsAdminRouter);
 app.use("/admin-api", supportAdminRouter);
 app.use("/admin-api/fluxpay-card", fluxpayCardAdminRouter);
 app.use("/admin-api", rankingAdminRouter);
+app.use("/admin-api", adminWithdrawalApprovalRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
