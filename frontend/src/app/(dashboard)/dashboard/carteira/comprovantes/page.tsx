@@ -37,6 +37,30 @@ const KEY_LABEL: Record<string, string> = {
 export default async function ComprovantesPage() {
   const { supabase, organization, environment } = await requireDashboardContext();
 
+  const { data: wallet, error: walletError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (walletError || wallet?.status !== "approved") {
+    return (
+      <div className="fxb-narrow">
+        <ScreenHeader
+          title="Comprovantes"
+          description="Disponíveis após a aprovação da Carteira Digital"
+          icon={<span className="fxb-round fxb-round--lg"><FileText size={22} /></span>}
+        />
+        <div className="fxb-note fxb-note--warn">
+          <p style={{ fontWeight: 600 }}>Carteira Digital ainda não aprovada</p>
+          <p style={{ marginTop: 4 }}>O histórico financeiro e os comprovantes serão liberados após a aprovação da sua solicitação.</p>
+        </div>
+      </div>
+    );
+  }
+
   const { data: withdrawals } = await supabase
     .from("withdrawal_requests")
     .select("id, net, fee, amount, currency, status, pix_key_type, created_at, provider_reference")
