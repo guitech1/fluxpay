@@ -112,3 +112,25 @@ a {
       linear-gradient(to bottom, rgba(255, 255, 255, 0.03), transparent 40%);
   }
 }
+
+/* =========================================================
+   Carteira Digital isolada do dashboard convencional
+   Quando .fxb-isolated está presente, a área da carteira
+   ocupa a viewport e o chrome do dashboard fica oculto.
+   ========================================================= */
+.fxb-isolated {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Esconde o chrome do dashboard enquanto a carteira está aberta */
+body:has(.fxb-isolated) aside,
+body:has(.fxb-isolated) [class*="Topbar"],
+body:has(.fxb-isolated) header.border-b,
+body:has(.fxb-isolated) nav[aria-label*="inferior"],
+body:has(.fxb-isolated) .lg\\:hidden.fixed.top-3 {
+  display: none !important;
+}
