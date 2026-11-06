@@ -18,6 +18,30 @@ export default async function CarteiraExtratoPage({
   const { supabase, organization, environment, role } = await requireDashboardContext();
   const params = await searchParams;
 
+  const { data: wallet, error: walletError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (walletError || wallet?.status !== "approved") {
+    return (
+      <div className="fxb-narrow" style={{ maxWidth: 760 }}>
+        <ScreenHeader
+          title="Extrato"
+          description="Disponível após a aprovação da Carteira Digital"
+          icon={<span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>}
+        />
+        <div className="fxb-note fxb-note--warn">
+          <p style={{ fontWeight: 600 }}>Carteira Digital ainda não aprovada</p>
+          <p style={{ marginTop: 4 }}>Saldo, movimentações e saques serão liberados após a aprovação da sua solicitação.</p>
+        </div>
+      </div>
+    );
+  }
+
   const page = Math.max(1, parseInt(params.page || "1", 10) || 1);
   const from = (page - 1) * PAGE_SIZE;
 
