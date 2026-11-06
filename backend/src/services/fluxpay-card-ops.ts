@@ -330,7 +330,14 @@ export async function listCardsForAdmin(params: {
   }
 
   return {
-    items: (data || []).map((r) => {\n      const row = r as unknown as Record<string, unknown>;\n      const organization = row.organization as { name?: string } | null;\n      return {\n        ...stripSensitive(row),\n        organization_name: organization?.name ?? null,\n      };\n    }),
+    items: (data || []).map((r) => {
+      const row = r as unknown as Record<string, unknown>;
+      const organization = row.organization as { name?: string } | null;
+      return {
+        ...stripSensitive(row),
+        organization_name: organization?.name ?? null,
+      };
+    }),
     total: count ?? (data || []).length,
   };
 }
