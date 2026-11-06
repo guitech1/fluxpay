@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function CarteiraPixPage() {
   const { supabase, organization, environment, role } = await requireDashboardContext();
 
-  const [{ data: balance }, { data: cardRow }] = await Promise.all([
+  const [{ data: balance }, { data: cardRow, error: cardError }] = await Promise.all([
     supabase.rpc("get_organization_balance", {
       p_organization_id: organization.id,
       p_environment: environment,
