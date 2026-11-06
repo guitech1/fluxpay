@@ -169,7 +169,7 @@ export async function getDigitalAccountSummary(organizationId: string) {
   const { data: card } = await supabaseAdmin
     .from("fluxpay_cards")
     .select(
-      "id, full_name, phone, status, card_number, theme_preference, cpf, birth_date, email, rejection_reason, created_at, reviewed_at"
+      "id, full_name, phone, status, card_number, theme_preference, cpf, birth_date, email, rejection_reason, created_at, reviewed_at, pix_pin_hash"
     )
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false })
@@ -177,6 +177,8 @@ export async function getDigitalAccountSummary(organizationId: string) {
     .maybeSingle();
 
   if (!card) return null;
+
+  const hasPixPin = Boolean(card.pix_pin_hash);
 
   return {
     id: card.id,
@@ -187,10 +189,8 @@ export async function getDigitalAccountSummary(organizationId: string) {
       ? `•••• ${String(card.card_number).slice(-4)}`
       : null,
     theme_preference: card.theme_preference || "dark",
-    has_pix_pin: false, // nao expor se tem hash; frontend descobre via tentativa controlada ou flag dedicada
-    cpf_masked: card.cpf
-      ? `***${String(card.cpf).slice(-4)}`
-      : null,
+    has_pix_pin: hasPixPin,
+    cpf_masked: card.cpf ? `***${String(card.cpf).slice(-4)}` : null,
     birth_date: card.birth_date,
     email: card.email,
     rejection_reason: card.rejection_reason,
