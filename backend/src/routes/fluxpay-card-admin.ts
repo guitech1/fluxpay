@@ -40,7 +40,7 @@ function requireApproverRole(req: Request): void {
 
 router.get("/", async (req, res, next) => {
   try {
-    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
     const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
 
