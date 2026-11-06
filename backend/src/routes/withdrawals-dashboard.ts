@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import { sessionAuth, requireRole } from "../middleware/session-auth.js";
+import { requireApprovedDigitalAccount } from "../services/require-approved-wallet.js";
 import {
   requestWithdrawal,
   listWithdrawals,
@@ -16,6 +17,9 @@ router.use(sessionAuth);
 
 router.post("/", requireRole("owner", "admin"), async (req, res, next) => {
   try {
+    // Carteira Digital: Pix so com conta aprovada (cadastro + analise admin).
+    await requireApprovedDigitalAccount(req.dashboardAuth!.organizationId);
+
     const schema = z.object({
       amount: z.number().int().min(1000, "Valor minimo de saque: R$ 10,00."),
       pix_key: z.string().min(1).max(500),
