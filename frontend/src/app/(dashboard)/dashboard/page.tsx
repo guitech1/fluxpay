@@ -111,21 +111,12 @@ export default async function OverviewPage() {
         title="Visão geral"
         description={`${organization.name} · ambiente ${environment === "live" ? "de produção" : "de testes"}`}
         action={
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href="/dashboard/carteira"
-              className="btn-secondary inline-flex items-center gap-2"
-            >
-              <Wallet className="w-4 h-4" />
-              Conta Digital
+          write ? (
+            <Link href="/dashboard/payments/new" className="btn-primary">
+              <Plus className="w-4 h-4" />
+              Criar cobrança
             </Link>
-            {write ? (
-              <Link href="/dashboard/payments/new" className="btn-primary">
-                <Plus className="w-4 h-4" />
-                Criar cobranças
-              </Link>
-            ) : null}
-          </div>
+          ) : undefined
         }
       />
 

@@ -13,8 +13,6 @@ const REQUIRED_BOOT_ENV = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
-  "API_BASE_URL",
-  "FRONTEND_URL",
 ] as const;
 
 /** Chaves opcionais para Web Push (nao bloqueiam boot; sem elas o envio e skip). */
@@ -26,6 +24,8 @@ function envPresence(): {
 } {
   const missing_required = REQUIRED_BOOT_ENV.filter((k) => !process.env[k]?.trim());
   const missing_push = OPTIONAL_PUSH_ENV.filter((k) => !process.env[k]?.trim());
+  if (!process.env.API_BASE_URL?.trim() && !process.env.DEPLOY_PRIME_URL?.trim() && !process.env.URL?.trim()) missing_required.push("API_BASE_URL (or Netlify deploy URL)");
+  if (!process.env.FRONTEND_URL?.trim() && !process.env.DEPLOY_PRIME_URL?.trim() && !process.env.URL?.trim()) missing_required.push("FRONTEND_URL (or Netlify deploy URL)");
   return { missing_required, missing_push };
 }
 
