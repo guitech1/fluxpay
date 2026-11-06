@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, Loader2, Eye, EyeOff, RefreshCw } from "lucide-react";
-import { VirtualCard } from "@/components/fluxpay-card/VirtualCard";
+import { CreditCard, Eye, EyeOff, RefreshCw, Plus } from "lucide-react";
+import { WalletCard } from "@/components/carteira/WalletCard";
+import { ScreenHeader } from "@/components/carteira/ScreenHeader";
 
 interface CardView {
   status: string | null;
@@ -14,6 +14,9 @@ interface CardView {
   min_balance_to_create_cents: number | null;
 }
 
+const brl = (cents: number) =>
+  (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
 export default function CarteiraCartaoPage() {
   const [card, setCard] = useState<CardView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,7 +24,7 @@ export default function CarteiraCartaoPage() {
   const [busy, setBusy] = useState(false);
   const [details, setDetails] = useState<{
     number: string | null;
-    cvv: string | null;
+ cvv: string | null;
     expiry: string | null;
   } | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -130,121 +133,119 @@ export default function CarteiraCartaoPage() {
         : "pending_review";
 
   return (
-    <div className="space-y-6 max-w-lg">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard/carteira"
-          className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Cartão virtual</h1>
-          <p className="text-sm text-flux-muted">
-            Cartão real NexusPag · visual FluxPay Card
-          </p>
-        </div>
-      </div>
+    <div className="fxb-narrow" style={{ maxWidth: 960 }}>
+      <ScreenHeader
+        title="Cartão virtual"
+        description="Para suas compras online, com saldo que você recarrega"
+        icon={<span className="fxb-round fxb-round--lg"><CreditCard size={22} /></span>}
+      />
 
       {loading ? (
-        <div className="flex items-center gap-2 text-flux-muted text-sm">
-          <Loader2 className="w-4 h-4 animate-spin" /> Carregando…
+        <div className="fxb-cols" aria-busy="true" aria-label="Carregando">
+          <div className="fxb-skel" style={{ height: 240 }} />
+          <div className="fxb-skel" style={{ height: 240 }} />
         </div>
       ) : (
-        <>
-          <VirtualCard
-            fullName={card?.printed_name || "—"}
-            cardNumber={displayNumber}
-            status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
-          />
+        <div className="fxb-cols">
+          <div className="fxb-col">
+            <WalletCard
+              fullName={card?.printed_name || "—"}
+              cardNumber={displayNumber}
+              masked={!showDetails}
+              expiry={showDetails ? details?.expiry : null}
+              status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
+            />
 
-          {showDetails && details && (
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm space-y-1">
-              <p>
-                <span className="text-flux-muted">Validade:</span>{" "}
-                {details.expiry || "—"}
-              </p>
-              <p>
-                <span className="text-flux-muted">CVV:</span> {details.cvv || "—"}
-              </p>
-              <p className="text-xs text-flux-muted pt-1">
-                Dados sensíveis: não compartilhe e oculte após o uso.
-              </p>
-            </div>
-          )}
-
-          {card?.balance_cents != null && (
-            <p className="text-sm text-flux-muted">
-              Saldo no cartão:{" "}
-              {(card.balance_cents / 100).toLocaleString("pt-BR", {
-                style: "currency",
-                currency: "BRL",
-              })}
-            </p>
-          )}
-
-          {error && (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-              {error}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {!card?.status && card?.can_create && (
-              <button type="button" disabled={busy} onClick={requestCard} className="btn-primary">
-                {busy ? "Solicitando…" : "Pedir cartão virtual"}
-              </button>
+            {card?.balance_cents != null && (
+              <div className="fxb-stat">
+                <span>Saldo no cartão</span>
+                <strong>{brl(card.balance_cents)}</strong>
+              </div>
             )}
-            {card?.status && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => (showDetails ? setShowDetails(false) : revealDetails())}
-                className="btn-secondary inline-flex items-center gap-2"
-              >
-                {showDetails ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                {showDetails ? "Ocultar dados" : "Ver número e CVV"}
-              </button>
+
+            {showDetails && details && (
+              <div className="fxb-details">
+                <div>
+                  <span>Validade</span>
+                  <strong>{details.expiry || "—"}</strong>
+                </div>
+                <div>
+                  <span>CVV</span>
+                  <strong>{details.cvv || "—"}</strong>
+                </div>
+                <p className="fxb-row-sub" style={{ gridColumn: "1 / -1" }}>
+                  Não compartilhe esses dados e oculte-os depois de usar.
+                </p>
+              </div>
             )}
-            <button
-              type="button"
-              onClick={load}
-              className="btn-secondary inline-flex items-center gap-2"
-              disabled={busy}
-            >
-              <RefreshCw className="w-4 h-4" /> Atualizar
-            </button>
           </div>
 
-          {card?.status && (
-            <div className="rounded-xl border border-white/10 p-4 space-y-3">
-              <p className="text-sm font-medium">Recarregar cartão</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Valor R$"
-                  className="flex-1 rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
-                  value={rechargeCents}
-                  onChange={(e) => setRechargeCents(e.target.value)}
-                />
-                <button type="button" className="btn-primary" disabled={busy} onClick={recharge}>
-                  Recarregar
-                </button>
+          <div className="fxb-col">
+            {error && (
+              <div className="fxb-note fxb-note--err" role="alert">
+                {error}
               </div>
-            </div>
-          )}
+            )}
 
-          {!card?.can_create && !card?.status && (
-            <p className="text-sm text-flux-muted">
-              A conta Nexus precisa do saldo mínimo para solicitar o cartão
-              {card?.min_balance_to_create_cents != null
-                ? ` (R$ ${(card.min_balance_to_create_cents / 100).toFixed(2)})`
-                : ""}
-              .
-            </p>
-          )}
-        </>
+            <div className="fxb-quick">
+              {!card?.status && card?.can_create && (
+                <button type="button" disabled={busy} onClick={requestCard} className="fxb-quick-btn">
+                  <span className="fxb-round"><Plus size={20} /></span>
+                  {busy ? "Solicitando…" : "Pedir cartão"}
+                </button>
+              )}
+              {card?.status && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => (showDetails ? setShowDetails(false) : revealDetails())}
+                  className="fxb-quick-btn"
+                >
+                  <span className="fxb-round">
+                    {showDetails ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </span>
+                  {showDetails ? "Ocultar dados" : "Ver número e CVV"}
+                </button>
+              )}
+              <button type="button" onClick={load} className="fxb-quick-btn" disabled={busy}>
+                <span className="fxb-round"><RefreshCw size={20} /></span>
+                Atualizar
+              </button>
+            </div>
+
+            {card?.status && (
+              <section className="fxb-panel">
+                <div className="fxb-section-head">
+                  <div>
+                    <h2>Recarregar cartão</h2>
+                    <p>Adicione saldo para usar nas compras</p>
+                  </div>
+                </div>
+                <div className="fxb-recharge">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Valor em R$"
+                    value={rechargeCents}
+                    onChange={(e) => setRechargeCents(e.target.value)}
+                    aria-label="Valor da recarga"
+                  />
+                  <button type="button" className="btn btn-primary" disabled={busy} onClick={recharge}>
+                    Recarregar
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {!card?.can_create && !card?.status && (
+              <div className="fxb-note fxb-note--warn">
+                {card?.min_balance_to_create_cents != null
+                  ? `Para pedir o cartão virtual, mantenha pelo menos ${brl(card.min_balance_to_create_cents)} de saldo na conta.`
+                  : "Para pedir o cartão virtual, mantenha o saldo mínimo na conta."}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
