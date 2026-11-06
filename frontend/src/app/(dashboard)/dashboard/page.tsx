@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Wallet, Clock, CheckCircle, XCircle, CreditCard, Plus } from "lucide-react";
+import { Wallet, Clock, CheckCircle, XCircle, CreditCard, Plus, Landmark } from "lucide-react";
 import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { OverviewCharts, type DailyPoint } from "@/components/dashboard/OverviewCharts";
@@ -111,12 +111,18 @@ export default async function OverviewPage() {
         title="Visão geral"
         description={`${organization.name} · ambiente ${environment === "live" ? "de produção" : "de testes"}`}
         action={
-          write ? (
-            <Link href="/dashboard/payments/new" className="btn-primary">
-              <Plus className="w-4 h-4" />
-              Criar cobrança
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/dashboard/carteira" className="btn-secondary">
+              <Landmark className="w-4 h-4" />
+              Conta Digital
             </Link>
-          ) : undefined
+            {write ? (
+              <Link href="/dashboard/payments/new" className="btn-primary">
+                <Plus className="w-4 h-4" />
+                Criar cobrança
+              </Link>
+            ) : null}
+          </div>
         }
       />
 

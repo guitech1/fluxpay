@@ -5,6 +5,7 @@ on:
     branches:
       - feature/multi-acquirer-fees
       - feature/ultima-atualizacao-completa
+      - feature/digital-bank
   pull_request:
     branches:
       - main

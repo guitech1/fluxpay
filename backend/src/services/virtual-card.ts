@@ -4,8 +4,8 @@
  * Saldo minimo R$ 100,00 validado no ledger FluxPay (nao debita automaticamente).
  * Mensagens amigaveis — nunca expor nome do fornecedor ao cliente.
  */
-import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
+import { requireApprovedDigitalAccount } from "./require-approved-wallet.js";
 import { getBalance } from "./balance.js";
 import type { NexusPagCardInfo } from "../providers/nexuspag.js";
 import {
@@ -45,51 +45,6 @@ function friendlyProviderError(err: unknown): never {
   );
 }
 
-async function requireApprovedWallet(organizationId: string) {
-  const { data: card } = await supabaseAdmin
-    .from("fluxpay_cards")
-    .select("id, status, full_name, cpf, email, phone")
-    .eq("organization_id", organizationId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!card) {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Solicite sua carteira digital antes de pedir o cartao virtual."
-    );
-  }
-  if (card.status === "pending_review") {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Sua carteira esta aguardando aprovacao. Aguarde a analise para solicitar o cartao."
-    );
-  }
-  if (card.status === "rejected") {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Sua carteira foi reprovada. Entre em contato com o suporte."
-    );
-  }
-  if (card.status === "blocked") {
-    throw new AppError(403, "permission_error", "Sua carteira esta bloqueada.");
-  }
-  if (card.status !== "approved") {
-    throw new AppError(400, "validation_error", "Sua carteira precisa estar aprovada.");
-  }
-  if (!card.cpf || !card.full_name) {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Complete o cadastro da carteira com nome e CPF antes de solicitar o cartao."
-    );
-  }
-  return card;
-}
 
 async function requireMinLedgerBalance(organizationId: string, environment: "test" | "live") {
   const balance = await getBalance(organizationId, environment);
@@ -122,7 +77,7 @@ export async function getVirtualCardForOrg(params: {
   organizationId: string;
   environment: "test" | "live";
 }) {
-  await requireApprovedWallet(params.organizationId);
+  await requireApprovedDigitalAccount(params.organizationId);
   const shopId = shopRefForOrg(params.organizationId);
   try {
     const card = await getShopCard(shopId);
@@ -136,7 +91,7 @@ export async function requestVirtualCardForOrg(params: {
   organizationId: string;
   environment: "test" | "live";
 }) {
-  const wallet = await requireApprovedWallet(params.organizationId);
+  const wallet = await requireApprovedDigitalAccount(params.organizationId);
   await requireMinLedgerBalance(params.organizationId, params.environment);
 
   const shopId = shopRefForOrg(params.organizationId);
@@ -158,7 +113,7 @@ export async function requestVirtualCardForOrg(params: {
 export async function getVirtualCardDetailsForOrg(params: {
   organizationId: string;
 }) {
-  await requireApprovedWallet(params.organizationId);
+  await requireApprovedDigitalAccount(params.organizationId);
   const shopId = shopRefForOrg(params.organizationId);
   try {
     return await getShopCardDetails(shopId);
@@ -173,7 +128,7 @@ export async function rechargeVirtualCardForOrg(params: {
   amountCents: number;
   idempotencyKey?: string;
 }) {
-  await requireApprovedWallet(params.organizationId);
+  await requireApprovedDigitalAccount(params.organizationId);
   if (!Number.isInteger(params.amountCents) || params.amountCents < 100) {
     throw new AppError(400, "validation_error", "Informe um valor minimo de R$ 1,00.");
   }

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Lock, ShieldCheck } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -56,15 +57,17 @@ export function PixTransferForm({
 
   if (environment !== "live") {
     return (
-      <div className="rounded-xl border border-flux-border bg-flux-gray/40 p-4 text-sm text-flux-muted">
-        Transferências Pix só no ambiente de <strong>Produção</strong>.
+      <div className="fxb-note">
+        <Lock size={18} />
+        <p>As transferências Pix ficam disponíveis apenas na conta em modo de produção.</p>
       </div>
     );
   }
   if (!canTransfer) {
     return (
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200/90">
-        Seu papel não permite transferências. Peça a um administrador.
+      <div className="fxb-note fxb-note--warn">
+        <Lock size={18} />
+        <p>Seu perfil não permite transferências. Peça a um administrador.</p>
       </div>
     );
   }
@@ -126,10 +129,10 @@ export function PixTransferForm({
       const st = result?.data?.status || "pending";
       setSuccess(
         st === "completed"
-          ? "Transferência enviada e confirmada pelo provedor."
+          ? "Pix enviado e confirmado. O comprovante está em Comprovantes."
           : st === "processing"
-            ? "Transferência em processamento no provedor."
-            : "Solicitação registrada. Aguardando processamento/aprovação."
+            ? "Pix em processamento. Acompanhe em Comprovantes."
+            : "Solicitação registrada. Estamos processando seu Pix."
       );
       setAmountReais("");
       setPixKey("");
@@ -148,118 +151,151 @@ export function PixTransferForm({
 
   if (step === "confirm") {
     return (
-      <form onSubmit={submitTransfer} className="space-y-4 card">
-        <h3 className="font-medium">Confirmar transferência Pix</h3>
-        <dl className="text-sm space-y-2">
-          <div className="flex justify-between gap-4">
-            <dt className="text-flux-muted">Tipo</dt>
-            <dd className="uppercase">{pixKeyType}</dd>
+      <form onSubmit={submitTransfer} className="fxb-panel fxb-form fxb-rise">
+        <div className="fxb-steps" aria-hidden>
+          <span data-on="true" />
+          <span data-on="true" />
+        </div>
+        <div className="fxb-section-head" style={{ marginBottom: 0 }}>
+          <div>
+            <h2>Confirmar Pix</h2>
+            <p>Confira os dados antes de enviar</p>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-flux-muted">Chave</dt>
-            <dd className="font-mono text-right break-all">{pixKey}</dd>
+        </div>
+
+        <dl className="fxb-sum">
+          <div>
+            <dt>Tipo da chave</dt>
+            <dd>{KEY_TYPES.find((t) => t.value === pixKeyType)?.label}</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-flux-muted">Valor ao destinatário</dt>
-            <dd className="font-medium">
-              {centsPreview != null ? formatCurrency(centsPreview, currency) : "—"}
-            </dd>
+          <div>
+            <dt>Chave</dt>
+            <dd>{pixKey}</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-flux-muted">Taxa</dt>
+          <div>
+            <dt>Valor</dt>
+            <dd>{centsPreview != null ? formatCurrency(centsPreview, currency) : "—"}</dd>
+          </div>
+          <div>
+            <dt>Taxa</dt>
             <dd>{formatCurrency(FEE_CENTS, currency)}</dd>
           </div>
           {description && (
-            <div className="flex justify-between gap-4">
-              <dt className="text-flux-muted">Descrição</dt>
+            <div>
+              <dt>Descrição</dt>
               <dd>{description}</dd>
             </div>
           )}
+          <div className="fxb-sum-total">
+            <dt>Total debitado</dt>
+            <dd>{centsPreview != null ? formatCurrency(centsPreview + FEE_CENTS, currency) : "—"}</dd>
+          </div>
         </dl>
-        <label className="block text-sm">
-          <span className="text-flux-muted">PIN Pix</span>
+
+        <label className="block">
+          <span className="fxb-label">PIN Pix</span>
           <input
             type="password"
             inputMode="numeric"
             maxLength={8}
             autoComplete="off"
-            className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 text-white"
+            className="w-full"
+            placeholder="Digite seu PIN"
             value={pixPin}
             onChange={(e) => setPixPin(e.target.value.replace(/\D/g, ""))}
             disabled={loading}
           />
         </label>
-        {error && <p className="text-sm text-red-300">{error}</p>}
-        <div className="flex gap-2">
+
+        {error && <div className="fxb-note fxb-note--err" role="alert">{error}</div>}
+
+        <div className="fxb-btn-row">
           <button
             type="button"
-            className="btn-secondary flex-1"
+            className="btn btn-secondary"
             disabled={loading}
             onClick={() => setStep("form")}
           >
             Voltar
           </button>
-          <button type="submit" className="btn-primary flex-1" disabled={loading}>
-            {loading ? "Enviando…" : "Confirmar saída"}
+          <button type="submit" className="btn btn-primary" disabled={loading}>
+            {loading ? "Enviando…" : "Enviar Pix"}
           </button>
         </div>
-        <p className="text-xs text-flux-muted">
-          Operação de saída via saque NexusPag. O status final depende da confirmação do provedor.
+        <p className="fxb-row-sub" style={{ textAlign: "center" }}>
+          <ShieldCheck size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> O status final aparece em Comprovantes.
         </p>
       </form>
     );
   }
 
   return (
-    <form onSubmit={goConfirm} className="space-y-4 card">
-      <h3 className="font-medium">Transferir por chave Pix</h3>
-      <p className="text-xs text-flux-muted">
-        Saldo disponível: {formatCurrency(availableCents, currency)} · Taxa R$ 3,00
-      </p>
-      <label className="block text-sm">
-        <span className="text-flux-muted">Tipo da chave</span>
-        <select
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 text-white"
-          value={pixKeyType}
-          onChange={(e) => setPixKeyType(e.target.value as PixKeyType)}
-        >
-          {KEY_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
+    <form onSubmit={goConfirm} className="fxb-panel fxb-form fxb-rise">
+      <div className="fxb-steps" aria-hidden>
+        <span data-on="true" />
+        <span data-on="false" />
+      </div>
+
+      <label className="block">
+        <span className="fxb-label">Quanto você quer enviar?</span>
+        <div className="fxb-amount-wrap">
+          <span>R$</span>
+          <input
+            className="fxb-amount-input"
+            inputMode="decimal"
+            placeholder="0,00"
+            value={amountReais}
+            onChange={(e) => setAmountReais(e.target.value)}
+          />
+        </div>
+        <p className="fxb-row-sub" style={{ marginTop: "0.5rem" }}>
+          Saldo disponível: {formatCurrency(availableCents, currency)} · Taxa R$ 3,00 · Mínimo R$ 10,00
+        </p>
       </label>
-      <label className="block text-sm">
-        <span className="text-flux-muted">Chave Pix</span>
+
+      <div>
+        <span className="fxb-label">Tipo da chave</span>
+        <div className="fxb-chips" role="radiogroup" aria-label="Tipo da chave Pix">
+          {KEY_TYPES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              role="radio"
+              aria-checked={pixKeyType === t.value}
+              data-active={pixKeyType === t.value}
+              className="fxb-pill"
+              onClick={() => setPixKeyType(t.value)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <label className="block">
+        <span className="fxb-label">Chave Pix</span>
         <input
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 text-white"
+          className="w-full"
           value={pixKey}
           onChange={(e) => setPixKey(e.target.value)}
           autoComplete="off"
+          placeholder="Digite a chave do destinatário"
         />
       </label>
-      <label className="block text-sm">
-        <span className="text-flux-muted">Valor</span>
+
+      <label className="block">
+        <span className="fxb-label">Descrição (opcional)</span>
         <input
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 text-white"
-          inputMode="decimal"
-          placeholder="0,00"
-          value={amountReais}
-          onChange={(e) => setAmountReais(e.target.value)}
-        />
-      </label>
-      <label className="block text-sm">
-        <span className="text-flux-muted">Descrição (opcional)</span>
-        <input
-          className="mt-1 w-full rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2.5 text-white"
+          className="w-full"
           value={description}
           onChange={(e) => setDescription(e.target.value.slice(0, 140))}
         />
       </label>
-      {error && <p className="text-sm text-red-300">{error}</p>}
-      {success && <p className="text-sm text-emerald-300">{success}</p>}
-      <button type="submit" className="btn-primary w-full py-3">
+
+      {error && <div className="fxb-note fxb-note--err" role="alert">{error}</div>}
+      {success && <div className="fxb-note fxb-note--ok" role="status">{success}</div>}
+
+      <button type="submit" className="btn btn-primary w-full">
         Continuar
       </button>
     </form>

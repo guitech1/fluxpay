@@ -1,49 +1,12 @@
 import Link from "next/link";
-import {
-  Send,
-  CreditCard,
-  FileText,
-  Settings2,
-  UserPlus,
-} from "lucide-react";
+import { CreditCard, FileText, ArrowLeftRight, Settings2, UserPlus, ChevronRight } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency } from "@/lib/utils";
-import { PageHeader } from "@/components/dashboard/ui";
+import { BalanceHero } from "@/components/carteira/BalanceHero";
+import { MoveRow, type WalletMove } from "@/components/carteira/MoveRow";
+import { PixMark } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
-
-const shortcuts = [
-  {
-    href: "/dashboard/carteira/cartao",
-    label: "Cartao virtual",
-    description: "Pre-pago da carteira",
-    icon: CreditCard,
-  },
-  {
-    href: "/dashboard/carteira/pix",
-    label: "Pix",
-    description: "Transferir por chave",
-    icon: Send,
-  },
-  {
-    href: "/dashboard/wallet",
-    label: "Extrato",
-    description: "Movimentacoes e saques",
-    icon: FileText,
-  },
-  {
-    href: "/dashboard/carteira/comprovantes",
-    label: "Comprovantes",
-    description: "Historico de transferencias",
-    icon: FileText,
-  },
-  {
-    href: "/dashboard/carteira/config",
-    label: "Configuracoes",
-    description: "PIN e preferencias",
-    icon: Settings2,
-  },
-];
 
 function walletStatusLabel(status: string | null | undefined): {
   title: string;
@@ -53,7 +16,7 @@ function walletStatusLabel(status: string | null | undefined): {
   if (!status) {
     return {
       title: "Carteira nao solicitada",
-      description: "Abra sua conta digital para usar Pix e cartao virtual.",
+      description: "Abra sua conta digital para usar Pix e cartao virtual. O cadastro e obrigatorio para todos.",
       tone: "neutral",
     };
   }
@@ -61,14 +24,14 @@ function walletStatusLabel(status: string | null | undefined): {
     return {
       title: "Sua carteira esta aguardando aprovacao",
       description:
-        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis apos a aprovacao.",
+        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis somente apos a aprovacao administrativa.",
       tone: "pending",
     };
   }
   if (status === "rejected") {
     return {
       title: "Sua carteira foi reprovada",
-      description: "Entre em contato com o suporte para mais informacoes.",
+      description: "Revise seus dados e envie uma nova solicitacao. As operacoes permanecem bloqueadas ate a aprovacao.",
       tone: "bad",
     };
   }
@@ -93,107 +56,213 @@ function walletStatusLabel(status: string | null | undefined): {
   };
 }
 
+const NOTE_CLASS = {
+  ok: "fxb-note fxb-note--ok",
+  pending: "fxb-note fxb-note--warn",
+  bad: "fxb-note fxb-note--err",
+  neutral: "fxb-note",
+} as const;
+
 export default async function CarteiraDigitalPage() {
   const { supabase, organization, environment } = await requireDashboardContext();
 
-  const { data: balance } = await supabase.rpc("get_organization_balance", {
-    p_organization_id: organization.id,
-    p_environment: environment,
-  });
+  const [{ data: balance }, { data: txData }] = await Promise.all([
+    supabase.rpc("get_organization_balance", {
+      p_organization_id: organization.id,
+      p_environment: environment,
+    }),
+    supabase
+      .from("balance_transactions")
+      .select("id, type, amount, net, fee, currency, description, payment_id, available_on, created_at")
+      .eq("environment", environment)
+      .order("created_at", { ascending: false })
+      .limit(6),
+  ]);
 
-  const balances = (balance || []) as {
-    currency: string;
-    available: number;
-    pending: number;
-  }[];
+  const balances = (balance || []) as { currency: string; available: number; pending: number }[];
   const primary = balances[0];
   const currency = primary?.currency || organization.default_currency || "BRL";
+  const available = primary?.available ?? 0;
+  const pending = primary?.pending ?? 0;
+  const moves = (txData || []) as WalletMove[];
 
   let walletStatus: string | null = null;
-  try {
-    const { data: row } = await supabase
-      .from("fluxpay_cards")
-      .select("status")
-      .eq("organization_id", organization.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    walletStatus = row?.status ?? null;
-  } catch {
-    walletStatus = null;
+  let walletLookupFailed = false;
+  const { data: walletRow, error: walletLookupError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (walletLookupError) {
+    walletLookupFailed = true;
+    console.error("[carteira] failed to read wallet application status", walletLookupError);
+  } else {
+    walletStatus = walletRow?.status ?? null;
   }
 
-  const statusInfo = walletStatusLabel(walletStatus);
-  const hasNoWallet = !walletStatus;
+  const statusInfo = walletStatusLabel(walletLookupFailed ? "unknown" : walletStatus);
+  const hasNoWallet = !walletLookupFailed && !walletStatus;
+  const isApproved = !walletLookupFailed && walletStatus === "approved";
+  const canOperate = isApproved;
 
-  const toneClass =
-    statusInfo.tone === "ok"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-      : statusInfo.tone === "pending"
-        ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
-        : statusInfo.tone === "bad"
-          ? "border-red-500/30 bg-red-500/10 text-red-100"
-          : "border-white/10 bg-white/5 text-flux-muted";
+  const more = [
+    ...(hasNoWallet || walletStatus === "rejected"
+      ? [
+          {
+            href: "/dashboard/carteira/cadastro",
+            label: hasNoWallet ? "Solicitar carteira" : "Solicitar novamente",
+            description: "Cadastro digital obrigatório",
+            icon: UserPlus,
+          },
+        ]
+      : []),
+    ...(canOperate
+      ? [{ href: "/dashboard/carteira/config", label: "Configurações", description: "Aparência e PIN Pix", icon: Settings2 }]
+      : []),
+  ];
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        title="Carteira Digital"
-        description="Saldo, Pix, cartao virtual e configuracoes"
-      />
+    <div className="space-y-6">
+      <header className="fxb-head fxb-rise">
+        <span className="fxb-round fxb-round--lg" aria-hidden>
+          {(organization.name || "F").trim().charAt(0).toUpperCase()}
+        </span>
+        <div className="fxb-head-text">
+          <h1>Carteira Digital</h1>
+          <p>
+            {organization.name}
+            {environment !== "live" ? " · modo de teste" : ""}
+          </p>
+        </div>
+      </header>
 
-      <div className={`rounded-xl border px-4 py-3 text-sm ${toneClass}`}>
-        <p className="font-medium">{statusInfo.title}</p>
-        <p className="mt-1 opacity-90">{statusInfo.description}</p>
-        {hasNoWallet && (
+      <div className={NOTE_CLASS[statusInfo.tone]}>
+        <p style={{ fontWeight: 600 }}>{statusInfo.title}</p>
+        <p style={{ marginTop: 4, opacity: 0.9 }}>{statusInfo.description}</p>
+        {(hasNoWallet || walletStatus === "rejected") && (
           <Link
             href="/dashboard/carteira/cadastro"
-            className="inline-flex mt-3 text-sm font-medium text-white underline-offset-2 hover:underline"
+            className="fxb-link-pill"
+            style={{ display: "inline-flex", marginTop: 12 }}
           >
-            Solicitar carteira digital
+            {hasNoWallet ? "Solicitar carteira digital" : "Solicitar novamente"}
           </Link>
         )}
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-red-600/20 via-black to-black p-6 sm:p-8">
-        <p className="text-sm text-white/60 mb-2">Saldo disponivel</p>
-        <p className="text-3xl sm:text-4xl font-semibold tracking-tight text-white">
-          {formatCurrency(primary?.available ?? 0, currency)}
-        </p>
-        <p className="text-sm text-white/50 mt-2">
-          A liberar: {formatCurrency(primary?.pending ?? 0, currency)}
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-        {shortcuts.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="group rounded-2xl border border-white/10 bg-flux-gray/40 p-4 sm:p-5 hover:border-red-500/40 hover:bg-flux-gray/60 transition-colors"
-            >
-              <div className="w-11 h-11 rounded-full bg-red-500/15 flex items-center justify-center mb-3 group-hover:bg-red-500/25 transition-colors">
-                <Icon className="w-5 h-5 text-red-400" />
-              </div>
-              <div className="font-medium text-sm sm:text-base">{item.label}</div>
-              <div className="text-xs text-flux-muted mt-1 leading-snug">{item.description}</div>
-            </Link>
-          );
-        })}
-        {hasNoWallet && (
-          <Link
-            href="/dashboard/carteira/cadastro"
-            className="group rounded-2xl border border-white/10 bg-flux-gray/40 p-4 sm:p-5 hover:border-red-500/40 hover:bg-flux-gray/60 transition-colors"
+      <div className="fxb-cols">
+        <div className="fxb-col">
+          <BalanceHero
+            available={formatCurrency(canOperate ? available : 0, currency)}
+            pending={formatCurrency(canOperate ? pending : 0, currency)}
+            total={formatCurrency(canOperate ? available + pending : 0, currency)}
           >
-            <div className="w-11 h-11 rounded-full bg-red-500/15 flex items-center justify-center mb-3 group-hover:bg-red-500/25 transition-colors">
-              <UserPlus className="w-5 h-5 text-red-400" />
+            {canOperate ? (
+              <>
+                <Link href="/dashboard/carteira/pix" className="fxb-act">
+                  <span className="fxb-act-btn"><PixMark size={26} /></span>
+                  <span className="fxb-act-label">Pix</span>
+                </Link>
+                <Link href="/dashboard/carteira/cartao" className="fxb-act">
+                  <span className="fxb-act-btn"><CreditCard size={24} /></span>
+                  <span className="fxb-act-label">Cartão</span>
+                </Link>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
+                  <span className="fxb-act-label">Extrato</span>
+                </span>
+                <Link href="/dashboard/carteira/comprovantes" className="fxb-act">
+                  <span className="fxb-act-btn"><FileText size={24} /></span>
+                  <span className="fxb-act-label">Comprovantes</span>
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><PixMark size={26} /></span>
+                  <span className="fxb-act-label">Pix</span>
+                </span>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><CreditCard size={24} /></span>
+                  <span className="fxb-act-label">Cartão</span>
+                </span>
+                <Link href="/dashboard/carteira/extrato" className="fxb-act">
+                  <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
+                  <span className="fxb-act-label">Extrato</span>
+                </Link>
+                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
+                  <span className="fxb-act-btn"><FileText size={24} /></span>
+                  <span className="fxb-act-label">Comprovantes</span>
+                </span>
+              </>
+            )}
+          </BalanceHero>
+
+          <section>
+            <div className="fxb-section-head">
+              <h2>Mais opções</h2>
             </div>
-            <div className="font-medium text-sm sm:text-base">Solicitar carteira</div>
-            <div className="text-xs text-flux-muted mt-1 leading-snug">Cadastro digital</div>
-          </Link>
-        )}
+            <div className="fxb-list">
+              {more.map((item, i) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className="fxb-row fxb-row--link fxb-rise"
+                    style={{ "--i": i + 2 } as React.CSSProperties}
+                  >
+                    <span className="fxb-round"><Icon size={20} /></span>
+                    <div className="fxb-row-main">
+                      <p className="fxb-row-title">{item.label}</p>
+                      <p className="fxb-row-sub">{item.description}</p>
+                    </div>
+                    <ChevronRight size={18} />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        <section className="fxb-panel fxb-rise" style={{ "--i": 1 } as React.CSSProperties}>
+          <div className="fxb-section-head">
+            <div>
+              <h2>Últimas movimentações</h2>
+              <p>Entradas e saídas mais recentes</p>
+            </div>
+            {canOperate ? (
+              <Link href="/dashboard/carteira/extrato" className="fxb-link-pill">Ver extrato</Link>
+            ) : null}
+          </div>
+
+          {!canOperate ? (
+            <div className="fxb-empty">
+              <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
+              <h3>Movimentações indisponíveis</h3>
+              <p>O saldo e o histórico financeiro serão exibidos após a aprovação da Carteira Digital.</p>
+            </div>
+          ) : moves.length === 0 ? (
+            <div className="fxb-empty">
+              <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
+              <h3>Nenhuma movimentação ainda</h3>
+              <p>
+                {canOperate
+                  ? "Quando você receber ou enviar dinheiro, ele aparece aqui."
+                  : "As operações financeiras liberam após a aprovação da carteira."}
+              </p>
+            </div>
+          ) : (
+            <div className="fxb-list">
+              {moves.map((m, i) => (
+                <MoveRow key={m.id} move={m} index={i + 2} />
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

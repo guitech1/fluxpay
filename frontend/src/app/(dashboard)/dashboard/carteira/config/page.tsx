@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { Settings2, KeyRound } from "lucide-react";
+import { ScreenHeader } from "@/components/carteira/ScreenHeader";
 
 export default function CarteiraConfigPage() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -63,83 +63,87 @@ export default function CarteiraConfigPage() {
   }
 
   return (
-    <div className="space-y-8 max-w-md">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard/carteira"
-          className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Configurações</h1>
-          <p className="text-sm text-flux-muted">Tema e PIN Pix</p>
-        </div>
+    <div className="fxb-narrow">
+      <ScreenHeader
+        title="Configurações"
+        description="Aparência e segurança da sua carteira"
+        icon={<span className="fxb-round fxb-round--lg"><Settings2 size={22} /></span>}
+      />
+
+      <div className="fxb-col">
+        {msg && <div className="fxb-note fxb-note--ok" role="status">{msg}</div>}
+        {err && <div className="fxb-note fxb-note--err" role="alert">{err}</div>}
+
+        <section className="fxb-panel fxb-rise">
+          <div className="fxb-section-head">
+            <div>
+              <h2>Aparência</h2>
+              <p>Escolha como a carteira aparece para você</p>
+            </div>
+          </div>
+          <div className="fxb-themes">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => saveTheme("dark")}
+              className="fxb-theme"
+              data-active={theme === "dark"}
+              aria-pressed={theme === "dark"}
+            >
+              <span className="fxb-theme-preview fxb-theme-preview--dark" />
+              Preto
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => saveTheme("light")}
+              className="fxb-theme"
+              data-active={theme === "light"}
+              aria-pressed={theme === "light"}
+            >
+              <span className="fxb-theme-preview fxb-theme-preview--light" />
+              Branco
+            </button>
+          </div>
+        </section>
+
+        <section className="fxb-panel fxb-rise" style={{ "--i": 1 } as React.CSSProperties}>
+          <div className="fxb-section-head">
+            <div>
+              <h2>PIN Pix</h2>
+              <p>Usado para autorizar suas transferências. É diferente da senha de acesso.</p>
+            </div>
+            <span className="fxb-round"><KeyRound size={20} /></span>
+          </div>
+          <form onSubmit={savePixPin} className="fxb-form">
+            <input
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={8}
+              placeholder="Novo PIN Pix (4 a 8 dígitos)"
+              className="w-full"
+              value={pixPin}
+              onChange={(e) => setPixPin(e.target.value.replace(/\D/g, ""))}
+              autoComplete="off"
+            />
+            <input
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={8}
+              placeholder="Confirmar PIN Pix"
+              className="w-full"
+              value={pixPin2}
+              onChange={(e) => setPixPin2(e.target.value.replace(/\D/g, ""))}
+              autoComplete="off"
+            />
+            <button type="submit" disabled={busy || pixPin.length < 4} className="btn btn-primary w-full">
+              Salvar PIN Pix
+            </button>
+          </form>
+        </section>
       </div>
-
-      {msg && <div className="text-sm text-emerald-300">{msg}</div>}
-      {err && <div className="text-sm text-red-300">{err}</div>}
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-flux-muted uppercase tracking-wide">Tema</h2>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => saveTheme("dark")}
-            className={`flex-1 rounded-xl border px-4 py-3 text-sm ${
-              theme === "dark" ? "border-red-500 bg-red-500/10" : "border-white/10"
-            }`}
-          >
-            Preto
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => saveTheme("light")}
-            className={`flex-1 rounded-xl border px-4 py-3 text-sm ${
-              theme === "light" ? "border-red-500 bg-red-500/10" : "border-white/10"
-            }`}
-          >
-            Branco
-          </button>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-flux-muted uppercase tracking-wide">PIN Pix</h2>
-        <p className="text-xs text-flux-muted">
-          PIN numérico exclusivo para autorizar saques/transferências Pix. Diferente da senha de
-          acesso da carteira. Armazenado apenas como hash.
-        </p>
-        <form onSubmit={savePixPin} className="space-y-3">
-          <input
-            type="password"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={8}
-            placeholder="Novo PIN Pix (4–8 dígitos)"
-            className="input w-full"
-            value={pixPin}
-            onChange={(e) => setPixPin(e.target.value.replace(/\D/g, ""))}
-            autoComplete="off"
-          />
-          <input
-            type="password"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={8}
-            placeholder="Confirmar PIN Pix"
-            className="input w-full"
-            value={pixPin2}
-            onChange={(e) => setPixPin2(e.target.value.replace(/\D/g, ""))}
-            autoComplete="off"
-          />
-          <button type="submit" disabled={busy || pixPin.length < 4} className="btn-primary w-full">
-            Salvar PIN Pix
-          </button>
-        </form>
-      </section>
     </div>
   );
 }

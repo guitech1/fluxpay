@@ -1,13 +1,65 @@
-import Link from "next/link";
-import { ArrowLeft, FileText } from "lucide-react";
+import { FileText } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { PageHeader, EmptyState, Table, Mono } from "@/components/dashboard/ui";
+import { ScreenHeader } from "@/components/carteira/ScreenHeader";
+import { PixBadge } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
 
+interface Receipt {
+  id: string;
+  net: number;
+  fee: number | null;
+  amount: number;
+  currency: string | null;
+  status: string;
+  pix_key_type: string | null;
+  created_at: string;
+  provider_reference: string | null;
+}
+
+const STATUS: Record<string, { label: string; tone: "ok" | "warn" | "err" }> = {
+  completed: { label: "Concluído", tone: "ok" },
+  processing: { label: "Processando", tone: "warn" },
+  pending: { label: "Em análise", tone: "warn" },
+  failed: { label: "Não concluído", tone: "err" },
+  rejected: { label: "Recusado", tone: "err" },
+};
+
+const KEY_LABEL: Record<string, string> = {
+  cpf: "CPF",
+  cnpj: "CNPJ",
+  email: "E-mail",
+  phone: "Telefone",
+  random: "Chave aleatória",
+};
+
 export default async function ComprovantesPage() {
   const { supabase, organization, environment } = await requireDashboardContext();
+
+  const { data: wallet, error: walletError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (walletError || wallet?.status !== "approved") {
+    return (
+      <div className="fxb-narrow">
+        <ScreenHeader
+          title="Comprovantes"
+          description="Disponíveis após a aprovação da Carteira Digital"
+          icon={<span className="fxb-round fxb-round--lg"><FileText size={22} /></span>}
+        />
+        <div className="fxb-note fxb-note--warn">
+          <p style={{ fontWeight: 600 }}>Carteira Digital ainda não aprovada</p>
+          <p style={{ marginTop: 4 }}>O histórico financeiro e os comprovantes serão liberados após a aprovação da sua solicitação.</p>
+        </div>
+      </div>
+    );
+  }
 
   const { data: withdrawals } = await supabase
     .from("withdrawal_requests")
@@ -18,49 +70,54 @@ export default async function ComprovantesPage() {
     .order("created_at", { ascending: false })
     .limit(30);
 
-  const rows = withdrawals || [];
+  const rows = (withdrawals || []) as Receipt[];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard/carteira"
-          className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <PageHeader
-          title="Comprovantes"
-          description="Saques e transferências Pix registrados no ledger"
-        />
-      </div>
+    <div className="fxb-narrow">
+      <ScreenHeader
+        title="Comprovantes"
+        description="Seus saques e transferências Pix"
+        icon={<span className="fxb-round fxb-round--lg"><FileText size={22} /></span>}
+      />
 
       {rows.length === 0 ? (
-        <EmptyState
-          icon={FileText}
-          title="Nenhum comprovante ainda"
-          description="Quando um saque for confirmado pelo provedor, ele aparece aqui com status real."
-        />
+        <div className="fxb-panel fxb-empty fxb-rise">
+          <span className="fxb-round fxb-round--lg"><FileText size={22} /></span>
+          <h3>Nenhum comprovante ainda</h3>
+          <p>Quando você enviar um Pix ou fizer um saque, o comprovante aparece aqui.</p>
+        </div>
       ) : (
-        <Table headers={["Data", "Status", "Líquido", "Taxa", "Ref."]}>
-          {rows.map((w: any) => (
-            <tr key={w.id} className="hover:bg-flux-gray/40">
-              <td className="px-5 py-3 text-flux-muted whitespace-nowrap">{formatDate(w.created_at)}</td>
-              <td className="px-5 py-3">
-                <span className="text-sm font-medium">{w.status}</span>
-              </td>
-              <td className="px-5 py-3 text-right font-medium">
-                {formatCurrency(w.net, w.currency || "BRL")}
-              </td>
-              <td className="px-5 py-3 text-right text-flux-muted">
-                {formatCurrency(w.fee || 0, w.currency || "BRL")}
-              </td>
-              <td className="px-5 py-3">
-                <Mono>{(w.provider_reference || w.id).slice(0, 12)}</Mono>
-              </td>
-            </tr>
-          ))}
-        </Table>
+        <div className="fxb-list">
+          {rows.map((w, i) => {
+            const st = STATUS[w.status] || { label: w.status, tone: "warn" as const };
+            const cur = w.currency || "BRL";
+            return (
+              <div
+                key={w.id}
+                className="fxb-row fxb-rise"
+                style={{ "--i": Math.min(i, 8) } as React.CSSProperties}
+              >
+                <PixBadge />
+                <div className="fxb-row-main">
+                  <p className="fxb-row-title">
+                    Pix enviado <span className={`fxb-status fxb-status--${st.tone}`}>{st.label}</span>
+                  </p>
+                  <p className="fxb-row-sub">
+                    {formatDate(w.created_at)}
+                    {w.pix_key_type ? ` · ${KEY_LABEL[w.pix_key_type] || w.pix_key_type}` : ""}
+                  </p>
+                  <p className="fxb-row-meta">
+                    Taxa {formatCurrency(w.fee || 0, cur)} ·{" "}
+                    <span className="fxb-mono">{(w.provider_reference || w.id).slice(0, 12)}</span>
+                  </p>
+                </div>
+                <div className="fxb-row-end">
+                  <p className="fxb-money fxb-money--neg">- {formatCurrency(w.net, cur)}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

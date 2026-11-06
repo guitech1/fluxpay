@@ -1,43 +1,85 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
-import { PageHeader } from "@/components/dashboard/ui";
 import { PixTransferForm } from "@/components/dashboard/PixTransferForm";
+import { ScreenHeader } from "@/components/carteira/ScreenHeader";
+import { PixBadge } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
 
 export default async function CarteiraPixPage() {
   const { supabase, organization, environment, role } = await requireDashboardContext();
 
-  const { data: balance } = await supabase.rpc("get_organization_balance", {
-    p_organization_id: organization.id,
-    p_environment: environment,
-  });
+  const [{ data: balance }, { data: cardRow, error: cardError }] = await Promise.all([
+    supabase.rpc("get_organization_balance", {
+      p_organization_id: organization.id,
+      p_environment: environment,
+    }),
+    supabase
+      .from("fluxpay_cards")
+      .select("status")
+      .eq("organization_id", organization.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
   const balances = (balance || []) as { currency: string; available: number }[];
   const primary = balances[0];
   const currency = primary?.currency || organization.default_currency || "BRL";
+  const walletStatus = cardRow?.status ?? null;
+  const isApproved = !cardError && walletStatus === "approved";
+  const statusUnknown = Boolean(cardError);
 
   return (
-    <div className="space-y-6 max-w-lg">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard/carteira"
-          className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <PageHeader
-          title="Pix"
-          description="Transferência por chave Pix"
-        />
-      </div>
-
-      <PixTransferForm
-        availableCents={primary?.available ?? 0}
-        currency={currency}
-        canTransfer={["owner", "admin"].includes(role)}
-        environment={environment}
+    <div className="fxb-narrow">
+      <ScreenHeader
+        title="Pix"
+        description="Envie dinheiro usando uma chave Pix"
+        icon={<PixBadge size="lg" />}
       />
+
+      {!isApproved ? (
+        <div className="fxb-note fxb-note--warn">
+          <p style={{ fontWeight: 600 }}>
+            {statusUnknown
+              ? "Não foi possível consultar a carteira"
+              : !walletStatus
+                ? "Cadastro obrigatório"
+                : walletStatus === "pending_review"
+                ? "Aguardando aprovacao"
+                : walletStatus === "rejected"
+                  ? "Carteira reprovada"
+                  : "Carteira bloqueada"}
+          </p>
+          <p style={{ marginTop: 4 }}>
+            {statusUnknown
+              ? "Atualize a página ou tente novamente mais tarde. O envio de Pix permanece bloqueado."
+              : !walletStatus
+                ? "Solicite sua carteira digital e aguarde a aprovacao administrativa para enviar Pix."
+                : walletStatus === "pending_review"
+                ? "As transferencias Pix liberam somente apos a aprovacao da sua carteira."
+                : walletStatus === "rejected"
+                  ? "Sua solicitacao foi reprovada. Fale com o suporte ou solicite novamente."
+                  : "Operacoes financeiras estao indisponiveis enquanto a carteira estiver bloqueada."}
+          </p>
+          {!statusUnknown && (!walletStatus || walletStatus === "rejected") && (
+            <Link
+              href="/dashboard/carteira/cadastro"
+              className="fxb-link-pill"
+              style={{ display: "inline-flex", marginTop: 12 }}
+            >
+              {!walletStatus ? "Solicitar carteira digital" : "Solicitar novamente"}
+            </Link>
+          )}
+        </div>
+      ) : (
+        <PixTransferForm
+          availableCents={primary?.available ?? 0}
+          currency={currency}
+          canTransfer={["owner", "admin"].includes(role)}
+          environment={environment}
+        />
+      )}
     </div>
   );
 }
