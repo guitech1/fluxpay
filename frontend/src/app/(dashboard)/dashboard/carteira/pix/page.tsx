@@ -1,8 +1,7 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
-import { PageHeader } from "@/components/dashboard/ui";
 import { PixTransferForm } from "@/components/dashboard/PixTransferForm";
+import { ScreenHeader } from "@/components/carteira/ScreenHeader";
+import { PixBadge } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
 
@@ -18,24 +17,12 @@ export default async function CarteiraPixPage() {
   const currency = primary?.currency || organization.default_currency || "BRL";
 
   return (
-    <div className="space-y-6 max-w-lg">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard/carteira"
-          className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <PageHeader
-          title="Pix · Transferência"
-          description="Saída por chave Pix (API de saque NexusPag)"
-        />
-      </div>
-
-      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-flux-muted">
-        Somente transferência por chave. QR Code e copia-e-cola de cobranças de terceiros não estão
-        disponíveis na API documentada da NexusPag.
-      </div>
+    <div className="fxb-narrow">
+      <ScreenHeader
+        title="Pix"
+        description="Envie dinheiro usando uma chave Pix"
+        icon={<PixBadge size="lg" />}
+      />
 
       <PixTransferForm
         availableCents={primary?.available ?? 0}
