@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CreditCard, FileText, ArrowLeftRight, Settings2, UserPlus, Wallet, ChevronRight } from "lucide-react";
+import { CreditCard, FileText, ArrowLeftRight, Settings2, UserPlus, ChevronRight } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency } from "@/lib/utils";
 import { BalanceHero } from "@/components/carteira/BalanceHero";
@@ -8,11 +8,60 @@ import { PixMark } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
 
-const MORE = [
-  { href: "/dashboard/carteira/cadastro", label: "Abrir conta", description: "Cadastro digital em 2 etapas", icon: UserPlus },
-  { href: "/dashboard/fluxpay-card", label: "FluxPay Card", description: "Carteira interna", icon: Wallet },
-  { href: "/dashboard/carteira/config", label: "Configurações", description: "Aparência e PIN Pix", icon: Settings2 },
-];
+function walletStatusLabel(status: string | null | undefined): {
+  title: string;
+  description: string;
+  tone: "neutral" | "pending" | "ok" | "bad";
+} {
+  if (!status) {
+    return {
+      title: "Carteira nao solicitada",
+      description: "Abra sua conta digital para usar Pix e cartao virtual.",
+      tone: "neutral",
+    };
+  }
+  if (status === "pending_review") {
+    return {
+      title: "Sua carteira esta aguardando aprovacao",
+      description:
+        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis apos a aprovacao.",
+      tone: "pending",
+    };
+  }
+  if (status === "rejected") {
+    return {
+      title: "Sua carteira foi reprovada",
+      description: "Entre em contato com o suporte para mais informacoes.",
+      tone: "bad",
+    };
+  }
+  if (status === "blocked") {
+    return {
+      title: "Sua carteira esta bloqueada",
+      description: "Operacoes financeiras estao temporariamente indisponiveis.",
+      tone: "bad",
+    };
+  }
+  if (status === "approved") {
+    return {
+      title: "Sua carteira foi aprovada",
+      description: "Voce ja pode usar Pix, cartao virtual e demais operacoes.",
+      tone: "ok",
+    };
+  }
+  return {
+    title: "Carteira Digital",
+    description: "Acompanhe o status da sua conta.",
+    tone: "neutral",
+  };
+}
+
+const NOTE_CLASS = {
+  ok: "fxb-note fxb-note--ok",
+  pending: "fxb-note fxb-note--warn",
+  bad: "fxb-note fxb-note--err",
+  neutral: "fxb-note",
+} as const;
 
 export default async function CarteiraDigitalPage() {
   const { supabase, organization, environment } = await requireDashboardContext();
@@ -37,6 +86,37 @@ export default async function CarteiraDigitalPage() {
   const pending = primary?.pending ?? 0;
   const moves = (txData || []) as WalletMove[];
 
+  let walletStatus: string | null = null;
+  try {
+    const { data: row } = await supabase
+      .from("fluxpay_cards")
+      .select("status")
+      .eq("organization_id", organization.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    walletStatus = row?.status ?? null;
+  } catch {
+    walletStatus = null;
+  }
+
+  const statusInfo = walletStatusLabel(walletStatus);
+  const hasNoWallet = !walletStatus;
+
+  const more = [
+    ...(hasNoWallet
+      ? [
+          {
+            href: "/dashboard/carteira/cadastro",
+            label: "Solicitar carteira",
+            description: "Cadastro digital",
+            icon: UserPlus,
+          },
+        ]
+      : []),
+    { href: "/dashboard/carteira/config", label: "Configurações", description: "Aparência e PIN Pix", icon: Settings2 },
+  ];
+
   return (
     <div className="space-y-6">
       <header className="fxb-head fxb-rise">
@@ -51,6 +131,20 @@ export default async function CarteiraDigitalPage() {
           </p>
         </div>
       </header>
+
+      <div className={NOTE_CLASS[statusInfo.tone]}>
+        <p style={{ fontWeight: 600 }}>{statusInfo.title}</p>
+        <p style={{ marginTop: 4, opacity: 0.9 }}>{statusInfo.description}</p>
+        {hasNoWallet && (
+          <Link
+            href="/dashboard/carteira/cadastro"
+            className="fxb-link-pill"
+            style={{ display: "inline-flex", marginTop: 12 }}
+          >
+            Solicitar carteira digital
+          </Link>
+        )}
+      </div>
 
       <div className="fxb-cols">
         <div className="fxb-col">
@@ -82,7 +176,7 @@ export default async function CarteiraDigitalPage() {
               <h2>Mais opções</h2>
             </div>
             <div className="fxb-list">
-              {MORE.map((item, i) => {
+              {more.map((item, i) => {
                 const Icon = item.icon;
                 return (
                   <Link

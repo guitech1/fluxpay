@@ -6,11 +6,13 @@ import { WalletCard } from "@/components/carteira/WalletCard";
 import { ScreenHeader } from "@/components/carteira/ScreenHeader";
 
 interface CardView {
+  issued?: boolean;
   status: string | null;
   last4: string | null;
   printed_name: string | null;
   balance_cents: number | null;
   can_create: boolean;
+  can_request?: boolean;
   min_balance_to_create_cents: number | null;
 }
 
@@ -24,7 +26,7 @@ export default function CarteiraCartaoPage() {
   const [busy, setBusy] = useState(false);
   const [details, setDetails] = useState<{
     number: string | null;
- cvv: string | null;
+    cvv: string | null;
     expiry: string | null;
   } | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -36,10 +38,10 @@ export default function CarteiraCartaoPage() {
     try {
       const res = await fetch("/dashboard-api/nexus-card", { credentials: "include" });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel carregar o cartao.");
       setCard(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao carregar cartão");
+      setError(e instanceof Error ? e.message : "Nao foi possivel carregar o cartao.");
       setCard(null);
     } finally {
       setLoading(false);
@@ -60,10 +62,10 @@ export default function CarteiraCartaoPage() {
         headers: { "Content-Type": "application/json" },
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel solicitar o cartao.");
       setCard(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao pedir cartão");
+      setError(e instanceof Error ? e.message : "Nao foi possivel solicitar o cartao.");
     } finally {
       setBusy(false);
     }
@@ -79,11 +81,11 @@ export default function CarteiraCartaoPage() {
         headers: { "Content-Type": "application/json" },
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel revelar os dados.");
       setDetails(json.data);
       setShowDetails(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao revelar dados");
+      setError(e instanceof Error ? e.message : "Nao foi possivel revelar os dados.");
     } finally {
       setBusy(false);
     }
@@ -92,7 +94,7 @@ export default function CarteiraCartaoPage() {
   async function recharge() {
     const cents = Math.round(parseFloat(rechargeCents.replace(",", ".")) * 100);
     if (!Number.isFinite(cents) || cents < 100) {
-      setError("Informe um valor mínimo de R$ 1,00 para recarga.");
+      setError("Informe um valor minimo de R$ 1,00 para recarga.");
       return;
     }
     setBusy(true);
@@ -108,15 +110,18 @@ export default function CarteiraCartaoPage() {
         }),
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel recarregar o cartao.");
       setRechargeCents("");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha na recarga");
+      setError(e instanceof Error ? e.message : "Nao foi possivel recarregar o cartao.");
     } finally {
       setBusy(false);
     }
   }
+
+  const isIssued = Boolean(card?.issued || card?.status || card?.last4);
+  const canRequest = Boolean(card?.can_request ?? card?.can_create) && !isIssued;
 
   const displayNumber =
     showDetails && details?.number
@@ -128,7 +133,7 @@ export default function CarteiraCartaoPage() {
   const virtualStatus =
     card?.status === "blocked" || card?.status === "inactive"
       ? "blocked"
-      : card?.status
+      : isIssued
         ? "approved"
         : "pending_review";
 
@@ -148,15 +153,29 @@ export default function CarteiraCartaoPage() {
       ) : (
         <div className="fxb-cols">
           <div className="fxb-col">
-            <WalletCard
-              fullName={card?.printed_name || "—"}
-              cardNumber={displayNumber}
-              masked={!showDetails}
-              expiry={showDetails ? details?.expiry : null}
-              status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
-            />
+            {isIssued ? (
+              <WalletCard
+                fullName={card?.printed_name || "—"}
+                cardNumber={displayNumber}
+                masked={!showDetails}
+                expiry={showDetails ? details?.expiry : null}
+                status={virtualStatus as "approved" | "blocked" | "pending_review" | "rejected"}
+              />
+            ) : (
+              <section className="fxb-panel">
+                <div className="fxb-section-head">
+                  <div>
+                    <h2>Cartao virtual FluxPay</h2>
+                    <p>
+                      Solicite seu cartao pre-pago para usar o saldo da carteira em compras online.
+                      E necessario ter pelo menos R$ 100,00 de saldo disponivel.
+                    </p>
+                  </div>
+                </div>
+              </section>
+            )}
 
-            {card?.balance_cents != null && (
+            {isIssued && card?.balance_cents != null && (
               <div className="fxb-stat">
                 <span>Saldo no cartão</span>
                 <strong>{brl(card.balance_cents)}</strong>
@@ -188,13 +207,13 @@ export default function CarteiraCartaoPage() {
             )}
 
             <div className="fxb-quick">
-              {!card?.status && card?.can_create && (
+              {canRequest && (
                 <button type="button" disabled={busy} onClick={requestCard} className="fxb-quick-btn">
                   <span className="fxb-round"><Plus size={20} /></span>
                   {busy ? "Solicitando…" : "Pedir cartão"}
                 </button>
               )}
-              {card?.status && (
+              {isIssued && (
                 <button
                   type="button"
                   disabled={busy}
@@ -213,7 +232,7 @@ export default function CarteiraCartaoPage() {
               </button>
             </div>
 
-            {card?.status && (
+            {isIssued && (
               <section className="fxb-panel">
                 <div className="fxb-section-head">
                   <div>
@@ -237,11 +256,9 @@ export default function CarteiraCartaoPage() {
               </section>
             )}
 
-            {!card?.can_create && !card?.status && (
+            {!isIssued && !canRequest && !error && (
               <div className="fxb-note fxb-note--warn">
-                {card?.min_balance_to_create_cents != null
-                  ? `Para pedir o cartão virtual, mantenha pelo menos ${brl(card.min_balance_to_create_cents)} de saldo na conta.`
-                  : "Para pedir o cartão virtual, mantenha o saldo mínimo na conta."}
+                Sua solicitacao esta sendo processada ou a carteira ainda nao esta pronta para emissao.
               </div>
             )}
           </div>

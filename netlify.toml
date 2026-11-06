@@ -11,9 +11,9 @@
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
   NPM_FLAGS = "--include-workspace-root --include=dev"
-  AWS_LAMBDA_JS_RUNTIME = "nodejs20.x"
+  AWS_LAMBDA_JS_RUNTIME = "nodejs22.x"
 
 [functions]
   node_bundler = "esbuild"
