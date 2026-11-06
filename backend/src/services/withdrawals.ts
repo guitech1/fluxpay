@@ -3,6 +3,7 @@ import { AppError } from "../middleware/error.js";
 import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
 import type { Environment } from "../types/index.js";
 import { WITHDRAWAL_FEE_CENTS, WITHDRAWAL_MIN_CENTS } from "./withdrawal-fee.js";
+import { getRequiresManualWithdrawalApproval } from "./withdrawal-approval.js";
 
 export type WithdrawalStatus =
   | "pending"
@@ -133,12 +134,12 @@ function assertPixKey(type: PixKeyType, key: string): void {
  * - total reservado no saldo = amountCents + fee.
  * - Colunas persistidas: amount = total, net = valor ao destinatário, fee = taxa.
  * - Provider recebe sempre `net`.
- * - Available (sum net do ledger) cai pelo total (amount).
  *
- * Fluxo com aprovação obrigatória do ADM:
- * 1) Usuário solicita → status pending (saldo reservado, dinheiro NÃO sai).
- * 2) ADM aprova → approveAndExecuteWithdrawal envia ao adquirente.
- * 3) ADM rejeita → saldo é liberado de volta; dinheiro não sai.
+ * Aprovação manual configurável por organização:
+ * - requires_manual_withdrawal_approval = true  → permanece pending até ADM aprovar
+ * - requires_manual_withdrawal_approval = false → auto-executa após reserva
+ * Default no schema: false, mas o fluxo histórico era sempre manual; a flag
+ * permite liberar contas confiáveis sem fila.
  */
 export async function requestWithdrawal(params: {
   organizationId: string;
@@ -198,10 +199,10 @@ export async function requestWithdrawal(params: {
   }
 
   const feeAmount = WITHDRAWAL_FEE_CENTS;
-  // Valor que o usuário quer receber / enviado ao provider (após aprovação ADM).
   const netAmount = params.amountCents;
-  // Total debitado/reservado na carteira (fee cobrada além do solicitado).
   const totalAmount = params.amountCents + feeAmount;
+
+  const requiresManual = await getRequiresManualWithdrawalApproval(params.organizationId);
 
   const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
     p_organization_id: params.organizationId,
@@ -221,27 +222,12 @@ export async function requestWithdrawal(params: {
     const msg = (error?.message || "").toLowerCase();
     if (error?.code === "23514") {
       if (msg.includes("insufficient") || msg.includes("saldo") || msg.includes("balance")) {
-        console.error("[withdrawals] insufficient funds:", {
-          organizationId: params.organizationId,
-          requestedNet: netAmount,
-          fee: feeAmount,
-          total: totalAmount,
-          code: error.code,
-        });
         throw new AppError(
           400,
           "insufficient_funds",
           "Saldo disponivel insuficiente para o valor solicitado mais a taxa de saque."
         );
       }
-      console.error("[withdrawals] amount consistency violation:", {
-        organizationId: params.organizationId,
-        requestedNet: netAmount,
-        fee: feeAmount,
-        total: totalAmount,
-        code: error.code,
-        message: error.message,
-      });
       throw new AppError(
         400,
         "validation_error",
@@ -261,15 +247,40 @@ export async function requestWithdrawal(params: {
       code: error?.code,
       message: error?.message,
       organizationId: params.organizationId,
-      totalAmount,
-      netAmount,
-      feeAmount,
     });
     throw new AppError(503, "api_error", "Nao foi possivel reservar o saldo e registrar o saque atomicamente.");
   }
 
-  // Retorna pending: dinheiro só sai quando o ADM aprovar em /admin/withdrawals.
-  return mapWithdrawalRow(row);
+  let withdrawal = mapWithdrawalRow(row);
+
+  // Conta sem aprovação manual: tenta executar imediatamente (mesma lógica do ADM).
+  // Se o provider falhar, o saque fica em processing/failed — saldo já reservado.
+  if (!requiresManual && withdrawal.status === "pending") {
+    try {
+      withdrawal = await approveAndExecuteWithdrawal({
+        withdrawalId: withdrawal.id,
+        adminUserId: params.userId,
+        note: "auto_execute: requires_manual_withdrawal_approval=false",
+      });
+    } catch (autoErr) {
+      console.error("[withdrawals] auto-execute failed, leaving pending/processing:", {
+        withdrawalId: withdrawal.id,
+        message: autoErr instanceof Error ? autoErr.message : String(autoErr),
+      });
+      // Recarrega estado atual após tentativa
+      try {
+        withdrawal = await getWithdrawal(
+          params.organizationId,
+          params.environment,
+          withdrawal.id
+        );
+      } catch {
+        /* mantém o row original */
+      }
+    }
+  }
+
+  return withdrawal;
 }
 
 export async function getWithdrawalByCorrelation(
@@ -454,7 +465,6 @@ export async function approveAndExecuteWithdrawal(params: {
 
   let providerResult;
   try {
-    // Envia o valor líquido (o que o destinatário deve receber).
     providerResult = await createNexusPagWithdrawal({
       amountCents: w.net,
       pixKey: w.pix_key,
