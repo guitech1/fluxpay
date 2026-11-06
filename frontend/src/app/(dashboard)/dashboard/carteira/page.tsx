@@ -2,12 +2,11 @@ import Link from "next/link";
 import {
   Wallet,
   Send,
-  QrCode,
   CreditCard,
-  Vault,
   FileText,
   Settings2,
   ArrowLeftRight,
+  UserPlus,
 } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency } from "@/lib/utils";
@@ -19,38 +18,44 @@ const shortcuts = [
   {
     href: "/dashboard/carteira/pix",
     label: "Pix",
-    description: "Transferir, copia e cola e QR Code",
+    description: "Transferir por chave Pix",
     icon: Send,
   },
   {
     href: "/dashboard/carteira/cartao",
     label: "Cartão virtual",
-    description: "Cartão pré-pago Nexus",
+    description: "Pré-pago NexusPag",
     icon: CreditCard,
   },
   {
     href: "/dashboard/fluxpay-card",
     label: "FluxPay Card",
-    description: "Carteira interna e transferências",
+    description: "Carteira interna",
     icon: Wallet,
   },
   {
     href: "/dashboard/wallet",
     label: "Extrato e saques",
-    description: "Saldo, movimentações e saque Pix",
+    description: "Ledger e saque",
     icon: ArrowLeftRight,
   },
   {
     href: "/dashboard/carteira/comprovantes",
     label: "Comprovantes",
-    description: "Pagamentos e saques confirmados",
+    description: "Histórico de saídas",
     icon: FileText,
   },
   {
     href: "/dashboard/carteira/config",
     label: "Configurações",
-    description: "Tema, PIN Pix e conta digital",
+    description: "Tema e PIN Pix",
     icon: Settings2,
+  },
+  {
+    href: "/dashboard/carteira/cadastro",
+    label: "Abrir conta",
+    description: "Cadastro digital 2 etapas",
+    icon: UserPlus,
   },
 ];
 
@@ -103,8 +108,7 @@ export default async function CarteiraDigitalPage() {
       </div>
 
       <p className="text-xs text-flux-muted">
-        Todos os valores refletem o ledger real da organização no ambiente {" "}
-        <span className="font-mono">{environment}</span>. Nenhum saldo fictício é exibido.
+        Valores do ledger real · ambiente <span className="font-mono">{environment}</span>
       </p>
     </div>
   );
