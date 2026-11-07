@@ -1,45 +1,54 @@
-"use client";
+import "./carteira.css";
+import { requireDashboardContext } from "@/lib/dashboard-server";
+import { CarteiraShell } from "@/components/carteira/CarteiraShell";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
+export const dynamic = "force-dynamic";
 
-const SUBNAV = [
-  { href: "/dashboard/carteira", label: "Visão geral", exact: true },
-  { href: "/dashboard/carteira/cartao", label: "Cartão virtual" },
-  { href: "/dashboard/carteira/pix", label: "Pix" },
-  { href: "/dashboard/wallet", label: "Extrato" },
-  { href: "/dashboard/carteira/comprovantes", label: "Comprovantes" },
-  { href: "/dashboard/carteira/config", label: "Configurações" },
-];
+/**
+ * Layout server da Carteira Digital.
+ * - Consulta fluxpay_cards (status) da organização.
+ * - Sem registro → CarteiraShell esconde submenu e redireciona subrotas para cadastro.
+ * - Erro na consulta → trata como "tem carteira" (não bloqueia).
+ * - Chrome do painel já é omitido por DashboardChrome nas rotas /dashboard/carteira*.
+ */
+export default async function CarteiraLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { supabase, organization } = await requireDashboardContext();
 
-export default function CarteiraLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  let hasWalletRecord = true; // default: em erro, não bloquear quem já tem carteira
+  const { data: walletRow, error: walletLookupError } = await supabase
+    .from("fluxpay_cards")
+    .select("status")
+    .eq("organization_id", organization.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!walletLookupError) {
+    hasWalletRecord = Boolean(walletRow?.status);
+  }
 
   return (
-    <div className="space-y-6">
-      <nav className="flex flex-wrap gap-1 border-b border-white/10 pb-2 -mt-1">
-        {SUBNAV.map((item) => {
-          const active = item.exact
-            ? pathname === item.href
-            : pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-sm transition-colors",
-                active
-                  ? "bg-red-500/15 text-red-300 font-medium"
-                  : "text-flux-muted hover:text-white hover:bg-white/5"
-              )}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-      {children}
+    <div
+      className="fxb fxb-isolated"
+      style={{
+        minHeight: "100dvh",
+        borderRadius: 0,
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
+      }}
+    >
+      <div
+        className="fxb-inner"
+        style={{ maxWidth: 1100, margin: "0 auto", width: "100%", overflowX: "hidden" }}
+      >
+        <CarteiraShell hasWalletRecord={hasWalletRecord}>{children}</CarteiraShell>
+      </div>
     </div>
   );
 }
