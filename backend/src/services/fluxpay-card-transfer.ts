@@ -5,7 +5,11 @@ import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
 import { getBalance } from "./balance.js";
-import { getCardByOrganization, getCardByNumber } from "./fluxpay-card.js";
+import {
+  getCardByOrganization,
+  getCardByNumber,
+  assertWalletFullyApproved,
+} from "./fluxpay-card.js";
 
 const PASSWORD_MAX_FAILS = 5;
 const PASSWORD_LOCK_MINUTES = 15;
@@ -134,12 +138,7 @@ export async function transfer(params: {
   if (!source) {
     throw new AppError(404, "not_found", "Voce ainda nao possui uma carteira FluxPay Card.");
   }
-  if (source.status === "blocked") {
-    throw new AppError(400, "validation_error", "Sua carteira esta bloqueada.");
-  }
-  if (source.status !== "approved") {
-    throw new AppError(400, "validation_error", "Sua carteira precisa estar aprovada.");
-  }
+  assertWalletFullyApproved(source);
 
   await verifyCardPassword(source.id, params.password);
 
@@ -152,7 +151,7 @@ export async function transfer(params: {
   }
 
   const destination = await getCardByNumber(destDigits);
-  if (!destination || destination.status !== "approved") {
+  if (!destination || destination.status !== "approved" || destination.kyc_status !== "approved") {
     throw new AppError(404, "not_found", "Carteira destinataria nao encontrada ou nao aprovada.");
   }
 
