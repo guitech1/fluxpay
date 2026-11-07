@@ -20,10 +20,13 @@
 [functions]
   node_bundler = "esbuild"
 
-# Inclui o backend compilado no pacote da função api.
+# Inclui o backend compilado + dependências no pacote da função api.
+# O entry netlify/functions/api.ts faz import dinâmico de backend/dist;
+# o esbuild NÃO empacota express/etc. desse grafo. Sem node_modules no
+# pacote: "Cannot find package 'express'".
 # backend/package.json + dist/package.json garantem "type": "module".
 [functions.api]
-  included_files = ["backend/dist/**", "backend/package.json"]
+  included_files = ["backend/dist/**", "backend/package.json", "node_modules/**"]
 
 # Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
