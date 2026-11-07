@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
+import { isCpfLookupConfigured, lookupCpfByDocument } from "./cpf-lookup.js";
 
 export type FluxPayCardStatus =
   | "pending_review"
@@ -134,6 +135,9 @@ function assertBirthDate(birthDate: string): string {
     throw new AppError(400, "validation_error", "Data de nascimento invalida.");
   }
   const now = new Date();
+  if (d.getTime() > now.getTime()) {
+    throw new AppError(400, "validation_error", "Data de nascimento nao pode ser futura.");
+  }
   const age =
     now.getUTCFullYear() -
     d.getUTCFullYear() -
@@ -149,6 +153,16 @@ function assertBirthDate(birthDate: string): string {
     );
   }
   return raw;
+}
+
+/** Normaliza nome para comparacao simples (sem acento, maiusculo, espacos). */
+function normalizeName(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
@@ -278,6 +292,43 @@ export async function createCard(params: {
     throw new AppError(400, "validation_error", "A confirmacao da senha nao confere.");
   }
 
+  // Consulta cadastral (se CPF_LOOKUP_* estiver configurado)
+  if (isCpfLookupConfigured()) {
+    const lookup = await lookupCpfByDocument(cpf);
+    if (lookup.configured && lookup.found && lookup.name) {
+      const informed = normalizeName(fullName);
+      const official = normalizeName(lookup.name);
+      // Aceita se o nome informado estiver contido no oficial ou vice-versa
+      // (variações de ordem / nome social simples)
+      const nameOk =
+        informed === official ||
+        official.includes(informed) ||
+        informed.includes(official) ||
+        informed.split(" ").every((p) => official.includes(p));
+      if (!nameOk) {
+        throw new AppError(
+          400,
+          "validation_error",
+          "O nome informado nao confere com o cadastro do CPF. Confira os dados."
+        );
+      }
+      if (lookup.birthDate) {
+        const officialBirth = String(lookup.birthDate).slice(0, 10).replace(/\//g, "-");
+        // Aceita YYYY-MM-DD ou DD/MM/YYYY normalizado
+        let normalizedOfficial = officialBirth;
+        const m = String(lookup.birthDate).match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+        if (m) normalizedOfficial = `${m[3]}-${m[2]}-${m[1]}`;
+        if (normalizedOfficial !== birthDate) {
+          throw new AppError(
+            400,
+            "validation_error",
+            "A data de nascimento nao confere com o cadastro do CPF."
+          );
+        }
+      }
+    }
+  }
+
   const existing = await getCardByOrganization(params.organizationId);
   if (existing && existing.status !== "rejected") {
     throw new AppError(
@@ -343,6 +394,7 @@ export async function createCard(params: {
       phone,
       cpf_last4: cpf.slice(-4),
       email_domain: email.split("@")[1] ?? null,
+      cpf_lookup_configured: isCpfLookupConfigured(),
     },
     ipAddress: params.ipAddress,
   });

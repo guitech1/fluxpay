@@ -12,6 +12,8 @@ interface CardItem {
   card_number_display: string | null;
   rejection_reason: string | null;
   email: string | null;
+  cpf_masked: string | null;
+  birth_date: string | null;
   organization_name: string | null;
   organization_id: string;
   user_id: string;
@@ -24,7 +26,7 @@ interface CardItem {
 export default function AdminFluxPayCardPage() {
   const [items, setItems] = useState<CardItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState("pending_review");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -110,6 +112,8 @@ export default function AdminFluxPayCardPage() {
                 <div className="space-y-1 min-w-0">
                   <div className="font-medium truncate">{c.full_name}</div>
                   <div className="text-xs text-flux-muted space-y-0.5">
+                    <div>CPF: {c.cpf_masked || "—"}</div>
+                    <div>Nascimento: {c.birth_date || "—"}</div>
                     <div>Email: {c.email || "—"}</div>
                     <div>Telefone: {c.phone}</div>
                     <div>Organizacao: {c.organization_name || c.organization_id}</div>
@@ -162,7 +166,7 @@ export default function AdminFluxPayCardPage() {
                           })
                         }
                       >
-                        Rejeitar
+                        Recusar
                       </button>
                     </div>
                   </>
