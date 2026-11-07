@@ -6,7 +6,9 @@
   # --include=dev: typescript/tsc vive em devDependencies do backend.
   # Se NODE_ENV=production estiver setado no painel, o npm pula
   # devDependencies e o build quebra com "tsc: not found".
-  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && npm run build --workspace=frontend"
+  # Depois do tsc, grava package.json em dist para o Node tratar os .js
+  # como ESM (sem isso: Cannot use import statement outside a module).
+  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && printf '%s\n' '{\"type\":\"module\"}' > backend/dist/package.json && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
@@ -17,6 +19,11 @@
 
 [functions]
   node_bundler = "esbuild"
+
+# Inclui o backend compilado no pacote da função api.
+# backend/package.json + dist/package.json garantem "type": "module".
+[functions.api]
+  included_files = ["backend/dist/**", "backend/package.json"]
 
 # Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
