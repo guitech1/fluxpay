@@ -9,6 +9,45 @@ config();
  */
 const LOCAL_HOST = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i;
 
+/**
+ * Netlify injeta URL / DEPLOY_PRIME_URL / DEPLOY_URL no runtime da função.
+ * Em preview e producao, usamos isso quando API_BASE_URL / FRONTEND_URL
+ * estao vazios ou ainda apontam para localhost (default do schema).
+ */
+function netlifyPublicUrl(): string | undefined {
+  for (const key of ["URL", "DEPLOY_PRIME_URL", "DEPLOY_URL"] as const) {
+    const v = process.env[key]?.trim();
+    if (v && /^https?:\/\//i.test(v) && !LOCAL_HOST.test(v)) return v.replace(/\/$/, "");
+  }
+  return undefined;
+}
+
+function resolvePublicUrl(
+  explicit: string | undefined,
+  fallbackLocal: string
+): string {
+  const raw = (explicit || "").trim();
+  if (raw && !LOCAL_HOST.test(raw)) return raw.replace(/\/$/, "");
+  const netlify = netlifyPublicUrl();
+  if (netlify) return netlify;
+  if (raw) return raw;
+  return fallbackLocal;
+}
+
+// Preenche process.env antes do Zod para o default de localhost nao falhar
+// em NODE_ENV=production no Deploy Preview / producao Netlify.
+{
+  const site = netlifyPublicUrl();
+  if (site) {
+    if (!process.env.API_BASE_URL?.trim() || LOCAL_HOST.test(process.env.API_BASE_URL)) {
+      process.env.API_BASE_URL = site;
+    }
+    if (!process.env.FRONTEND_URL?.trim() || LOCAL_HOST.test(process.env.FRONTEND_URL)) {
+      process.env.FRONTEND_URL = site;
+    }
+  }
+}
+
 const baseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(3001),
@@ -31,6 +70,7 @@ type BaseEnv = z.infer<typeof baseEnvSchema>;
 
 // ============================================================
 // Em producao, os defaults de desenvolvimento sao um perigo silencioso.
+// Aceitamos URL publica da Netlify (ja injetada acima).
 // ============================================================
 const envSchema = baseEnvSchema.superRefine((value: BaseEnv, ctx: z.RefinementCtx) => {
   if (value.NODE_ENV !== "production") return;
@@ -41,7 +81,7 @@ const envSchema = baseEnvSchema.superRefine((value: BaseEnv, ctx: z.RefinementCt
         code: z.ZodIssueCode.custom,
         path: [key],
         message:
-          `${key} aponta para localhost em producao. Defina a URL publica (ex.: https://usefluxpay.com).`,
+          `${key} aponta para localhost em producao. Defina a URL publica (ex.: https://usefluxpay.com) ou confie em URL/DEPLOY_PRIME_URL da Netlify.`,
       });
     }
   }
@@ -60,4 +100,8 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env = {
+  ...parsed.data,
+  API_BASE_URL: resolvePublicUrl(parsed.data.API_BASE_URL, "http://localhost:3001"),
+  FRONTEND_URL: resolvePublicUrl(parsed.data.FRONTEND_URL, "http://localhost:3000"),
+};
