@@ -1,22 +1,22 @@
 /**
- * Empacota o Express. Carrega o bundle CJS gerado no build
- * (netlify/functions/backend-app.cjs via esbuild).
+ * Função Netlify → Express (serverless-http).
  *
- * Importante: a Netlify compila esta função para CJS; import.meta.url
- * pode ser undefined — não usar createRequire(import.meta.url) no topo.
+ * Import ESTÁTICO de ../../backend/dist/index.js para o esbuild da Netlify
+ * rastrear e embutir express/cors/etc. no bundle da função.
+ * (Import dinâmico + included_files/node_modules falhou várias vezes no Free.)
+ *
+ * Falha de boot (env inválida, etc.) é capturada e devolve JSON 503 legível.
  */
-import { join } from "path";
+import type { Handler } from "@netlify/functions";
 
 const FUNCTION_PREFIX = "/.netlify/functions/api";
 
-/** Chaves obrigatórias para o backend subir (alinhado a backend/src/config/env.ts). */
 const REQUIRED_BOOT_ENV = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
 ] as const;
 
-/** Chaves opcionais para Web Push (não bloqueiam boot; sem elas o envio é skip). */
 const OPTIONAL_PUSH_ENV = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"] as const;
 
 function envPresence(): {
@@ -46,58 +46,14 @@ function envPresence(): {
 let cachedHandler: any = null;
 let bootError: string | null = null;
 let bootDetail: string | null = null;
-
-/** Resolve require + diretório sem depender de import.meta.url no topo. */
-function nodeRequire(): NodeRequire {
-  // Quando a Netlify empacota como CJS, require global existe.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const g = globalThis as any;
-  if (typeof g.require === "function") return g.require as NodeRequire;
-  // Fallback ESM (dev local): createRequire só se import.meta.url existir
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createRequire } = require("module") as typeof import("module");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const metaUrl = (import.meta as any)?.url as string | undefined;
-    if (metaUrl) return createRequire(metaUrl);
-  } catch {
-    /* ignore */
-  }
-  throw new Error("require indisponivel neste runtime");
-}
-
-function loadApp(): unknown {
-  const req = nodeRequire();
-  const candidates = [
-    "./backend-app.cjs",
-    join(__dirname, "backend-app.cjs"),
-    "/var/task/netlify/functions/backend-app.cjs",
-    "/var/task/backend-app.cjs",
-    join(process.cwd(), "netlify/functions/backend-app.cjs"),
-    join(process.cwd(), "backend-app.cjs"),
-  ];
-
-  const errors: string[] = [];
-  for (const p of candidates) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = req(p);
-      const app = mod?.default ?? mod;
-      if (app) return app;
-      errors.push(`${p}: sem default/module.exports`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${p}: ${msg.slice(0, 120)}`);
-    }
-  }
-  throw new Error(
-    `Nao foi possivel carregar backend-app.cjs. Tentativas: ${errors.join(" | ")}`
-  );
-}
+let bootAttempted = false;
 
 async function getHandler() {
   if (bootError) throw new Error(bootError);
   if (cachedHandler) return cachedHandler;
+  if (bootAttempted && !cachedHandler) throw new Error(bootError || "boot failed");
+  bootAttempted = true;
+
   try {
     const presence = envPresence();
     if (presence.missing_required.length > 0) {
@@ -105,8 +61,17 @@ async function getHandler() {
       bootDetail = bootError;
       throw new Error(bootError);
     }
-    const serverless = (await import("serverless-http")).default;
-    const app = loadApp();
+
+    // Imports estáticos resolvidos pelo esbuild da Netlify (express entra no bundle).
+    const [{ default: serverless }, { default: app }] = await Promise.all([
+      import("serverless-http"),
+      import("../../backend/dist/index.js"),
+    ]);
+
+    if (!app) {
+      throw new Error("backend/dist/index.js sem export default");
+    }
+
     cachedHandler = serverless(app);
     return cachedHandler;
   } catch (err) {
@@ -117,11 +82,11 @@ async function getHandler() {
   }
 }
 
-export const handler = async (event: Record<string, unknown>, context: unknown) => {
+export const handler: Handler = async (event, context) => {
   try {
     const path = event.path;
     if (typeof path === "string" && path.startsWith(FUNCTION_PREFIX)) {
-      event.path = path.slice(FUNCTION_PREFIX.length) || "/";
+      (event as { path: string }).path = path.slice(FUNCTION_PREFIX.length) || "/";
     }
     const h = await getHandler();
     return await h(event, context);
@@ -140,8 +105,8 @@ export const handler = async (event: Record<string, unknown>, context: unknown) 
           push_env_incomplete: presence.missing_push.length > 0,
           hint:
             presence.missing_required.length > 0
-              ? "Defina as variaveis em falta no site Netlify (scopes incl. Functions) e faca um novo deploy. Valores adicionados no UI apos o ultimo deploy nao existem em process.env ate rebuild."
-              : "Boot falhou ao carregar backend-app.cjs. Confirme que o build (esbuild no netlify.toml) gerou netlify/functions/backend-app.cjs.",
+              ? "Defina as variaveis em falta no site Netlify (scopes incl. Functions) e faca um novo deploy."
+              : "Boot falhou ao importar backend/dist. Confirme build do backend e que o esbuild da função resolve express.",
         },
       }),
     };
