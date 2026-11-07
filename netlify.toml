@@ -3,12 +3,10 @@
 # ============================================================
 
 [build]
-  # 1) instala workspaces (tsc em devDependencies do backend)
-  # 2) compila backend com tsc
-  # 3) empacota backend/dist em UM arquivo CJS para a função Netlify
-  #    (esbuild embute express/cors/etc. — sem isso: Cannot find package express)
-  # 4) build do frontend Next.js
-  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && npx --yes esbuild@0.25.0 backend/dist/index.js --bundle --platform=node --target=node22 --format=cjs --outfile=netlify/functions/backend-app.cjs && npm run build --workspace=frontend"
+  # tsc no backend; package.json em dist com type:module (ESM).
+  # A função netlify/functions/api.ts importa ../../backend/dist/index.js
+  # de forma que o esbuild da Netlify embuta express e deps no bundle.
+  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && printf '%s\n' '{\"type\":\"module\"}' > backend/dist/package.json && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
@@ -20,12 +18,10 @@
 [functions]
   node_bundler = "esbuild"
 
-# O app Express vai empacotado em netlify/functions/backend-app.cjs (gerado no build).
-# Não precisa included_files de backend/dist nem node_modules (isso estourava o zip).
-
-# Scheduled Functions exigem plano Pro — desligado no Free.
-# [functions."scheduled-jobs"]
-#   schedule = "*/10 * * * *"
+# Garante que o dist compilado está visível para o rastreamento do esbuild.
+# NÃO incluir node_modules inteiro (estoura o zip no plano Free).
+[functions.api]
+  included_files = ["backend/dist/**", "backend/package.json"]
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
