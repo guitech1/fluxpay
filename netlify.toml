@@ -19,10 +19,11 @@
   node_bundler = "esbuild"
 
 # Inclui o backend compilado no pacote da função api.
-# Sem isso o import dinâmico de ../../backend/dist/index.js falha em runtime
-# e a API responde 503 "API indisponivel no arranque".
+# backend/package.json é obrigatório: sem "type": "module" o Node trata
+# dist/*.js como CommonJS e o import dinâmico falha com
+# "Cannot use import statement outside a module".
 [functions.api]
-  included_files = ["backend/dist/**"]
+  included_files = ["backend/dist/**", "backend/package.json"]
 
 # Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
