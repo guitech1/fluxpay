@@ -4,6 +4,7 @@ import { Topbar } from "@/components/dashboard/Topbar";
 import { MobileBottomNav } from "@/components/dashboard/MobileBottomNav";
 import { NotificationPromptBanner } from "@/components/pwa/NotificationSettings";
 import { SupportWidget } from "@/components/support/SupportWidget";
+import { DashboardChrome } from "@/components/dashboard/DashboardChrome";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 
 export const dynamic = "force-dynamic";
@@ -31,10 +32,22 @@ export default async function DashboardLayout({
     redirect("/verificar-identidade");
   }
 
+  const statusBanner =
+    organization.status !== "active" ? (
+      <div
+        role="status"
+        className="border-b border-amber-500/20 bg-amber-500/10 px-4 lg:px-8 py-3 text-sm text-amber-100"
+      >
+        {blockedAccountMessage(organization.status)}
+      </div>
+    ) : null;
+
   return (
-    <div className="flex min-h-screen bg-flux-black">
-      <Sidebar environment={environment} organizationName={organization.name} />
-      <div className="flex-1 flex flex-col min-w-0">
+    <DashboardChrome
+      sidebar={
+        <Sidebar environment={environment} organizationName={organization.name} />
+      }
+      topbar={
         <Topbar
           organizationName={organization.name}
           environment={environment}
@@ -42,24 +55,13 @@ export default async function DashboardLayout({
           role={role}
           isPlatformAdmin={isPlatformAdmin}
         />
-
-        {organization.status !== "active" && (
-          <div
-            role="status"
-            className="border-b border-amber-500/20 bg-amber-500/10 px-4 lg:px-8 py-3 text-sm text-amber-100"
-          >
-            {blockedAccountMessage(organization.status)}
-          </div>
-        )}
-
-        <NotificationPromptBanner />
-
-        <main className="flex-1 pb-20 lg:pb-0">
-          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">{children}</div>
-        </main>
-      </div>
-      <MobileBottomNav />
-      <SupportWidget />
-    </div>
+      }
+      statusBanner={statusBanner}
+      notificationBanner={<NotificationPromptBanner />}
+      mobileNav={<MobileBottomNav />}
+      supportWidget={<SupportWidget />}
+    >
+      {children}
+    </DashboardChrome>
   );
 }
