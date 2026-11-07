@@ -8,7 +8,10 @@ import { PixMark } from "@/components/carteira/PixMark";
 
 export const dynamic = "force-dynamic";
 
-function walletStatusLabel(status: string | null | undefined): {
+function walletStatusLabel(
+  status: string | null | undefined,
+  rejectionReason?: string | null
+): {
   title: string;
   description: string;
   tone: "neutral" | "pending" | "ok" | "bad";
@@ -22,16 +25,18 @@ function walletStatusLabel(status: string | null | undefined): {
   }
   if (status === "pending_review") {
     return {
-      title: "Sua carteira esta aguardando aprovacao",
+      title: "Cadastro em análise",
       description:
-        "Voce pode acompanhar o status aqui. As operacoes financeiras ficam disponiveis somente apos a aprovacao administrativa.",
+        "Sua solicitação está com a equipe. Pix, transferências e cartão ficam bloqueados até a aprovação.",
       tone: "pending",
     };
   }
   if (status === "rejected") {
     return {
-      title: "Sua carteira foi reprovada",
-      description: "Revise seus dados e envie uma nova solicitacao. As operacoes permanecem bloqueadas ate a aprovacao.",
+      title: "Cadastro recusado",
+      description: rejectionReason
+        ? `Motivo: ${rejectionReason}. Você pode revisar os dados e enviar novamente.`
+        : "Revise seus dados e envie uma nova solicitação. As operações permanecem bloqueadas até a aprovação.",
       tone: "bad",
     };
   }
@@ -87,10 +92,11 @@ export default async function CarteiraDigitalPage() {
   const moves = (txData || []) as WalletMove[];
 
   let walletStatus: string | null = null;
+  let rejectionReason: string | null = null;
   let walletLookupFailed = false;
   const { data: walletRow, error: walletLookupError } = await supabase
     .from("fluxpay_cards")
-    .select("status")
+    .select("status, rejection_reason")
     .eq("organization_id", organization.id)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -101,9 +107,10 @@ export default async function CarteiraDigitalPage() {
     console.error("[carteira] failed to read wallet application status", walletLookupError);
   } else {
     walletStatus = walletRow?.status ?? null;
+    rejectionReason = walletRow?.rejection_reason ?? null;
   }
 
-  const statusInfo = walletStatusLabel(walletLookupFailed ? "unknown" : walletStatus);
+  const statusInfo = walletStatusLabel(walletLookupFailed ? "unknown" : walletStatus, rejectionReason);
   const hasNoWallet = !walletLookupFailed && !walletStatus;
   const isApproved = !walletLookupFailed && walletStatus === "approved";
   const canOperate = isApproved;
@@ -148,7 +155,7 @@ export default async function CarteiraDigitalPage() {
             className="fxb-link-pill"
             style={{ display: "inline-flex", marginTop: 12 }}
           >
-            {hasNoWallet ? "Solicitar carteira digital" : "Solicitar novamente"}
+            {hasNoWallet ? "Solicitar carteira digital" : "Reenviar cadastro"}
           </Link>
         )}
       </div>
