@@ -14,6 +14,7 @@ import {
   getShopCardDetails,
   createShopCardRecharge,
 } from "../providers/nexuspag-shop-card.js";
+import { assertWalletFullyApproved } from "./fluxpay-card.js";
 
 export const VIRTUAL_CARD_MIN_BALANCE_CENTS = 10_000; // R$ 100,00
 
@@ -48,7 +49,7 @@ function friendlyProviderError(err: unknown): never {
 async function requireApprovedWallet(organizationId: string) {
   const { data: card } = await supabaseAdmin
     .from("fluxpay_cards")
-    .select("id, status, full_name, cpf, email, phone")
+    .select("id, status, kyc_status, full_name, cpf, email, phone")
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -61,26 +62,9 @@ async function requireApprovedWallet(organizationId: string) {
       "Solicite sua carteira digital antes de pedir o cartao virtual."
     );
   }
-  if (card.status === "pending_review") {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Sua carteira esta aguardando aprovacao. Aguarde a analise para solicitar o cartao."
-    );
-  }
-  if (card.status === "rejected") {
-    throw new AppError(
-      400,
-      "validation_error",
-      "Sua carteira foi reprovada. Entre em contato com o suporte."
-    );
-  }
-  if (card.status === "blocked") {
-    throw new AppError(403, "permission_error", "Sua carteira esta bloqueada.");
-  }
-  if (card.status !== "approved") {
-    throw new AppError(400, "validation_error", "Sua carteira precisa estar aprovada.");
-  }
+
+  assertWalletFullyApproved(card);
+
   if (!card.cpf || !card.full_name) {
     throw new AppError(
       400,
