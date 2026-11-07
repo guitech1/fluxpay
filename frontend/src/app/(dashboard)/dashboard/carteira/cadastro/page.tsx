@@ -9,6 +9,18 @@ import { dashboardFetch } from "@/lib/dashboard-api";
 
 type Step = 1 | 2;
 
+function isAdult(birthDate: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return false;
+  const d = new Date(birthDate + "T12:00:00");
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  if (d.getTime() > now.getTime()) return false;
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+  return age >= 18 && age <= 120;
+}
+
 export default function CadastroContaDigitalPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
@@ -69,6 +81,10 @@ export default function CadastroContaDigitalPage() {
     }
     if (!birthDate) {
       setError("Informe a data de nascimento.");
+      return;
+    }
+    if (!isAdult(birthDate)) {
+      setError("É necessário ter 18 anos ou mais. Data não pode ser futura.");
       return;
     }
     if (onlyDigits(phone).length < 10) {
