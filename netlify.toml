@@ -8,7 +8,10 @@
   # devDependencies e o build quebra com "tsc: not found".
   # Depois do tsc, grava package.json em dist para o Node tratar os .js
   # como ESM (sem isso: Cannot use import statement outside a module).
-  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && printf '%s\n' '{\"type\":\"module\"}' > backend/dist/package.json && npm run build --workspace=frontend"
+  # Instala deps de produção do backend de forma aninhada em
+  # backend/node_modules (sem o monorepo inteiro) para o pacote da função
+  # achar express sem estourar o limite de tamanho do Netlify.
+  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && printf '%s\n' '{\"type\":\"module\"}' > backend/dist/package.json && npm install --workspace=backend --omit=dev --install-strategy=nested && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
@@ -20,13 +23,14 @@
 [functions]
   node_bundler = "esbuild"
 
-# Inclui o backend compilado + dependências no pacote da função api.
+# Inclui o backend compilado + deps de produção do backend no pacote da função.
 # O entry netlify/functions/api.ts faz import dinâmico de backend/dist;
 # o esbuild NÃO empacota express/etc. desse grafo. Sem node_modules no
 # pacote: "Cannot find package 'express'".
+# NÃO incluir node_modules/** da raiz (tem Next.js e estoura o zip da função).
 # backend/package.json + dist/package.json garantem "type": "module".
 [functions.api]
-  included_files = ["backend/dist/**", "backend/package.json", "node_modules/**"]
+  included_files = ["backend/dist/**", "backend/package.json", "backend/node_modules/**"]
 
 # Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
