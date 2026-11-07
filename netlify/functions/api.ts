@@ -1,21 +1,11 @@
 /**
- * Empacota o Express. Import do bundle CJS gerado no build
- * (netlify/functions/backend-app.cjs via esbuild) para capturar falha de boot
- * e devolver JSON legível em vez de 502 opaco Runtime.ExitError.
+ * Empacota o Express. Carrega o bundle CJS gerado no build
+ * (netlify/functions/backend-app.cjs via esbuild).
  *
- * Nota operacional: variáveis definidas no painel Netlify só entram em
- * process.env da função após um NOVO deploy.
- *
- * O backend é empacotado no build (esbuild) com express e deps embutidos.
- * Assim não dependemos de included_files/node_modules no zip da função.
+ * Importante: a Netlify compila esta função para CJS; import.meta.url
+ * pode ser undefined — não usar createRequire(import.meta.url) no topo.
  */
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-
-const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { join } from "path";
 
 const FUNCTION_PREFIX = "/.netlify/functions/api";
 
@@ -57,22 +47,52 @@ let cachedHandler: any = null;
 let bootError: string | null = null;
 let bootDetail: string | null = null;
 
-function loadApp(): unknown {
-  const bundlePath = join(__dirname, "backend-app.cjs");
+/** Resolve require + diretório sem depender de import.meta.url no topo. */
+function nodeRequire(): NodeRequire {
+  // Quando a Netlify empacota como CJS, require global existe.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  if (typeof g.require === "function") return g.require as NodeRequire;
+  // Fallback ESM (dev local): createRequire só se import.meta.url existir
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(bundlePath);
-    const app = mod?.default ?? mod;
-    if (!app) {
-      throw new Error("backend-app.cjs carregou sem export default / module.exports");
-    }
-    return app;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Nao foi possivel carregar backend-app.cjs (${bundlePath}): ${msg.slice(0, 400)}`
-    );
+    const { createRequire } = require("module") as typeof import("module");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const metaUrl = (import.meta as any)?.url as string | undefined;
+    if (metaUrl) return createRequire(metaUrl);
+  } catch {
+    /* ignore */
   }
+  throw new Error("require indisponivel neste runtime");
+}
+
+function loadApp(): unknown {
+  const req = nodeRequire();
+  const candidates = [
+    "./backend-app.cjs",
+    join(__dirname, "backend-app.cjs"),
+    "/var/task/netlify/functions/backend-app.cjs",
+    "/var/task/backend-app.cjs",
+    join(process.cwd(), "netlify/functions/backend-app.cjs"),
+    join(process.cwd(), "backend-app.cjs"),
+  ];
+
+  const errors: string[] = [];
+  for (const p of candidates) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = req(p);
+      const app = mod?.default ?? mod;
+      if (app) return app;
+      errors.push(`${p}: sem default/module.exports`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${p}: ${msg.slice(0, 120)}`);
+    }
+  }
+  throw new Error(
+    `Nao foi possivel carregar backend-app.cjs. Tentativas: ${errors.join(" | ")}`
+  );
 }
 
 async function getHandler() {
@@ -121,7 +141,7 @@ export const handler = async (event: Record<string, unknown>, context: unknown) 
           hint:
             presence.missing_required.length > 0
               ? "Defina as variaveis em falta no site Netlify (scopes incl. Functions) e faca um novo deploy. Valores adicionados no UI apos o ultimo deploy nao existem em process.env ate rebuild."
-              : "Boot falhou ao carregar o backend empacotado. Confirme que o build gerou netlify/functions/backend-app.cjs (esbuild no netlify.toml).",
+              : "Boot falhou ao carregar backend-app.cjs. Confirme que o build (esbuild no netlify.toml) gerou netlify/functions/backend-app.cjs.",
         },
       }),
     };
