@@ -1,25 +1,32 @@
 /**
- * Empacota o Express. Import dinamico para capturar falha de boot (env, etc.)
- * e devolver JSON legivel em vez de 502 opaco Runtime.ExitError.
+ * Empacota o Express. Import do bundle CJS gerado no build
+ * (netlify/functions/backend-app.cjs via esbuild) para capturar falha de boot
+ * e devolver JSON legível em vez de 502 opaco Runtime.ExitError.
  *
- * Nota operacional: variaveis definidas no painel Netlify so entram em
- * process.env da funcao apos um NOVO deploy. Sem rebuild, missing_env
- * continua a listar chaves que ja existem no UI.
+ * Nota operacional: variáveis definidas no painel Netlify só entram em
+ * process.env da função após um NOVO deploy.
  *
- * O backend compilado (backend/dist) precisa estar no pacote da funcao
- * via [functions.api] included_files no netlify.toml, e dist/package.json
- * com "type":"module" (gravado no build) para o Node aceitar import ESM.
+ * O backend é empacotado no build (esbuild) com express e deps embutidos.
+ * Assim não dependemos de included_files/node_modules no zip da função.
  */
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const FUNCTION_PREFIX = "/.netlify/functions/api";
 
-/** Chaves obrigatorias para o backend subir (alinhado a backend/src/config/env.ts). */
+/** Chaves obrigatórias para o backend subir (alinhado a backend/src/config/env.ts). */
 const REQUIRED_BOOT_ENV = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
 ] as const;
 
-/** Chaves opcionais para Web Push (nao bloqueiam boot; sem elas o envio e skip). */
+/** Chaves opcionais para Web Push (não bloqueiam boot; sem elas o envio é skip). */
 const OPTIONAL_PUSH_ENV = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"] as const;
 
 function envPresence(): {
@@ -28,10 +35,18 @@ function envPresence(): {
 } {
   const missing_required = REQUIRED_BOOT_ENV.filter((k) => !process.env[k]?.trim());
   const missing_push = OPTIONAL_PUSH_ENV.filter((k) => !process.env[k]?.trim());
-  if (!process.env.API_BASE_URL?.trim() && !process.env.DEPLOY_PRIME_URL?.trim() && !process.env.URL?.trim()) {
+  if (
+    !process.env.API_BASE_URL?.trim() &&
+    !process.env.DEPLOY_PRIME_URL?.trim() &&
+    !process.env.URL?.trim()
+  ) {
     missing_required.push("API_BASE_URL (or Netlify deploy URL)");
   }
-  if (!process.env.FRONTEND_URL?.trim() && !process.env.DEPLOY_PRIME_URL?.trim() && !process.env.URL?.trim()) {
+  if (
+    !process.env.FRONTEND_URL?.trim() &&
+    !process.env.DEPLOY_PRIME_URL?.trim() &&
+    !process.env.URL?.trim()
+  ) {
     missing_required.push("FRONTEND_URL (or Netlify deploy URL)");
   }
   return { missing_required, missing_push };
@@ -42,28 +57,22 @@ let cachedHandler: any = null;
 let bootError: string | null = null;
 let bootDetail: string | null = null;
 
-const IMPORT_CANDIDATES = [
-  "../../backend/dist/index.js",
-  "../backend/dist/index.js",
-  "./backend/dist/index.js",
-  "/var/task/backend/dist/index.js",
-];
-
-async function loadAppModule(): Promise<{ default: unknown }> {
-  const errors: string[] = [];
-  for (const path of IMPORT_CANDIDATES) {
-    try {
-      const mod = await import(path);
-      if (mod?.default) return mod as { default: unknown };
-      errors.push(`${path}: module loaded but default export missing`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${path}: ${msg.slice(0, 200)}`);
+function loadApp(): unknown {
+  const bundlePath = join(__dirname, "backend-app.cjs");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require(bundlePath);
+    const app = mod?.default ?? mod;
+    if (!app) {
+      throw new Error("backend-app.cjs carregou sem export default / module.exports");
     }
+    return app;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Nao foi possivel carregar backend-app.cjs (${bundlePath}): ${msg.slice(0, 400)}`
+    );
   }
-  throw new Error(
-    `Nao foi possivel carregar backend/dist/index.js. Tentativas: ${errors.join(" | ")}`
-  );
 }
 
 async function getHandler() {
@@ -77,8 +86,7 @@ async function getHandler() {
       throw new Error(bootError);
     }
     const serverless = (await import("serverless-http")).default;
-    const mod = await loadAppModule();
-    const app = mod.default;
+    const app = loadApp();
     cachedHandler = serverless(app);
     return cachedHandler;
   } catch (err) {
@@ -113,7 +121,7 @@ export const handler = async (event: Record<string, unknown>, context: unknown) 
           hint:
             presence.missing_required.length > 0
               ? "Defina as variaveis em falta no site Netlify (scopes incl. Functions) e faca um novo deploy. Valores adicionados no UI apos o ultimo deploy nao existem em process.env ate rebuild."
-              : "Boot falhou ao carregar o backend. Confirme que o build publicou backend/dist, que [functions.api] included_files inclui backend/dist/**, e que dist/package.json tem type module.",
+              : "Boot falhou ao carregar o backend empacotado. Confirme que o build gerou netlify/functions/backend-app.cjs (esbuild no netlify.toml).",
         },
       }),
     };
