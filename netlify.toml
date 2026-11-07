@@ -3,15 +3,12 @@
 # ============================================================
 
 [build]
-  # --include=dev: typescript/tsc vive em devDependencies do backend.
-  # Se NODE_ENV=production estiver setado no painel, o npm pula
-  # devDependencies e o build quebra com "tsc: not found".
-  # Depois do tsc, grava package.json em dist para o Node tratar os .js
-  # como ESM (sem isso: Cannot use import statement outside a module).
-  # Instala deps de produção do backend de forma aninhada em
-  # backend/node_modules (sem o monorepo inteiro) para o pacote da função
-  # achar express sem estourar o limite de tamanho do Netlify.
-  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && printf '%s\n' '{\"type\":\"module\"}' > backend/dist/package.json && npm install --workspace=backend --omit=dev --install-strategy=nested && npm run build --workspace=frontend"
+  # 1) instala workspaces (tsc em devDependencies do backend)
+  # 2) compila backend com tsc
+  # 3) empacota backend/dist em UM arquivo CJS para a função Netlify
+  #    (esbuild embute express/cors/etc. — sem isso: Cannot find package express)
+  # 4) build do frontend Next.js
+  command = "npm install --workspaces --include-workspace-root --include=dev && npm run build --workspace=backend && npx --yes esbuild@0.25.0 backend/dist/index.js --bundle --platform=node --target=node22 --format=cjs --outfile=netlify/functions/backend-app.cjs && npm run build --workspace=frontend"
   publish = "frontend/.next"
   functions = "netlify/functions"
 
@@ -23,14 +20,8 @@
 [functions]
   node_bundler = "esbuild"
 
-# Inclui o backend compilado + deps de produção do backend no pacote da função.
-# O entry netlify/functions/api.ts faz import dinâmico de backend/dist;
-# o esbuild NÃO empacota express/etc. desse grafo. Sem node_modules no
-# pacote: "Cannot find package 'express'".
-# NÃO incluir node_modules/** da raiz (tem Next.js e estoura o zip da função).
-# backend/package.json + dist/package.json garantem "type": "module".
-[functions.api]
-  included_files = ["backend/dist/**", "backend/package.json", "backend/node_modules/**"]
+# O app Express vai empacotado em netlify/functions/backend-app.cjs (gerado no build).
+# Não precisa included_files de backend/dist nem node_modules (isso estourava o zip).
 
 # Scheduled Functions exigem plano Pro — desligado no Free.
 # [functions."scheduled-jobs"]
