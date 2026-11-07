@@ -14,6 +14,11 @@
   NODE_VERSION = "22"
   NPM_FLAGS = "--include-workspace-root --include=dev"
   AWS_LAMBDA_JS_RUNTIME = "nodejs22.x"
+  # Evita boot 503 no preview/produção quando o painel Netlify não tem
+  # API_BASE_URL/FRONTEND_URL (env.ts rejeitava localhost em NODE_ENV=production).
+  # Em produção real, sobrescreva no UI se precisar de domínio diferente.
+  API_BASE_URL = "https://usefluxpay.com"
+  FRONTEND_URL = "https://usefluxpay.com"
 
 [functions]
   node_bundler = "esbuild"
