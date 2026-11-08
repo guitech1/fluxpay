@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -8,6 +8,8 @@ import { isValidCpf, formatCpf, onlyDigits } from "@/lib/cpf";
 import { dashboardFetch } from "@/lib/dashboard-api";
 
 type Step = 1 | 2;
+
+type WalletKycState = "none" | "needs_kyc" | "in_review" | "approved";
 
 function isAdult(birthDate: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return false;
@@ -23,6 +25,7 @@ function isAdult(birthDate: string): boolean {
 
 export default function CadastroContaDigitalPage() {
   const router = useRouter();
+  const [kycState, setKycState] = useState<WalletKycState | null>(null);
   const [step, setStep] = useState<Step>(1);
   const [cpf, setCpf] = useState("");
   const [fullName, setFullName] = useState("");
@@ -37,6 +40,42 @@ export default function CadastroContaDigitalPage() {
   const [pixPin2, setPixPin2] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Descobre se é reenvio (needs_kyc) ou conta nova; redireciona se já em análise/aprovado
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await dashboardFetch<{ data: { kyc_status?: string; kyc_submitted_at?: string | null } | null }>(
+          "/fluxpay-card"
+        );
+        if (cancelled) return;
+        const card = res.data;
+        if (!card) {
+          setKycState("none");
+          return;
+        }
+        const kyc = card.kyc_status ?? "pending";
+        if (kyc === "approved") {
+          setKycState("approved");
+          router.replace("/dashboard/carteira");
+          return;
+        }
+        if (kyc === "pending" && card.kyc_submitted_at) {
+          setKycState("in_review");
+          router.replace("/dashboard/carteira");
+          return;
+        }
+        // rejected ou pending sem submitted → needs_kyc
+        setKycState("needs_kyc");
+      } catch {
+        if (!cancelled) setKycState("none");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function onCpfBlur() {
     const d = onlyDigits(cpf);
@@ -136,6 +175,17 @@ export default function CadastroContaDigitalPage() {
     }
   }
 
+  if (kycState === null || kycState === "in_review" || kycState === "approved") {
+    return (
+      <div className="max-w-md mx-auto py-12 text-center text-sm text-flux-muted">
+        Carregando…
+      </div>
+    );
+  }
+
+  const isCompleteExisting = kycState === "needs_kyc";
+  const title = isCompleteExisting ? "Complete seu cadastro" : "Abrir conta digital";
+
   return (
     <div className="max-w-md mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -146,10 +196,17 @@ export default function CadastroContaDigitalPage() {
           <ArrowLeft className="w-4 h-4" />
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">Abrir conta digital</h1>
+          <h1 className="text-xl font-semibold">{title}</h1>
           <p className="text-sm text-flux-muted">Etapa {step} de 2</p>
         </div>
       </div>
+
+      {isCompleteExisting && (
+        <p className="text-sm text-flux-muted rounded-lg border border-white/10 px-3 py-2">
+          Sua conta continua com o mesmo número e saldo. Complete os dados para liberar Pix,
+          transferências e cartão após a aprovação da equipe.
+        </p>
+      )}
 
       {step === 1 && (
         <form onSubmit={nextFromStep1} className="space-y-4 card">

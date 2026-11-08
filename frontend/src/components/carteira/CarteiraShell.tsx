@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { WalletNav } from "./WalletNav";
 
+export type WalletKycState = "none" | "needs_kyc" | "in_review" | "approved";
+
 function isCadastroPath(pathname: string): boolean {
   return pathname === "/dashboard/carteira/cadastro" || pathname.endsWith("/carteira/cadastro");
 }
@@ -15,28 +17,40 @@ function isCarteiraRoot(pathname: string): boolean {
 }
 
 /**
- * Shell client da carteira: botão Voltar, submenu e redirecionamento
- * obrigatório para cadastro quando não há registro.
+ * Shell client da carteira:
+ * - none / needs_kyc → qualquer rota (exceto cadastro) vai para /dashboard/carteira/cadastro; sem submenu
+ * - in_review → submenu oculto; tela "Cadastro em análise" no root; bloqueia subrotas de operação
+ * - approved → comportamento normal
  */
 export function CarteiraShell({
-  hasWalletRecord,
+  walletKycState,
   children,
 }: {
-  hasWalletRecord: boolean;
+  walletKycState: WalletKycState;
   children: React.ReactNode;
 }) {
   const pathname = usePathname() || "";
   const router = useRouter();
 
-  useEffect(() => {
-    if (hasWalletRecord) return;
-    if (isCadastroPath(pathname) || isCarteiraRoot(pathname)) return;
-    router.replace("/dashboard/carteira/cadastro");
-  }, [hasWalletRecord, pathname, router]);
+  const needsCadastro = walletKycState === "none" || walletKycState === "needs_kyc";
+  const inReview = walletKycState === "in_review";
+  const approved = walletKycState === "approved";
 
-  const backHref = isCarteiraRoot(pathname) || isCadastroPath(pathname)
-    ? "/dashboard"
-    : "/dashboard/carteira";
+  useEffect(() => {
+    if (needsCadastro) {
+      if (isCadastroPath(pathname)) return;
+      router.replace("/dashboard/carteira/cadastro");
+      return;
+    }
+    if (inReview) {
+      // Bloqueia pix, cartão, extrato, comprovantes, config → root da carteira
+      if (isCadastroPath(pathname) || isCarteiraRoot(pathname)) return;
+      router.replace("/dashboard/carteira");
+    }
+  }, [needsCadastro, inReview, pathname, router]);
+
+  const backHref =
+    isCarteiraRoot(pathname) || isCadastroPath(pathname) ? "/dashboard" : "/dashboard/carteira";
 
   return (
     <>
@@ -49,9 +63,21 @@ export function CarteiraShell({
         </div>
       </header>
 
-      {hasWalletRecord ? <WalletNav /> : null}
+      {approved ? <WalletNav /> : null}
 
-      <div className="fxb-page">{children}</div>
+      {inReview && isCarteiraRoot(pathname) ? (
+        <div className="fxb-page">
+          <div className="fxb-note fxb-note--warn" style={{ maxWidth: 480, margin: "1.5rem auto" }}>
+            <p style={{ fontWeight: 600 }}>Cadastro em análise</p>
+            <p style={{ marginTop: 8, opacity: 0.9 }}>
+              Seus dados foram enviados. Aguarde a aprovação da equipe. Pix, transferências e cartão
+              ficam bloqueados até a liberação.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="fxb-page">{children}</div>
+      )}
     </>
   );
 }
