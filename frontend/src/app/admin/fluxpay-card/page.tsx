@@ -8,6 +8,8 @@ interface CardItem {
   full_name: string;
   phone: string;
   status: string;
+  kyc_status: string;
+  kyc_submitted_at: string | null;
   card_number: string | null;
   card_number_display: string | null;
   rejection_reason: string | null;
@@ -106,94 +108,111 @@ export default function AdminFluxPayCardPage() {
       ) : (
         <div className="space-y-3">
           <p className="text-xs text-flux-muted">{total} registro(s)</p>
-          {items.map((c) => (
-            <div key={c.id} className="card space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                <div className="space-y-1 min-w-0">
-                  <div className="font-medium truncate">{c.full_name}</div>
-                  <div className="text-xs text-flux-muted space-y-0.5">
-                    <div>CPF: {c.cpf_masked || "—"}</div>
-                    <div>Nascimento: {c.birth_date || "—"}</div>
-                    <div>Email: {c.email || "—"}</div>
-                    <div>Telefone: {c.phone}</div>
-                    <div>Organizacao: {c.organization_name || c.organization_id}</div>
-                    <div className="font-mono text-[10px]">Org ID: {c.organization_id}</div>
-                    <div>
-                      Solicitacao: {new Date(c.created_at).toLocaleString("pt-BR")}
-                    </div>
-                    {c.reviewed_at && (
+          {items.map((c) => {
+            const kyc = c.kyc_status || "pending";
+            const canReview =
+              (c.status === "pending_review" || kyc === "pending") &&
+              (Boolean(c.kyc_submitted_at) || c.status === "pending_review");
+            const waitingClient =
+              kyc === "pending" && !c.kyc_submitted_at && c.status !== "pending_review";
+
+            return (
+              <div key={c.id} className="card space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="space-y-1 min-w-0">
+                    <div className="font-medium truncate">{c.full_name}</div>
+                    <div className="text-xs text-flux-muted space-y-0.5">
+                      <div>CPF: {c.cpf_masked || "—"}</div>
+                      <div>Nascimento: {c.birth_date || "—"}</div>
+                      <div>Email: {c.email || "—"}</div>
+                      <div>Telefone: {c.phone}</div>
+                      <div>Organizacao: {c.organization_name || c.organization_id}</div>
+                      <div className="font-mono text-[10px]">Org ID: {c.organization_id}</div>
                       <div>
-                        Revisao: {new Date(c.reviewed_at).toLocaleString("pt-BR")}
+                        Solicitacao: {new Date(c.created_at).toLocaleString("pt-BR")}
                       </div>
-                    )}
-                    {c.card_number_display && (
-                      <div className="font-mono">Cartao: {c.card_number_display}</div>
-                    )}
-                    {c.rejection_reason && (
-                      <div>Motivo rejeicao: {c.rejection_reason}</div>
-                    )}
+                      {c.reviewed_at && (
+                        <div>
+                          Revisao: {new Date(c.reviewed_at).toLocaleString("pt-BR")}
+                        </div>
+                      )}
+                      {c.card_number_display && (
+                        <div className="font-mono">Cartao: {c.card_number_display}</div>
+                      )}
+                      {c.rejection_reason && kyc === "rejected" && (
+                        <div>Motivo rejeicao: {c.rejection_reason}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 shrink-0 justify-end">
+                    <StatusBadge status={c.status} />
+                    <KycBadge kycStatus={kyc} />
                   </div>
                 </div>
-                <StatusBadge status={c.status} />
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {c.status === "pending_review" && (
-                  <>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {waitingClient && (
+                    <p className="text-sm text-amber-300/90 w-full">
+                      Aguardando o cliente preencher o cadastro
+                    </p>
+                  )}
+                  {canReview && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary text-sm"
+                        disabled={busyId === c.id}
+                        onClick={() => action(c.id, "approve")}
+                      >
+                        Aprovar
+                      </button>
+                      <div className="flex gap-2 flex-1 min-w-[200px]">
+                        <input
+                          className="input text-sm flex-1"
+                          placeholder="Motivo da rejeicao (opcional)"
+                          value={rejectReason[c.id] || ""}
+                          onChange={(e) =>
+                            setRejectReason((r) => ({ ...r, [c.id]: e.target.value }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary text-sm"
+                          disabled={busyId === c.id}
+                          onClick={() =>
+                            action(c.id, "reject", {
+                              reason: rejectReason[c.id] || null,
+                            })
+                          }
+                        >
+                          Recusar
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {c.status === "approved" && (
+                    <button
+                      type="button"
+                      className="btn-secondary text-sm"
+                      disabled={busyId === c.id}
+                      onClick={() => action(c.id, "block")}
+                    >
+                      Bloquear
+                    </button>
+                  )}
+                  {c.status === "blocked" && (
                     <button
                       type="button"
                       className="btn-primary text-sm"
                       disabled={busyId === c.id}
-                      onClick={() => action(c.id, "approve")}
+                      onClick={() => action(c.id, "unblock")}
                     >
-                      Aprovar
+                      Desbloquear
                     </button>
-                    <div className="flex gap-2 flex-1 min-w-[200px]">
-                      <input
-                        className="input text-sm flex-1"
-                        placeholder="Motivo da rejeicao (opcional)"
-                        value={rejectReason[c.id] || ""}
-                        onChange={(e) =>
-                          setRejectReason((r) => ({ ...r, [c.id]: e.target.value }))
-                        }
-                      />
-                      <button
-                        type="button"
-                        className="btn-secondary text-sm"
-                        disabled={busyId === c.id}
-                        onClick={() =>
-                          action(c.id, "reject", {
-                            reason: rejectReason[c.id] || null,
-                          })
-                        }
-                      >
-                        Recusar
-                      </button>
-                    </div>
-                  </>
-                )}
-                {c.status === "approved" && (
-                  <button
-                    type="button"
-                    className="btn-secondary text-sm"
-                    disabled={busyId === c.id}
-                    onClick={() => action(c.id, "block")}
-                  >
-                    Bloquear
-                  </button>
-                )}
-                {c.status === "blocked" && (
-                  <button
-                    type="button"
-                    className="btn-primary text-sm"
-                    disabled={busyId === c.id}
-                    onClick={() => action(c.id, "unblock")}
-                  >
-                    Desbloquear
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -218,6 +237,26 @@ function StatusBadge({ status }: { status: string }) {
       className={`text-[11px] uppercase tracking-wider px-2.5 py-1 rounded border shrink-0 ${map[status] || "bg-white/5 text-white/60 border-white/10"}`}
     >
       {labels[status] || status}
+    </span>
+  );
+}
+
+function KycBadge({ kycStatus }: { kycStatus: string }) {
+  const map: Record<string, string> = {
+    pending: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+    approved: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+    rejected: "bg-red-500/15 text-red-300 border-red-500/30",
+  };
+  const labels: Record<string, string> = {
+    pending: "KYC pendente",
+    approved: "KYC aprovado",
+    rejected: "KYC recusado",
+  };
+  return (
+    <span
+      className={`text-[11px] uppercase tracking-wider px-2.5 py-1 rounded border shrink-0 ${map[kycStatus] || "bg-white/5 text-white/60 border-white/10"}`}
+    >
+      {labels[kycStatus] || `KYC ${kycStatus}`}
     </span>
   );
 }
