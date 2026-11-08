@@ -9,6 +9,8 @@ export type FluxPayCardStatus =
   | "rejected"
   | "blocked";
 
+export type FluxPayKycStatus = "pending" | "approved" | "rejected";
+
 export interface FluxPayCardRow {
   id: string;
   organization_id: string;
@@ -16,6 +18,7 @@ export interface FluxPayCardRow {
   full_name: string;
   phone: string;
   status: FluxPayCardStatus;
+  kyc_status: FluxPayKycStatus;
   card_number: string | null;
   rejection_reason: string | null;
   reviewed_by: string | null;
@@ -39,7 +42,7 @@ const PASSWORD_MIN_LENGTH = 8;
 const SCRYPT_KEYLEN = 64;
 
 const SAFE_SELECT =
-  "id, organization_id, user_id, full_name, phone, status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
+  "id, organization_id, user_id, full_name, phone, status, kyc_status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
 
 function hashPassword(plain: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -168,12 +171,44 @@ function normalizeName(s: string): string {
 function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
   const copy = { ...row };
   delete copy.password_hash;
+  if (copy.kyc_status == null) copy.kyc_status = "pending";
   return copy as unknown as SafeFluxPayCard;
 }
 
 export function formatCardNumberDisplay(num: string | null): string | null {
   if (!num) return null;
   return num.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
+}
+
+/** Exige status operacional approved + kyc_status approved para Pix/transferência/cartão/saque. */
+export function assertWalletFullyApproved(card: {
+  status: string;
+  kyc_status?: string | null;
+}): void {
+  if (card.status === "blocked") {
+    throw new AppError(403, "permission_error", "Sua carteira esta bloqueada.");
+  }
+  if (card.status === "pending_review" || card.kyc_status === "pending") {
+    throw new AppError(
+      400,
+      "validation_error",
+      "Sua carteira esta aguardando aprovacao do cadastro. Aguarde a analise."
+    );
+  }
+  if (card.status === "rejected" || card.kyc_status === "rejected") {
+    throw new AppError(
+      400,
+      "validation_error",
+      "Seu cadastro foi recusado. Revise os dados e envie novamente."
+    );
+  }
+  if (card.status !== "approved" || card.kyc_status !== "approved") {
+    throw new AppError(
+      400,
+      "validation_error",
+      "Complete o cadastro da carteira e aguarde a aprovacao para operar."
+    );
+  }
 }
 
 async function writeAudit(params: {
@@ -261,6 +296,7 @@ export async function lookupRecipient(cardNumber: string): Promise<{
   const card = await getCardByNumber(cardNumber);
   if (!card) return null;
   if (card.status !== "approved" && card.status !== "blocked") return null;
+  if (card.kyc_status !== "approved") return null;
   const num = card.card_number || "";
   return {
     full_name: card.full_name,
@@ -298,8 +334,6 @@ export async function createCard(params: {
     if (lookup.configured && lookup.found && lookup.name) {
       const informed = normalizeName(fullName);
       const official = normalizeName(lookup.name);
-      // Aceita se o nome informado estiver contido no oficial ou vice-versa
-      // (variações de ordem / nome social simples)
       const nameOk =
         informed === official ||
         official.includes(informed) ||
@@ -314,7 +348,6 @@ export async function createCard(params: {
       }
       if (lookup.birthDate) {
         const officialBirth = String(lookup.birthDate).slice(0, 10).replace(/\//g, "-");
-        // Aceita YYYY-MM-DD ou DD/MM/YYYY normalizado
         let normalizedOfficial = officialBirth;
         const m = String(lookup.birthDate).match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
         if (m) normalizedOfficial = `${m[3]}-${m[2]}-${m[1]}`;
@@ -330,7 +363,18 @@ export async function createCard(params: {
   }
 
   const existing = await getCardByOrganization(params.organizationId);
-  if (existing && existing.status !== "rejected") {
+
+  // Conta antiga (aprovada operacionalmente) sem KYC ou KYC recusado: atualiza a linha,
+  // mantém card_number e status operacional, coloca kyc em análise.
+  const canCompleteKyc =
+    existing &&
+    (existing.kyc_status !== "approved" ||
+      !existing.cpf ||
+      !existing.email ||
+      !existing.birth_date) &&
+    existing.status !== "blocked";
+
+  if (existing && !canCompleteKyc && existing.status !== "rejected") {
     throw new AppError(
       409,
       "conflict",
@@ -355,6 +399,54 @@ export async function createCard(params: {
 
   const passwordHash = hashPassword(params.password);
 
+  if (existing && canCompleteKyc) {
+    const nextStatus =
+      existing.status === "rejected" || existing.status === "pending_review"
+        ? "pending_review"
+        : existing.status;
+
+    const { data, error } = await supabaseAdmin
+      .from("fluxpay_cards")
+      .update({
+        full_name: fullName,
+        phone,
+        password_hash: passwordHash,
+        cpf,
+        email,
+        birth_date: birthDate,
+        kyc_status: "pending",
+        status: nextStatus,
+        rejection_reason: null,
+        user_id: params.userId,
+      })
+      .eq("id", existing.id)
+      .select(SAFE_SELECT)
+      .single();
+
+    if (error || !data) {
+      console.error("[fluxpay-card] update kyc:", error);
+      throw new AppError(500, "api_error", "Nao foi possivel atualizar o cadastro.");
+    }
+
+    await writeAudit({
+      cardId: data.id,
+      organizationId: params.organizationId,
+      actorUserId: params.userId,
+      actorType: "user",
+      action: "card.kyc_resubmitted",
+      metadata: {
+        full_name: fullName,
+        phone,
+        cpf_last4: cpf.slice(-4),
+        email_domain: email.split("@")[1] ?? null,
+        kept_card_number: Boolean(existing.card_number),
+      },
+      ipAddress: params.ipAddress,
+    });
+
+    return stripSensitive(data);
+  }
+
   const { data, error } = await supabaseAdmin
     .from("fluxpay_cards")
     .insert({
@@ -364,6 +456,7 @@ export async function createCard(params: {
       phone,
       password_hash: passwordHash,
       status: "pending_review",
+      kyc_status: "pending",
       cpf,
       email,
       birth_date: birthDate,

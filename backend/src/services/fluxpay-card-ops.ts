@@ -8,11 +8,12 @@ import type { SafeFluxPayCard } from "./fluxpay-card.js";
 import { formatCardNumberDisplay } from "./fluxpay-card.js";
 
 const SAFE_SELECT =
-  "id, organization_id, user_id, full_name, phone, status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
+  "id, organization_id, user_id, full_name, phone, status, kyc_status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
 
 function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
   const copy = { ...row };
   delete copy.password_hash;
+  if (copy.kyc_status == null) copy.kyc_status = "pending";
   return copy as unknown as SafeFluxPayCard;
 }
 
@@ -54,46 +55,62 @@ export async function approveCard(params: {
   if (fetchErr || !card) {
     throw new AppError(404, "not_found", "Carteira nao encontrada.");
   }
-  if (card.status !== "pending_review") {
+
+  const needsReview =
+    card.status === "pending_review" ||
+    card.kyc_status === "pending" ||
+    card.kyc_status === "rejected";
+
+  if (!needsReview && card.status !== "approved") {
     throw new AppError(
       400,
       "validation_error",
-      `Nao e possivel aprovar carteira com status "${card.status}".`
+      `Nao e possivel aprovar carteira com status "${card.status}" / kyc "${card.kyc_status}".`
     );
   }
 
-  let cardNumber = "";
-  for (let i = 0; i < 30; i++) {
-    const rand = randomBytes(8);
-    let digits = "4821";
-    for (let j = 0; j < 12; j++) {
-      digits += String(rand[j % rand.length]! % 10);
-    }
-    const { data: clash } = await supabaseAdmin
-      .from("fluxpay_cards")
-      .select("id")
-      .eq("card_number", digits)
-      .maybeSingle();
-    if (!clash) {
-      cardNumber = digits;
-      break;
-    }
+  if (!card.cpf || !card.email || !card.birth_date) {
+    throw new AppError(
+      400,
+      "validation_error",
+      "Cadastro incompleto (CPF, e-mail ou nascimento). O usuario precisa completar antes da aprovacao."
+    );
   }
+
+  let cardNumber = card.card_number as string | null;
   if (!cardNumber) {
-    throw new AppError(500, "api_error", "Nao foi possivel gerar o numero do cartao.");
+    for (let i = 0; i < 30; i++) {
+      const rand = randomBytes(8);
+      let digits = "4821";
+      for (let j = 0; j < 12; j++) {
+        digits += String(rand[j % rand.length]! % 10);
+      }
+      const { data: clash } = await supabaseAdmin
+        .from("fluxpay_cards")
+        .select("id")
+        .eq("card_number", digits)
+        .maybeSingle();
+      if (!clash) {
+        cardNumber = digits;
+        break;
+      }
+    }
+    if (!cardNumber) {
+      throw new AppError(500, "api_error", "Nao foi possivel gerar o numero do cartao.");
+    }
   }
 
   const { data: updated, error: updErr } = await supabaseAdmin
     .from("fluxpay_cards")
     .update({
-      status: "approved",
+      status: card.status === "blocked" ? "blocked" : "approved",
+      kyc_status: "approved",
       card_number: cardNumber,
       reviewed_by: params.adminUserId,
       reviewed_at: new Date().toISOString(),
       rejection_reason: null,
     })
     .eq("id", params.cardId)
-    .eq("status", "pending_review")
     .select(SAFE_SELECT)
     .maybeSingle();
 
@@ -108,7 +125,10 @@ export async function approveCard(params: {
     actorUserId: params.adminUserId,
     actorType: "admin",
     action: "card.approved",
-    metadata: { card_number_last4: cardNumber.slice(-4) },
+    metadata: {
+      card_number_last4: String(cardNumber).slice(-4),
+      kyc_status: "approved",
+    },
     ipAddress: params.ipAddress,
   });
 
@@ -123,31 +143,45 @@ export async function rejectCard(params: {
 }): Promise<SafeFluxPayCard> {
   const { data: card } = await supabaseAdmin
     .from("fluxpay_cards")
-    .select("id, status, organization_id")
+    .select("id, status, kyc_status, organization_id, card_number")
     .eq("id", params.cardId)
     .maybeSingle();
 
   if (!card) throw new AppError(404, "not_found", "Carteira nao encontrada.");
-  if (card.status !== "pending_review") {
+
+  const canReject =
+    card.status === "pending_review" ||
+    card.kyc_status === "pending" ||
+    card.kyc_status === "approved";
+
+  if (!canReject && card.status !== "rejected") {
     throw new AppError(
       400,
       "validation_error",
-      `Nao e possivel rejeitar carteira com status "${card.status}".`
+      `Nao e possivel rejeitar carteira com status "${card.status}" / kyc "${card.kyc_status}".`
     );
   }
 
   const reason = (params.reason || "").trim().slice(0, 500) || null;
 
+  // Se ainda não tem número de cartão, volta status operacional para rejected.
+  // Se já tinha conta antiga com número, mantém status approved/blocked e só marca kyc rejected.
+  const nextStatus = card.card_number
+    ? card.status === "blocked"
+      ? "blocked"
+      : "approved"
+    : "rejected";
+
   const { data: updated, error } = await supabaseAdmin
     .from("fluxpay_cards")
     .update({
-      status: "rejected",
+      status: nextStatus,
+      kyc_status: "rejected",
       rejection_reason: reason,
       reviewed_by: params.adminUserId,
       reviewed_at: new Date().toISOString(),
     })
     .eq("id", params.cardId)
-    .eq("status", "pending_review")
     .select(SAFE_SELECT)
     .maybeSingle();
 
@@ -161,7 +195,7 @@ export async function rejectCard(params: {
     actorUserId: params.adminUserId,
     actorType: "admin",
     action: "card.rejected",
-    metadata: { reason },
+    metadata: { reason, kyc_status: "rejected" },
     ipAddress: params.ipAddress,
   });
 
@@ -292,6 +326,7 @@ export function presentCard(card: SafeFluxPayCard) {
     full_name: card.full_name,
     phone: card.phone,
     status: card.status,
+    kyc_status: card.kyc_status ?? "pending",
     card_number: card.card_number,
     card_number_display: formatCardNumberDisplay(card.card_number),
     rejection_reason: card.rejection_reason,
@@ -319,7 +354,10 @@ export async function listCardsForAdmin(params: {
     .order("created_at", { ascending: false })
     .range(params.offset ?? 0, (params.offset ?? 0) + (params.limit ?? 50) - 1);
 
-  if (params.status) {
+  // "Em análise": status pending_review OU kyc_status pending (contas antigas inclusas)
+  if (params.status === "pending_review") {
+    query = query.or("status.eq.pending_review,kyc_status.eq.pending");
+  } else if (params.status) {
     query = query.eq("status", params.status);
   }
 

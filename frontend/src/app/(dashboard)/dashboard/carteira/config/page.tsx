@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { dashboardFetch } from "@/lib/dashboard-api";
 
 export default function CarteiraConfigPage() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -17,14 +18,10 @@ export default function CarteiraConfigPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch("/dashboard-api/digital-account/theme", {
+      await dashboardFetch("/digital-account/theme", {
         method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme: next }),
+        body: { theme: next },
       });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
       setTheme(next);
       document.documentElement.classList.toggle("light", next === "light");
       setMsg("Tema salvo.");
@@ -41,20 +38,13 @@ export default function CarteiraConfigPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch("/dashboard-api/digital-account/pix-pin", {
+      await dashboardFetch("/digital-account/pix-pin", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pix_pin: pixPin, pix_pin_confirmation: pixPin2 }),
+        body: { pix_pin: pixPin, pix_pin_confirmation: pixPin2 },
       });
-      if (res.status === 204) {
-        setMsg("PIN Pix configurado.");
-        setPixPin("");
-        setPixPin2("");
-        return;
-      }
-      const json = await res.json().catch(() => null);
-      throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      setMsg("PIN Pix configurado.");
+      setPixPin("");
+      setPixPin2("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao salvar PIN");
     } finally {
