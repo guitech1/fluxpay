@@ -8,7 +8,7 @@ import type { SafeFluxPayCard } from "./fluxpay-card.js";
 import { formatCardNumberDisplay } from "./fluxpay-card.js";
 
 const SAFE_SELECT =
-  "id, organization_id, user_id, full_name, phone, status, kyc_status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
+  "id, organization_id, user_id, full_name, phone, status, kyc_status, kyc_submitted_at, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
 
 function stripSensitive(row: Record<string, unknown>): SafeFluxPayCard {
   const copy = { ...row };
@@ -327,6 +327,7 @@ export function presentCard(card: SafeFluxPayCard) {
     phone: card.phone,
     status: card.status,
     kyc_status: card.kyc_status ?? "pending",
+    kyc_submitted_at: card.kyc_submitted_at ?? null,
     card_number: card.card_number,
     card_number_display: formatCardNumberDisplay(card.card_number),
     rejection_reason: card.rejection_reason,

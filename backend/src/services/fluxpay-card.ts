@@ -19,6 +19,7 @@ export interface FluxPayCardRow {
   phone: string;
   status: FluxPayCardStatus;
   kyc_status: FluxPayKycStatus;
+  kyc_submitted_at: string | null;
   card_number: string | null;
   rejection_reason: string | null;
   reviewed_by: string | null;
@@ -42,7 +43,7 @@ const PASSWORD_MIN_LENGTH = 8;
 const SCRYPT_KEYLEN = 64;
 
 const SAFE_SELECT =
-  "id, organization_id, user_id, full_name, phone, status, kyc_status, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
+  "id, organization_id, user_id, full_name, phone, status, kyc_status, kyc_submitted_at, card_number, rejection_reason, reviewed_by, reviewed_at, blocked_at, blocked_by, block_reason, password_fail_count, password_locked_until, cpf, birth_date, email, created_at, updated_at";
 
 function hashPassword(plain: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -398,6 +399,7 @@ export async function createCard(params: {
   }
 
   const passwordHash = hashPassword(params.password);
+  const kycSubmittedAt = new Date().toISOString();
 
   if (existing && canCompleteKyc) {
     const nextStatus =
@@ -415,6 +417,7 @@ export async function createCard(params: {
         email,
         birth_date: birthDate,
         kyc_status: "pending",
+        kyc_submitted_at: kycSubmittedAt,
         status: nextStatus,
         rejection_reason: null,
         user_id: params.userId,
@@ -457,6 +460,7 @@ export async function createCard(params: {
       password_hash: passwordHash,
       status: "pending_review",
       kyc_status: "pending",
+      kyc_submitted_at: kycSubmittedAt,
       cpf,
       email,
       birth_date: birthDate,
