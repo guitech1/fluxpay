@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Loader2, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { VirtualCard } from "@/components/fluxpay-card/VirtualCard";
+import { dashboardFetch } from "@/lib/dashboard-api";
 
 interface CardView {
   issued?: boolean;
@@ -16,16 +17,18 @@ interface CardView {
   min_balance_to_create_cents: number | null;
 }
 
+interface CardDetails {
+  number: string | null;
+  cvv: string | null;
+  expiry: string | null;
+}
+
 export default function CarteiraCartaoPage() {
   const [card, setCard] = useState<CardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [details, setDetails] = useState<{
-    number: string | null;
-    cvv: string | null;
-    expiry: string | null;
-  } | null>(null);
+  const [details, setDetails] = useState<CardDetails | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [rechargeCents, setRechargeCents] = useState("");
 
@@ -33,10 +36,8 @@ export default function CarteiraCartaoPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/dashboard-api/nexus-card", { credentials: "include" });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel carregar o cartao.");
-      setCard(json.data);
+      const res = await dashboardFetch<{ data: CardView }>("/nexus-card");
+      setCard(res.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nao foi possivel carregar o cartao.");
       setCard(null);
@@ -53,14 +54,10 @@ export default function CarteiraCartaoPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/dashboard-api/nexus-card/request", {
+      const res = await dashboardFetch<{ data: CardView }>("/nexus-card/request", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
       });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel solicitar o cartao.");
-      setCard(json.data);
+      setCard(res.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nao foi possivel solicitar o cartao.");
     } finally {
@@ -72,14 +69,10 @@ export default function CarteiraCartaoPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/dashboard-api/nexus-card/details", {
+      const res = await dashboardFetch<{ data: CardDetails }>("/nexus-card/details", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
       });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel revelar os dados.");
-      setDetails(json.data);
+      setDetails(res.data);
       setShowDetails(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nao foi possivel revelar os dados.");
@@ -97,17 +90,13 @@ export default function CarteiraCartaoPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/dashboard-api/nexus-card/recharges", {
+      await dashboardFetch("/nexus-card/recharges", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: {
           amount_cents: cents,
           idempotency_key: `nrc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-        }),
+        },
       });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error?.message || "Nao foi possivel recarregar o cartao.");
       setRechargeCents("");
       await load();
     } catch (e) {
@@ -234,26 +223,3 @@ export default function CarteiraCartaoPage() {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  inputMode="decimal"
-                  placeholder="Valor R$"
-                  className="flex-1 rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
-                  value={rechargeCents}
-                  onChange={(e) => setRechargeCents(e.target.value)}
-                />
-                <button type="button" className="btn-primary" disabled={busy} onClick={recharge}>
-                  Recarregar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!isIssued && !canRequest && !error && (
-            <p className="text-sm text-flux-muted">
-              Sua solicitacao esta sendo processada ou a carteira ainda nao esta pronta para emissao.
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
