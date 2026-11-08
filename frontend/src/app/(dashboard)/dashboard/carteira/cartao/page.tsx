@@ -223,3 +223,26 @@ export default function CarteiraCartaoPage() {
               <div className="flex gap-2">
                 <input
                   type="text"
+                  inputMode="decimal"
+                  placeholder="Valor R$"
+                  className="flex-1 rounded-lg border border-flux-border bg-flux-gray/40 px-3 py-2"
+                  value={rechargeCents}
+                  onChange={(e) => setRechargeCents(e.target.value)}
+                />
+                <button type="button" className="btn-primary" disabled={busy} onClick={recharge}>
+                  Recarregar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isIssued && !canRequest && !error && (
+            <p className="text-sm text-flux-muted">
+              Sua solicitacao esta sendo processada ou a carteira ainda nao esta pronta para emissao.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
