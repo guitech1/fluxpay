@@ -17,16 +17,18 @@ interface CardView {
   min_balance_to_create_cents: number | null;
 }
 
+interface CardDetails {
+  number: string | null;
+  cvv: string | null;
+  expiry: string | null;
+}
+
 export default function CarteiraCartaoPage() {
   const [card, setCard] = useState<CardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [details, setDetails] = useState<{
-    number: string | null;
-    cvv: string | null;
-    expiry: string | null;
-  } | null>(null);
+  const [details, setDetails] = useState<CardDetails | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [rechargeCents, setRechargeCents] = useState("");
 
@@ -54,7 +56,6 @@ export default function CarteiraCartaoPage() {
     try {
       const res = await dashboardFetch<{ data: CardView }>("/nexus-card/request", {
         method: "POST",
-        body: {},
       });
       setCard(res.data);
     } catch (e) {
@@ -68,11 +69,8 @@ export default function CarteiraCartaoPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await dashboardFetch<{
-        data: { number: string | null; cvv: string | null; expiry: string | null };
-      }>("/nexus-card/details", {
+      const res = await dashboardFetch<{ data: CardDetails }>("/nexus-card/details", {
         method: "POST",
-        body: {},
       });
       setDetails(res.data);
       setShowDetails(true);
