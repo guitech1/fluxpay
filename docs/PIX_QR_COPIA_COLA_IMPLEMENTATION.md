@@ -1,119 +1,75 @@
 # Implementação — PIX QR Code, Copia e Cola e Comprovante FluxPay
 
 **Branch:** `feat/pix-qr-copia-cola-comprovante`  
-**Base:** `main` @ `6dd5efc`  
-**Status:** implementação concluída na branch · **sem merge · sem deploy**
+**Status:** implementação alinhada à documentação oficial NexusPag · **sem merge · sem deploy**
 
 ---
 
-## 1. O que foi implementado
+## Confirmação oficial NexusPag (docs coladas)
+
+`POST /api/withdrawals`:
+
+- `pix_key_type`: `cpf | cnpj | email | phone | random | **qrc**`
+- Para **qrc**: passar o **código EMV completo** em `pix_key`
+- Resposta: `withdrawal_id`, `status` (`completed` | `processing`), `fee`, `net_amount`
+- Listagem: `gateway_e2eid` (End-to-End ID)
+
+Não existe endpoint de consulta DICT / beneficiário prévia na documentação.
+
+---
+
+## O que foi implementado
 
 ### Frontend
-- **Modos unificados** na área Pix (`PixTransferForm`):
-  - Chave Pix (preservado integralmente)
-  - QR Code (câmera via `getUserMedia` + `BarcodeDetector` quando disponível)
-  - Pix copia e cola (textarea + validação EMV)
-- **Parser EMV** (`frontend/src/lib/pix-emv.ts`): extrai valor (tag 54), nome/cidade do QR (tags 59/60 — informativos), txid quando presente. Não trata dados do QR como consulta DICT.
-- **Confirmação unificada** com PIN, valor, taxa, tipo e aviso de que o status final depende do provedor.
-- **Comprovante visual FluxPay** (`PixReceipt`): layout com identidade, status real, valor, taxa, pagador (da carteira), recebedor (somente se o provedor retornar), IDs, E2E quando disponível, botões Baixar e Compartilhar.
-- **Área de comprovantes** redesenhada com lista clicável que abre o comprovante.
+- Modos: **Chave Pix** | **QR Code (câmera)** | **Copia e cola**
+- Parser EMV (`pix-emv.ts`): valor, nome/cidade do QR (informativo)
+- Confirmação unificada + PIN
+- Comprovante visual FluxPay (status real, IDs, E2E quando disponível, baixar/compartilhar)
+- Área de comprovantes com abertura do comprovante
 
 ### Backend
-- Tipo `qrc` já existia em `withdrawals.ts` e no schema Zod da rota — preservado e usado para EMV completo.
-- `createNexusPagWithdrawal` normaliza tipo `qrc` e captura campos extras da resposta (E2E, nome do recebedor se a API enviar, fee).
-- Fluxo de reserva atômica, idempotência por `correlation_id`, PIN, aprovação e webhook **inalterados**.
-
-### Segurança e integridade
-- Nenhum débito duplo: continua usando RPC de reserva + correlation_id único.
-- Status `completed` só após resposta/webhook do provedor (comportamento existente mantido).
-- Credenciais NexusPag permanecem somente no backend.
-- Nome no QR é exibido como “informativo” — nunca como validação DICT.
+- `qrc` mapeado conforme docs oficiais
+- Captura de `gateway_e2eid` / E2E quando a resposta trouxer
+- Armazenamento composto opcional em `provider_reference` (`id|e2e`) sem migration
+- `publicWithdrawalView` expõe `provider_reference` limpo + `e2e_id`
+- Fluxo de chave, idempotência, reserva atômica e webhooks **preservados**
 
 ---
 
-## 2. Arquivos alterados / criados
+## Arquivos principais
 
-| Arquivo | Ação |
-|---------|------|
-| `frontend/src/lib/pix-emv.ts` | Criado — parser EMV |
-| `frontend/src/lib/pix-emv.test.ts` | Criado — testes unitários do parser |
-| `frontend/src/components/dashboard/PixTransferForm.tsx` | Reescrito — modos chave / QR / copia-e-cola |
-| `frontend/src/components/carteira/PixReceipt.tsx` | Criado — comprovante visual |
-| `frontend/src/components/carteira/ComprovantesList.tsx` | Criado — lista + abertura do comprovante |
-| `frontend/src/app/(dashboard)/dashboard/carteira/comprovantes/page.tsx` | Atualizado |
-| `frontend/src/app/(dashboard)/dashboard/carteira/pix/page.tsx` | Descrição atualizada |
-| `backend/src/providers/nexuspag.ts` | Mapeamento qrc + campos extras na resposta de saque |
-| `docs/PIX_QR_COPIA_COLA_IMPLEMENTATION.md` | Este relatório |
+- `frontend/src/lib/pix-emv.ts` + teste
+- `frontend/src/components/dashboard/PixTransferForm.tsx`
+- `frontend/src/components/carteira/PixReceipt.tsx`
+- `frontend/src/components/carteira/ComprovantesList.tsx`
+- `frontend/src/app/(dashboard)/dashboard/carteira/comprovantes/page.tsx`
+- `backend/src/providers/nexuspag.ts`
+- `backend/src/services/withdrawals.ts`
 
 ---
 
-## 3. Migrações necessárias
+## Migrações
 
-**Nenhuma.**  
-O tipo `pix_key_type = 'qrc'` já era aceito no backend e na constraint/uso de `withdrawal_requests`. Não há alteração de schema Supabase.
+**Nenhuma obrigatória.**  
+E2E é persistido de forma compatível em `provider_reference` quando retornado.
 
----
-
-## 4. Testes
-
-### Automatizados
-- `frontend/src/lib/pix-emv.test.ts`: valida payload curto inválido, extração de valor, nome/cidade do QR e máscara.  
-  Executar localmente: `cd frontend && npx tsx --test src/lib/pix-emv.test.ts` (requer Node com `tsx` ou runner equivalente).
-
-### Cenários manuais (checklist de QA antes do deploy)
-
-| Cenário | Esperado |
-|---------|----------|
-| Pix por chave (fluxo antigo) | Continua funcionando sem regressão |
-| Copia e cola com valor no EMV | Valor preenchido; confirmação; envio com `pix_key_type=qrc` |
-| Copia e cola sem valor | Usuário informa valor; validação mínimo R$ 10 |
-| QR via câmera (Chrome/Android com BarcodeDetector) | Detecta código e preenche |
-| QR em navegador sem BarcodeDetector | Mensagem clara + orientação para copia e cola |
-| Saldo insuficiente | Erro antes da confirmação |
-| PIN incorreto | Erro 401 do endpoint de verify; sem débito |
-| correlation_id duplicado | 409 conflict |
-| Carteira não aprovada | Bloqueio na página Pix |
-| Ambiente de teste | Bloqueio de transferências |
-| Status pending/processing | Comprovante **não** mostra “Pix realizado” |
-| Status completed | Comprovante com status “Pix realizado” + download/share |
-
-**Nota:** testes de integração ponta a ponta com a API real da NexusPag dependem de chave de produção/sandbox e não foram executados neste ambiente (sem credenciais nem deploy).
+Opcional futuro: coluna `e2e_id text` em `withdrawal_requests`.
 
 ---
 
-## 5. Limitações reais
+## Limitações
 
-1. **Consulta DICT / beneficiário prévia:** a documentação pública da NexusPag **não** expõe endpoint de consulta de beneficiário antes do pagamento. O comprovante só mostra nome do recebedor se a **resposta do saque** trouxer o campo. Não há simulação.
-2. **BarcodeDetector:** disponível principalmente em Chromium mobile. Safari/Firefox podem cair no fallback “use copia e cola”.
-3. **Download de imagem do comprovante:** usa `html2canvas` se estiver no bundle; senão fallback para impressão/clipboard. Opcional adicionar `html2canvas` como dependência se quiser PNG sempre.
-4. **E2E ID:** preenchido apenas quando a NexusPag devolver o campo na resposta do withdrawal.
-
----
-
-## 6. Pendências indispensáveis antes do deploy único
-
-1. Rodar a suíte de testes unitários do parser + typecheck/lint do frontend e backend.
-2. QA manual dos cenários da tabela acima em staging/preview (Netlify preview da branch).
-3. Confirmar com a documentação privada/contrato da NexusPag se o valor de `pix_key_type` para EMV deve ser exatamente `qrc` ou outro literal (ex.: `emv`, `copia_e_cola`). Ajustar `mapWithdrawalKeyType` se necessário.
-4. Validar webhooks de saque ainda marcam `completed` corretamente para `qrc`.
-5. **Somente após QA:** merge em `main` e o único deploy de produção.
+1. Sem DICT prévia — nome de recebedor só se a API devolver.
+2. BarcodeDetector depende do navegador.
+3. E2E no create pode não vir; a listagem NexusPag traz `gateway_e2eid` — reconciliação futura pode enriquecer.
 
 ---
 
-## 7. Instruções para revisão final
+## Antes do deploy único
 
-```bash
-git fetch origin
-git checkout feat/pix-qr-copia-cola-comprovante
-cd frontend && npm run typecheck && npm run lint
-cd ../backend && npm run typecheck   # se existir script
-# Preview Netlify da branch ou ambiente de staging
-```
+1. `typecheck` / lint
+2. QA manual (chave, qrc, saldo, PIN, duplicidade, status)
+3. Preview da branch
+4. Autorização explícita para merge + deploy
 
-Revisar principalmente:
-- `PixTransferForm.tsx` (fluxos e estados)
-- `pix-emv.ts` (parser)
-- `PixReceipt.tsx` + `ComprovantesList.tsx`
-- Diff de `nexuspag.ts` (mapeamento qrc)
-
-**Não fazer merge nem deploy até autorização explícita.**
+**Não fazer merge nem deploy até autorização.**
