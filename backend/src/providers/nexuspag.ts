@@ -29,6 +29,17 @@ function mapNexusPagStatus(status: string): PaymentStatus {
   }
 }
 
+/** Normaliza tipo de chave para o contrato esperado pela API de saques. */
+function mapWithdrawalKeyType(type: string): string {
+  const t = (type || "").toLowerCase();
+  if (t === "qrc" || t === "qrcode" || t === "copia_e_cola" || t === "emv") {
+    // Alguns gateways aceitam o EMV completo com tipo generico ou "random";
+    // enviamos "qrc" e o codigo completo em pix_key (ja validado no backend).
+    return "qrc";
+  }
+  return t;
+}
+
 export class NexusPagProvider implements PaymentProvider {
   name = "nexuspag";
   id = "nexuspag" as const;
@@ -158,14 +169,22 @@ export async function createNexusPagWithdrawal(params: {
   pixKeyType: string;
   description?: string;
   externalId?: string;
-}): Promise<{ id: string; status: string; rawResponse: unknown }> {
+}): Promise<{
+  id: string;
+  status: string;
+  rawResponse: unknown;
+  e2eId?: string | null;
+  feeCents?: number;
+  receiverName?: string | null;
+}> {
   const body: Record<string, unknown> = {
     amount: centsToReais(params.amountCents),
     pix_key: params.pixKey,
-    pix_key_type: params.pixKeyType,
+    pix_key_type: mapWithdrawalKeyType(params.pixKeyType),
   };
   if (params.description) body.description = params.description;
   if (params.externalId) body.external_id = params.externalId;
+
   const res = await fetch(`${NEXUSPAG_BASE_URL}/api/withdrawals`, {
     method: "POST",
     headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
@@ -178,7 +197,34 @@ export async function createNexusPagWithdrawal(params: {
     error.status = res.status;
     throw error;
   }
-  return { id: data.id || data.withdrawal?.id || "", status: data.status || data.withdrawal?.status || "pending", rawResponse: data };
+
+  const withdrawal = data.withdrawal ?? data;
+  const e2e =
+    withdrawal?.end_to_end_id ||
+    withdrawal?.e2e_id ||
+    withdrawal?.endToEndId ||
+    data.end_to_end_id ||
+    null;
+  const receiverName =
+    withdrawal?.recipient_name ||
+    withdrawal?.beneficiary_name ||
+    withdrawal?.receiver_name ||
+    null;
+  const fee =
+    withdrawal?.fee != null
+      ? reaisToCents(Number(withdrawal.fee))
+      : data.fee != null
+        ? reaisToCents(Number(data.fee))
+        : undefined;
+
+  return {
+    id: data.id || withdrawal?.id || "",
+    status: data.status || withdrawal?.status || "pending",
+    rawResponse: data,
+    e2eId: e2e,
+    feeCents: fee,
+    receiverName,
+  };
 }
 
 interface NexusPagKycResult {
@@ -282,11 +328,6 @@ export async function getNexusPagKycVerification(id: string): Promise<NexusPagKy
 
   return { ...mapKyc(data.verification), rawResponse: data };
 }
-
-// ---------------------------------------------------------------------------
-// Cartao virtual pre-pago (documentacao oficial NexusPag)
-// GET/POST /api/cards, POST /api/cards/details, recharges
-// ---------------------------------------------------------------------------
 
 export interface NexusPagCardInfo {
   status: string | null;
