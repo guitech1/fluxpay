@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, ShieldCheck } from "lucide-react";
+import { Camera, ClipboardPaste, KeyRound, Lock, ShieldCheck, X } from "lucide-react";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { formatCurrency } from "@/lib/utils";
+import { maskEmv, parsePixEmv } from "@/lib/pix-emv";
 
 type PixKeyType = "cpf" | "cnpj" | "email" | "phone" | "random";
+type TransferMode = "key" | "qr" | "copiacola";
 
 const KEY_TYPES: { value: PixKeyType; label: string }[] = [
   { value: "cpf", label: "CPF" },
@@ -45,15 +47,145 @@ export function PixTransferForm({
 }: Props) {
   const router = useRouter();
   const availableCents = Number(availableCentsProp) || 0;
+
+  const [mode, setMode] = useState<TransferMode>("key");
   const [amountReais, setAmountReais] = useState("");
   const [pixKey, setPixKey] = useState("");
   const [pixKeyType, setPixKeyType] = useState<PixKeyType>("cpf");
+  const [emvCode, setEmvCode] = useState("");
+  const [parsedEmv, setParsedEmv] = useState<ReturnType<typeof parsePixEmv> | null>(null);
   const [description, setDescription] = useState("");
   const [pixPin, setPixPin] = useState("");
   const [step, setStep] = useState<"form" | "confirm">("form");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [lastWithdrawalId, setLastWithdrawalId] = useState<string | null>(null);
+
+  // QR camera
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const scanLoopRef = useRef<number | null>(null);
+
+  const stopCamera = useCallback(() => {
+    if (scanLoopRef.current) {
+      cancelAnimationFrame(scanLoopRef.current);
+      scanLoopRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  useEffect(() => {
+    return () => stopCamera();
+  }, [stopCamera]);
+
+  async function startCamera() {
+    setCameraError(null);
+    setError(null);
+    stopCamera();
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError("Câmera não suportada neste navegador. Use Pix copia e cola.");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraActive(true);
+
+      // Prefer native BarcodeDetector when available
+      const BD = (window as any).BarcodeDetector;
+      if (BD) {
+        const detector = new BD({ formats: ["qr_code"] });
+        const loop = async () => {
+          if (!videoRef.current || !streamRef.current) return;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            if (codes?.length > 0) {
+              const value = codes[0].rawValue || codes[0].rawValue;
+              if (value && typeof value === "string" && value.length > 20) {
+                handleEmvDetected(value);
+                return;
+              }
+            }
+          } catch {
+            /* ignore frame errors */
+          }
+          scanLoopRef.current = requestAnimationFrame(loop);
+        };
+        scanLoopRef.current = requestAnimationFrame(loop);
+      } else {
+        setCameraError(
+          "Leitura automática de QR não disponível neste navegador. Cole o código em \"Pix copia e cola\"."
+        );
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.name === "NotAllowedError"
+          ? "Permissão de câmera negada. Autorize o acesso ou use copia e cola."
+          : "Não foi possível abrir a câmera.";
+      setCameraError(msg);
+      stopCamera();
+    }
+  }
+
+  function handleEmvDetected(code: string) {
+    stopCamera();
+    const parsed = parsePixEmv(code);
+    setEmvCode(parsed.raw);
+    setParsedEmv(parsed);
+    if (parsed.amountCents != null) {
+      setAmountReais((parsed.amountCents / 100).toFixed(2).replace(".", ","));
+    }
+    if (parsed.description) setDescription(parsed.description.slice(0, 140));
+    setMode("copiacola");
+    setStep("form");
+    if (!parsed.isValid) {
+      setError(parsed.errors[0] || "Código PIX com formato incompleto. Confira antes de continuar.");
+    } else {
+      setError(null);
+    }
+  }
+
+  function validateEmvAndGoConfirm() {
+    setError(null);
+    const parsed = parsePixEmv(emvCode);
+    setParsedEmv(parsed);
+    if (!parsed.isValid && parsed.errors.length) {
+      setError(parsed.errors[0]);
+      return false;
+    }
+    if (parsed.raw.length < 20) {
+      setError("Cole um código PIX válido.");
+      return false;
+    }
+    let cents = parseAmountToCents(amountReais);
+    if (parsed.amountCents != null) {
+      cents = parsed.amountCents;
+      setAmountReais((parsed.amountCents / 100).toFixed(2).replace(".", ","));
+    }
+    if (cents === null || cents < MIN_CENTS) {
+      setError("Valor mínimo R$ 10,00. Informe o valor se o QR não trouxer.");
+      return false;
+    }
+    if (cents + FEE_CENTS > availableCents) {
+      setError("Saldo insuficiente para valor + taxa (R$ 3,00).");
+      return false;
+    }
+    return true;
+  }
 
   if (environment !== "live") {
     return (
@@ -75,19 +207,27 @@ export function PixTransferForm({
   function goConfirm(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const cents = parseAmountToCents(amountReais);
-    if (cents === null || cents < MIN_CENTS) {
-      setError("Valor mínimo R$ 10,00.");
+
+    if (mode === "key") {
+      const cents = parseAmountToCents(amountReais);
+      if (cents === null || cents < MIN_CENTS) {
+        setError("Valor mínimo R$ 10,00.");
+        return;
+      }
+      if (cents + FEE_CENTS > availableCents) {
+        setError("Saldo insuficiente para valor + taxa (R$ 3,00).");
+        return;
+      }
+      if (!pixKey.trim()) {
+        setError("Informe a chave Pix.");
+        return;
+      }
+      setStep("confirm");
       return;
     }
-    if (cents + FEE_CENTS > availableCents) {
-      setError("Saldo insuficiente para valor + taxa (R$ 3,00).");
-      return;
-    }
-    if (!pixKey.trim()) {
-      setError("Informe a chave Pix.");
-      return;
-    }
+
+    // QR / copia e cola
+    if (!validateEmvAndGoConfirm()) return;
     setStep("confirm");
   }
 
@@ -99,7 +239,22 @@ export function PixTransferForm({
       setError("Informe o PIN Pix (4 a 8 dígitos).");
       return;
     }
-    const cents = parseAmountToCents(amountReais)!;
+
+    let cents: number;
+    let bodyPixKey: string;
+    let bodyPixKeyType: string;
+
+    if (mode === "key") {
+      cents = parseAmountToCents(amountReais)!;
+      bodyPixKey = pixKey.trim();
+      bodyPixKeyType = pixKeyType;
+    } else {
+      const parsed = parsedEmv || parsePixEmv(emvCode);
+      cents = parsed.amountCents ?? parseAmountToCents(amountReais)!;
+      bodyPixKey = parsed.raw;
+      bodyPixKeyType = "qrc";
+    }
+
     setLoading(true);
     try {
       await dashboardFetch("/digital-account/pix-pin/verify", {
@@ -118,23 +273,27 @@ export function PixTransferForm({
           method: "POST",
           body: {
             amount: cents,
-            pix_key: pixKey.trim(),
-            pix_key_type: pixKeyType,
+            pix_key: bodyPixKey,
+            pix_key_type: bodyPixKeyType,
             correlation_id,
           },
         }
       );
 
       const st = result?.data?.status || "pending";
+      const wid = result?.data?.id || null;
+      setLastWithdrawalId(wid);
       setSuccess(
         st === "completed"
-          ? "Pix enviado e confirmado. O comprovante está em Comprovantes."
+          ? "Pix enviado e confirmado. Veja o comprovante em Comprovantes."
           : st === "processing"
-            ? "Pix em processamento. Acompanhe em Comprovantes."
+            ? "Pix em processamento. Acompanhe o status em Comprovantes."
             : "Solicitação registrada. Estamos processando seu Pix."
       );
       setAmountReais("");
       setPixKey("");
+      setEmvCode("");
+      setParsedEmv(null);
       setPixPin("");
       setDescription("");
       setStep("form");
@@ -146,9 +305,14 @@ export function PixTransferForm({
     }
   }
 
-  const centsPreview = parseAmountToCents(amountReais);
+  const centsPreview =
+    mode === "key"
+      ? parseAmountToCents(amountReais)
+      : parsedEmv?.amountCents ?? parseAmountToCents(amountReais);
 
+  // ---- Confirm step ----
   if (step === "confirm") {
+    const isEmv = mode !== "key";
     return (
       <form onSubmit={submitTransfer} className="fxb-panel fxb-form fxb-rise">
         <div className="fxb-steps" aria-hidden>
@@ -158,19 +322,43 @@ export function PixTransferForm({
         <div className="fxb-section-head" style={{ marginBottom: 0 }}>
           <div>
             <h2>Confirmar Pix</h2>
-            <p>Confira os dados antes de enviar</p>
+            <p>Confira os dados antes de enviar. Nenhum valor é debitado até a confirmação do provedor.</p>
           </div>
         </div>
 
         <dl className="fxb-sum">
           <div>
-            <dt>Tipo da chave</dt>
-            <dd>{KEY_TYPES.find((t) => t.value === pixKeyType)?.label}</dd>
+            <dt>Tipo</dt>
+            <dd>
+              {mode === "key"
+                ? KEY_TYPES.find((t) => t.value === pixKeyType)?.label
+                : mode === "qr"
+                  ? "QR Code"
+                  : "Copia e cola"}
+            </dd>
           </div>
-          <div>
-            <dt>Chave</dt>
-            <dd>{pixKey}</dd>
-          </div>
+          {mode === "key" ? (
+            <div>
+              <dt>Chave</dt>
+              <dd>{pixKey}</dd>
+            </div>
+          ) : (
+            <div>
+              <dt>Código</dt>
+              <dd style={{ wordBreak: "break-all" }}>{maskEmv(emvCode)}</dd>
+            </div>
+          )}
+          {isEmv && parsedEmv?.merchantName && (
+            <div>
+              <dt>Nome no QR (informativo)</dt>
+              <dd>
+                {parsedEmv.merchantName}
+                <span className="fxb-row-sub" style={{ display: "block", marginTop: 2 }}>
+                  Dado presente no QR — não é consulta DICT da instituição.
+                </span>
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Valor</dt>
             <dd>{centsPreview != null ? formatCurrency(centsPreview, currency) : "—"}</dd>
@@ -187,7 +375,11 @@ export function PixTransferForm({
           )}
           <div className="fxb-sum-total">
             <dt>Total debitado</dt>
-            <dd>{centsPreview != null ? formatCurrency(centsPreview + FEE_CENTS, currency) : "—"}</dd>
+            <dd>
+              {centsPreview != null
+                ? formatCurrency(centsPreview + FEE_CENTS, currency)
+                : "—"}
+            </dd>
           </div>
         </dl>
 
@@ -206,7 +398,11 @@ export function PixTransferForm({
           />
         </label>
 
-        {error && <div className="fxb-note fxb-note--err" role="alert">{error}</div>}
+        {error && (
+          <div className="fxb-note fxb-note--err" role="alert">
+            {error}
+          </div>
+        )}
 
         <div className="fxb-btn-row">
           <button
@@ -222,81 +418,291 @@ export function PixTransferForm({
           </button>
         </div>
         <p className="fxb-row-sub" style={{ textAlign: "center" }}>
-          <ShieldCheck size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> O status final aparece em Comprovantes.
+          <ShieldCheck size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> O status
+          final só muda após confirmação do provedor.
         </p>
       </form>
     );
   }
 
+  // ---- Form step ----
   return (
-    <form onSubmit={goConfirm} className="fxb-panel fxb-form fxb-rise">
-      <div className="fxb-steps" aria-hidden>
-        <span data-on="true" />
-        <span data-on="false" />
+    <div className="space-y-4">
+      {/* Mode switcher */}
+      <div className="fxb-chips" role="tablist" aria-label="Forma de pagamento Pix">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "key"}
+          data-active={mode === "key"}
+          className="fxb-pill"
+          onClick={() => {
+            stopCamera();
+            setMode("key");
+            setError(null);
+            setSuccess(null);
+          }}
+        >
+          <KeyRound size={14} style={{ marginRight: 4 }} />
+          Chave Pix
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "qr"}
+          data-active={mode === "qr"}
+          className="fxb-pill"
+          onClick={() => {
+            setMode("qr");
+            setError(null);
+            setSuccess(null);
+            setParsedEmv(null);
+            setEmvCode("");
+          }}
+        >
+          <Camera size={14} style={{ marginRight: 4 }} />
+          QR Code
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "copiacola"}
+          data-active={mode === "copiacola"}
+          className="fxb-pill"
+          onClick={() => {
+            stopCamera();
+            setMode("copiacola");
+            setError(null);
+            setSuccess(null);
+          }}
+        >
+          <ClipboardPaste size={14} style={{ marginRight: 4 }} />
+          Copia e cola
+        </button>
       </div>
 
-      <label className="block">
-        <span className="fxb-label">Quanto você quer enviar?</span>
-        <div className="fxb-amount-wrap">
-          <span>R$</span>
-          <input
-            className="fxb-amount-input"
-            inputMode="decimal"
-            placeholder="0,00"
-            value={amountReais}
-            onChange={(e) => setAmountReais(e.target.value)}
-          />
+      <form onSubmit={goConfirm} className="fxb-panel fxb-form fxb-rise">
+        <div className="fxb-steps" aria-hidden>
+          <span data-on="true" />
+          <span data-on="false" />
         </div>
-        <p className="fxb-row-sub" style={{ marginTop: "0.5rem" }}>
-          Saldo disponível: {formatCurrency(availableCents, currency)} · Taxa R$ 3,00 · Mínimo R$ 10,00
-        </p>
-      </label>
 
-      <div>
-        <span className="fxb-label">Tipo da chave</span>
-        <div className="fxb-chips" role="radiogroup" aria-label="Tipo da chave Pix">
-          {KEY_TYPES.map((t) => (
+        {mode === "key" && (
+          <>
+            <label className="block">
+              <span className="fxb-label">Quanto você quer enviar?</span>
+              <div className="fxb-amount-wrap">
+                <span>R$</span>
+                <input
+                  className="fxb-amount-input"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountReais}
+                  onChange={(e) => setAmountReais(e.target.value)}
+                />
+              </div>
+              <p className="fxb-row-sub" style={{ marginTop: "0.5rem" }}>
+                Saldo disponível: {formatCurrency(availableCents, currency)} · Taxa R$ 3,00 ·
+                Mínimo R$ 10,00
+              </p>
+            </label>
+
+            <div>
+              <span className="fxb-label">Tipo da chave</span>
+              <div className="fxb-chips" role="radiogroup" aria-label="Tipo da chave Pix">
+                {KEY_TYPES.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={pixKeyType === t.value}
+                    data-active={pixKeyType === t.value}
+                    className="fxb-pill"
+                    onClick={() => setPixKeyType(t.value)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="block">
+              <span className="fxb-label">Chave Pix</span>
+              <input
+                className="w-full"
+                value={pixKey}
+                onChange={(e) => setPixKey(e.target.value)}
+                autoComplete="off"
+                placeholder="Digite a chave do destinatário"
+              />
+            </label>
+          </>
+        )}
+
+        {mode === "qr" && (
+          <div className="space-y-3">
+            <p className="fxb-row-sub">
+              Aponte a câmera para o QR Code Pix. O valor será preenchido quando estiver no código.
+            </p>
+            {!cameraActive ? (
+              <button type="button" className="btn btn-primary w-full" onClick={startCamera}>
+                <Camera size={18} style={{ marginRight: 8 }} />
+                Abrir câmera
+              </button>
+            ) : (
+              <div style={{ position: "relative", borderRadius: 12, overflow: "hidden" }}>
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  style={{ width: "100%", maxHeight: 320, objectFit: "cover", background: "#000" }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ position: "absolute", top: 8, right: 8 }}
+                  onClick={stopCamera}
+                >
+                  <X size={16} /> Fechar
+                </button>
+              </div>
+            )}
+            {cameraError && (
+              <div className="fxb-note fxb-note--warn" role="status">
+                {cameraError}
+              </div>
+            )}
+            {emvCode && (
+              <div className="fxb-note fxb-note--ok">
+                Código lido. Valor detectado:{" "}
+                {parsedEmv?.amountCents != null
+                  ? formatCurrency(parsedEmv.amountCents, currency)
+                  : "informe manualmente"}
+              </div>
+            )}
+            {emvCode && !parsedEmv?.amountCents && (
+              <label className="block">
+                <span className="fxb-label">Valor a pagar</span>
+                <div className="fxb-amount-wrap">
+                  <span>R$</span>
+                  <input
+                    className="fxb-amount-input"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={amountReais}
+                    onChange={(e) => setAmountReais(e.target.value)}
+                  />
+                </div>
+              </label>
+            )}
+          </div>
+        )}
+
+        {mode === "copiacola" && (
+          <>
+            <label className="block">
+              <span className="fxb-label">Código Pix (copia e cola)</span>
+              <textarea
+                className="w-full"
+                rows={4}
+                value={emvCode}
+                onChange={(e) => {
+                  setEmvCode(e.target.value);
+                  setParsedEmv(null);
+                }}
+                placeholder="Cole aqui o código completo do Pix"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
             <button
-              key={t.value}
               type="button"
-              role="radio"
-              aria-checked={pixKeyType === t.value}
-              data-active={pixKeyType === t.value}
-              className="fxb-pill"
-              onClick={() => setPixKeyType(t.value)}
+              className="btn btn-secondary w-full"
+              onClick={() => {
+                const p = parsePixEmv(emvCode);
+                setParsedEmv(p);
+                if (p.amountCents != null) {
+                  setAmountReais((p.amountCents / 100).toFixed(2).replace(".", ","));
+                }
+                if (p.errors.length) setError(p.errors[0]);
+                else setError(null);
+              }}
             >
-              {t.label}
+              Ler e validar código
             </button>
-          ))}
-        </div>
-      </div>
+            {parsedEmv && (
+              <div className={parsedEmv.isValid ? "fxb-note fxb-note--ok" : "fxb-note fxb-note--warn"}>
+                {parsedEmv.isValid ? (
+                  <>
+                    Código válido.
+                    {parsedEmv.amountCents != null && (
+                      <> Valor: {formatCurrency(parsedEmv.amountCents, currency)}.</>
+                    )}
+                    {parsedEmv.merchantName && (
+                      <> Nome no QR (informativo): {parsedEmv.merchantName}.</>
+                    )}
+                  </>
+                ) : (
+                  parsedEmv.errors.join(" ")
+                )}
+              </div>
+            )}
+            {(!parsedEmv?.amountCents || !emvCode) && (
+              <label className="block">
+                <span className="fxb-label">Valor a pagar</span>
+                <div className="fxb-amount-wrap">
+                  <span>R$</span>
+                  <input
+                    className="fxb-amount-input"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={amountReais}
+                    onChange={(e) => setAmountReais(e.target.value)}
+                  />
+                </div>
+                <p className="fxb-row-sub" style={{ marginTop: "0.5rem" }}>
+                  Saldo: {formatCurrency(availableCents, currency)} · Taxa R$ 3,00 · Mín. R$ 10,00
+                </p>
+              </label>
+            )}
+          </>
+        )}
 
-      <label className="block">
-        <span className="fxb-label">Chave Pix</span>
-        <input
-          className="w-full"
-          value={pixKey}
-          onChange={(e) => setPixKey(e.target.value)}
-          autoComplete="off"
-          placeholder="Digite a chave do destinatário"
-        />
-      </label>
+        <label className="block">
+          <span className="fxb-label">Descrição (opcional)</span>
+          <input
+            className="w-full"
+            value={description}
+            onChange={(e) => setDescription(e.target.value.slice(0, 140))}
+          />
+        </label>
 
-      <label className="block">
-        <span className="fxb-label">Descrição (opcional)</span>
-        <input
-          className="w-full"
-          value={description}
-          onChange={(e) => setDescription(e.target.value.slice(0, 140))}
-        />
-      </label>
+        {error && (
+          <div className="fxb-note fxb-note--err" role="alert">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="fxb-note fxb-note--ok" role="status">
+            {success}
+            {lastWithdrawalId && (
+              <p style={{ marginTop: 8 }}>
+                <a href={`/dashboard/carteira/comprovantes`} className="fxb-link-pill">
+                  Ver comprovantes
+                </a>
+              </p>
+            )}
+          </div>
+        )}
 
-      {error && <div className="fxb-note fxb-note--err" role="alert">{error}</div>}
-      {success && <div className="fxb-note fxb-note--ok" role="status">{success}</div>}
-
-      <button type="submit" className="btn btn-primary w-full">
-        Continuar
-      </button>
-    </form>
+        <button
+          type="submit"
+          className="btn btn-primary w-full"
+          disabled={mode === "qr" && !emvCode}
+        >
+          Continuar
+        </button>
+      </form>
+    </div>
   );
 }
