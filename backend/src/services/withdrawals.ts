@@ -38,16 +38,26 @@ export interface WithdrawalRequest {
   balance_transaction_id: string | null;
   created_at: string;
   updated_at: string;
+  /** E2E quando capturado da resposta/listagem NexusPag (pode estar em provider_reference composto) */
+  e2e_id?: string | null;
 }
 
 function mapWithdrawalRow(row: any): WithdrawalRequest {
+  const providerRef = row.provider_reference ?? row.provider_withdrawal_id ?? null;
+  let e2e: string | null = row.e2e_id ?? row.gateway_e2eid ?? null;
+  // Formato opcional: "withdrawalId|E2E..." quando salvamos composto sem migration
+  if (!e2e && typeof providerRef === "string" && providerRef.includes("|")) {
+    const parts = providerRef.split("|");
+    if (parts[1]) e2e = parts[1];
+  }
   return {
     ...row,
     fee: Number(row.fee ?? row.fee_amount ?? 0),
     net: Number(row.net ?? row.net_amount ?? 0),
     approved_by: row.approved_by ?? row.reviewed_by ?? null,
     approved_at: row.approved_at ?? row.reviewed_at ?? null,
-    provider_reference: row.provider_reference ?? row.provider_withdrawal_id ?? null,
+    provider_reference: providerRef,
+    e2e_id: e2e,
   } as WithdrawalRequest;
 }
 
@@ -80,6 +90,11 @@ async function recordWithdrawalDecision(params: {
 }
 
 function maskPixKey(key: string, type: PixKeyType): string {
+  if (type === "qrc") {
+    const t = (key || "").trim();
+    if (t.length <= 24) return "***";
+    return `${t.slice(0, 12)}…${t.slice(-8)}`;
+  }
   if (type === "email") {
     const [user, domain] = key.split("@");
     if (!domain) return "***";
@@ -123,24 +138,14 @@ function assertPixKey(type: PixKeyType, key: string): void {
       break;
     case "qrc":
       if (k.length < 20) throw new AppError(400, "validation_error", "PIX copia-e-cola invalido.");
+      if (!k.startsWith("000201")) {
+        // Aviso suave: muitos EMV validos começam com 000201; nao bloqueamos outros formatos
+        // que a NexusPag possa aceitar no futuro.
+      }
       break;
   }
 }
 
-/**
- * Regra financeira do saque (fee-on-top):
- * - amountCents (entrada do usuário) = valor que o destinatário recebe (net).
- * - fee = WITHDRAWAL_FEE_CENTS (fixa).
- * - total reservado no saldo = amountCents + fee.
- * - Colunas persistidas: amount = total, net = valor ao destinatário, fee = taxa.
- * - Provider recebe sempre `net`.
- *
- * Aprovação manual configurável por organização:
- * - requires_manual_withdrawal_approval = true  → permanece pending até ADM aprovar
- * - requires_manual_withdrawal_approval = false → auto-executa após reserva
- * Default no schema: false, mas o fluxo histórico era sempre manual; a flag
- * permite liberar contas confiáveis sem fila.
- */
 export async function requestWithdrawal(params: {
   organizationId: string;
   environment: Environment;
@@ -253,8 +258,6 @@ export async function requestWithdrawal(params: {
 
   let withdrawal = mapWithdrawalRow(row);
 
-  // Conta sem aprovação manual: tenta executar imediatamente (mesma lógica do ADM).
-  // Se o provider falhar, o saque fica em processing/failed — saldo já reservado.
   if (!requiresManual && withdrawal.status === "pending") {
     try {
       withdrawal = await approveAndExecuteWithdrawal({
@@ -267,7 +270,6 @@ export async function requestWithdrawal(params: {
         withdrawalId: withdrawal.id,
         message: autoErr instanceof Error ? autoErr.message : String(autoErr),
       });
-      // Recarrega estado atual após tentativa
       try {
         withdrawal = await getWithdrawal(
           params.organizationId,
@@ -495,9 +497,13 @@ export async function approveAndExecuteWithdrawal(params: {
   }
 
   const finalStatus = providerResult.status === "completed" ? "completed" : "processing";
+  const providerId = providerResult.id || null;
+  // Guarda E2E junto da referencia quando disponivel (sem migration de coluna)
   const providerRef =
-    (providerResult as any).providerWithdrawalId || (providerResult as any).id || null;
-  const feeCents = (providerResult as any).feeCents;
+    providerResult.e2eId && providerId
+      ? `${providerId}|${providerResult.e2eId}`
+      : providerId;
+  const feeCents = providerResult.feeCents;
 
   const { data: updated, error: upErr } = await supabaseAdmin
     .from("withdrawal_requests")
@@ -525,6 +531,14 @@ export async function approveAndExecuteWithdrawal(params: {
 }
 
 export function publicWithdrawalView(w: WithdrawalRequest) {
+  const providerRef = w.provider_reference;
+  let cleanProviderRef = providerRef;
+  let e2e = w.e2e_id ?? null;
+  if (providerRef && providerRef.includes("|")) {
+    const [idPart, e2ePart] = providerRef.split("|");
+    cleanProviderRef = idPart || providerRef;
+    if (!e2e && e2ePart) e2e = e2ePart;
+  }
   return {
     id: w.id,
     amount: w.amount,
@@ -537,6 +551,8 @@ export function publicWithdrawalView(w: WithdrawalRequest) {
     rejection_reason: w.rejection_reason,
     failure_reason: w.failure_reason,
     correlation_id: w.correlation_id,
+    provider_reference: cleanProviderRef,
+    e2e_id: e2e,
     created_at: w.created_at,
     updated_at: w.updated_at,
     reviewed_at: w.approved_at,
