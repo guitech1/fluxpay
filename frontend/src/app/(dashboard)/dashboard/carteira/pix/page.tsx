@@ -34,7 +34,7 @@ export default async function CarteiraPixPage() {
     <div className="fxb-narrow">
       <ScreenHeader
         title="Pix"
-        description="Envie dinheiro usando uma chave Pix"
+        description="Chave, QR Code ou copia e cola — com confirmação antes do envio"
         icon={<PixBadge size="lg" />}
       />
 
