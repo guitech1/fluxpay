@@ -85,36 +85,29 @@ export function PixTransferForm({
     return () => stopCamera();
   }, [stopCamera]);
 
-  async function startCamera() {
-    setCameraError(null);
-    setError(null);
-    stopCamera();
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraError("Câmera não suportada neste navegador. Use Pix copia e cola.");
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
+  // Attach stream only after the <video> is mounted (fixes black screen race)
+  useEffect(() => {
+    if (!cameraActive || !streamRef.current) return;
 
-      // Prefer native BarcodeDetector when available
-      const BD = (window as any).BarcodeDetector;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const stream = streamRef.current;
+    video.srcObject = stream;
+
+    let cancelled = false;
+
+    const startScan = () => {
+      if (cancelled || !streamRef.current) return;
+      const BD = (window as unknown as { BarcodeDetector?: new (opts: { formats: string[] }) => { detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>> } }).BarcodeDetector;
       if (BD) {
         const detector = new BD({ formats: ["qr_code"] });
         const loop = async () => {
-          if (!videoRef.current || !streamRef.current) return;
+          if (cancelled || !videoRef.current || !streamRef.current) return;
           try {
             const codes = await detector.detect(videoRef.current);
             if (codes?.length > 0) {
-              const value = codes[0].rawValue || codes[0].rawValue;
+              const value = codes[0].rawValue;
               if (value && typeof value === "string" && value.length > 20) {
                 handleEmvDetected(value);
                 return;
@@ -128,9 +121,56 @@ export function PixTransferForm({
         scanLoopRef.current = requestAnimationFrame(loop);
       } else {
         setCameraError(
-          "Leitura automática de QR não disponível neste navegador. Cole o código em \"Pix copia e cola\"."
+          'Leitura automática de QR não disponível neste navegador. Cole o código em "Pix copia e cola".'
         );
       }
+    };
+
+    video
+      .play()
+      .then(() => {
+        if (!cancelled) startScan();
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCameraError("Não foi possível iniciar a visualização da câmera.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (scanLoopRef.current) {
+        cancelAnimationFrame(scanLoopRef.current);
+        scanLoopRef.current = null;
+      }
+      if (video.srcObject === stream) {
+        video.srcObject = null;
+      }
+    };
+    // handleEmvDetected is stable enough for this mount cycle
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraActive]);
+
+  async function startCamera() {
+    setCameraError(null);
+    setError(null);
+    stopCamera();
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError("Câmera não suportada neste navegador. Use Pix copia e cola.");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      // Mount <video> first; the effect above attaches srcObject + starts scan
+      setCameraActive(true);
     } catch (err) {
       const msg =
         err instanceof Error && err.name === "NotAllowedError"
@@ -555,6 +595,7 @@ export function PixTransferForm({
                   ref={videoRef}
                   playsInline
                   muted
+                  autoPlay
                   style={{ width: "100%", maxHeight: 320, objectFit: "cover", background: "#000" }}
                 />
                 <button
@@ -577,12 +618,15 @@ export function PixTransferForm({
                 Código lido. Valor detectado:{" "}
                 {parsedEmv?.amountCents != null
                   ? formatCurrency(parsedEmv.amountCents, currency)
-                  : "informe manualmente"}
+                  : "informe manualmente se o QR não tiver valor"}
               </div>
             )}
-            {emvCode && !parsedEmv?.amountCents && (
+            {!emvCode && cameraActive && !cameraError && (
+              <p className="fxb-row-sub">Procurando QR Code…</p>
+            )}
+            {(!parsedEmv?.amountCents || !emvCode) && (
               <label className="block">
-                <span className="fxb-label">Valor a pagar</span>
+                <span className="fxb-label">Valor a pagar (se o QR não trouxer)</span>
                 <div className="fxb-amount-wrap">
                   <span>R$</span>
                   <input
