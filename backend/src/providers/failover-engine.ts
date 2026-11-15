@@ -39,14 +39,18 @@ export function makeFailoverEngine(deps: {
         attemptLog.push({ providerId: "sandbox", attempt: 0, outcome: "success", latencyMs });
         return {
           providerId: "sandbox", success: true, providerPaymentId: r.providerPaymentId, status: r.status,
-          pix: r.pix ? { txid: r.pix.txid, copyPaste: r.pix.copyPaste, qrCodeBase64: r.pix.qrCodeBase64, expiresAt: r.pix.expiresAt, feeAmountCents: r.pix.feeAmountCents, netAmountCents: r.pix.netAmountCents } : undefined,
+          pix: r.pix ? {
+            txid: r.pix.txid, copyPaste: r.pix.copyPaste, qrCodeBase64: r.pix.qrCodeBase64,
+            expiresAt: r.pix.expiresAt, feeAmountCents: r.pix.feeAmountCents, netAmountCents: r.pix.netAmountCents,
+            payerName: r.pix.payerName ?? null, payerDocument: r.pix.payerDocument ?? null, paidAt: r.pix.paidAt ?? null,
+          } : undefined,
           rawResponse: r.rawResponse, latencyMs, attemptLog,
         };
       }
 
       const ordered = await deps.resolveActiveIds();
       const maxAttempts = computeMaxAttempts({ orderedLength: ordered.length, envMax: cfg.maxAttempts });
-      console.info(JSON.stringify({ tag: "acquirer_failover_start", paymentExternalId: ctx.externalId ?? null, ordered, maxAttempts, totalBudgetMs: cfg.totalBudgetMs, perAttemptTimeoutMs: cfg.perAttemptTimeoutMs }));
+      console.info(JSON.stringify({ tag: "acquirer_failover_start", paymentExternalId: ctx.externalId ?? null, ordered, maxAttempts, totalBudgetMs: cfg.totalBudgetMs, perAttemptTimeoutMs: cfg.perAttemptTimeoutMs, shopId: ctx.shopId ?? null }));
 
       if (!ordered.length || maxAttempts === 0) {
         return { providerId: "sandbox", success: false, errorCode: "provider_unavailable", errorMessage: "Nenhum adquirente ativo no admin com chave configurada (sem fallback).", latencyMs: 0, attemptLog };
@@ -87,9 +91,15 @@ export function makeFailoverEngine(deps: {
         const t0 = Date.now();
         try {
           const r = await provider.createPayment({
-            amount: ctx.amountCents, currency: ctx.currency, description: ctx.description,
-            externalId: ctx.externalId, webhookUrl: ctx.webhookUrl,
-            expirationSeconds: ctx.expirationSeconds, metadata: ctx.metadata,
+            amount: ctx.amountCents,
+            currency: ctx.currency,
+            description: ctx.description,
+            externalId: ctx.externalId,
+            webhookUrl: ctx.webhookUrl,
+            expirationSeconds: ctx.expirationSeconds,
+            metadata: ctx.metadata,
+            shopId: ctx.shopId,
+            platformFeePercent: ctx.platformFeePercent,
           });
           if (prevTimeout === undefined) delete process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS;
           else process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS = prevTimeout;
@@ -100,7 +110,11 @@ export function makeFailoverEngine(deps: {
           console.info(JSON.stringify({ tag: "acquirer_failover_completed", paymentExternalId: ctx.externalId ?? null, finalProviderId: pid, success: true, attempts: attemptLog.length, totalMs: Date.now() - startedAt }));
           return {
             providerId: pid, success: true, providerPaymentId: r.providerPaymentId, status: r.status,
-            pix: r.pix ? { txid: r.pix.txid, copyPaste: r.pix.copyPaste, qrCodeBase64: r.pix.qrCodeBase64, expiresAt: r.pix.expiresAt, feeAmountCents: r.pix.feeAmountCents, netAmountCents: r.pix.netAmountCents } : undefined,
+            pix: r.pix ? {
+              txid: r.pix.txid, copyPaste: r.pix.copyPaste, qrCodeBase64: r.pix.qrCodeBase64,
+              expiresAt: r.pix.expiresAt, feeAmountCents: r.pix.feeAmountCents, netAmountCents: r.pix.netAmountCents,
+              payerName: r.pix.payerName ?? null, payerDocument: r.pix.payerDocument ?? null, paidAt: r.pix.paidAt ?? null,
+            } : undefined,
             rawResponse: r.rawResponse, latencyMs, attemptLog,
           };
         } catch (err) {
