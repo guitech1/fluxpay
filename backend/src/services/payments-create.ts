@@ -18,6 +18,38 @@ import type {
 import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
+ * Carrega vínculo de subconta Nexus da organização (quando a coluna existir).
+ * Não quebra se a migration ainda não tiver sido aplicada.
+ */
+async function loadOrgNexusShop(organizationId: string): Promise<{
+  shopId?: string;
+  platformFeePercent?: number;
+}> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("organizations")
+      .select("nexus_shop_id, platform_fee_percent")
+      .eq("id", organizationId)
+      .maybeSingle();
+
+    if (error || !data) return {};
+
+    const shopId =
+      typeof data.nexus_shop_id === "string" && data.nexus_shop_id.trim()
+        ? data.nexus_shop_id.trim()
+        : undefined;
+    const pct =
+      data.platform_fee_percent != null && Number(data.platform_fee_percent) > 0
+        ? Number(data.platform_fee_percent)
+        : undefined;
+
+    return { shopId, platformFeePercent: pct };
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Cria cobranca com roteamento multi-adquirente e failover.
  * Persiste provider_attempt_log; se a coluna falhar no update,
  * faz retry sem o campo (success/fail/ambiguous). Nunca reenvia cobranca ao adquirente.
@@ -84,6 +116,10 @@ export async function createPayment(
 
   const webhookUrl = `${env.API_BASE_URL}/v1/webhooks/provider`;
 
+  // Subconta + taxa da plataforma (só em live; sandbox ignora)
+  const orgShop =
+    environment === "live" ? await loadOrgNexusShop(organizationId) : {};
+
   let attemptResult;
   try {
     attemptResult = await createChargeWithFailover(
@@ -98,6 +134,8 @@ export async function createPayment(
         metadata: input.metadata,
         attempt: 0,
         attemptedProviders: [],
+        shopId: orgShop.shopId,
+        platformFeePercent: orgShop.platformFeePercent,
       },
       environment
     );
@@ -229,26 +267,38 @@ export async function createPayment(
       ? "processing"
       : providerStatus;
 
+  const payerName = attemptResult.pix?.payerName ?? null;
+  const payerDocument = attemptResult.pix?.payerDocument ?? null;
+
+  const baseUpdate: Record<string, unknown> = {
+    status,
+    provider: usedProviderId,
+    provider_payment_id: attemptResult.providerPaymentId || null,
+    provider_response: attemptResult.rawResponse ?? null,
+    fee_amount: feeAmount,
+    net_amount: netAmount,
+    fee_rule_snapshot: feeSnapshot,
+    provider_txid: attemptResult.pix?.txid || null,
+    pix_copy_paste: attemptResult.pix?.copyPaste || null,
+    pix_qr_code_base64: attemptResult.pix?.qrCodeBase64 || null,
+    expires_at: attemptResult.pix?.expiresAt || null,
+    authorized_at: status === "succeeded" ? nowIso : null,
+    captured_at: status === "succeeded" ? nowIso : null,
+    failed_at: status === "failed" ? nowIso : null,
+    paid_at: status === "succeeded" ? nowIso : null,
+  };
+
+  // Campos de pagador: só grava se a coluna existir (migration em outro chat).
+  // Tentamos com eles; se o PostgREST reclamar, retry sem.
+  if (payerName) baseUpdate.payer_name = payerName;
+  if (payerDocument) baseUpdate.payer_document = payerDocument;
+
   let payment: Record<string, unknown> | null = null;
   const { data: paymentData, error: updateError } = await supabaseAdmin
     .from("payments")
     .update({
-      status,
-      provider: usedProviderId,
-      provider_payment_id: attemptResult.providerPaymentId || null,
-      provider_response: attemptResult.rawResponse ?? null,
+      ...baseUpdate,
       provider_attempt_log: buildAttemptLog(attemptResult),
-      fee_amount: feeAmount,
-      net_amount: netAmount,
-      fee_rule_snapshot: feeSnapshot,
-      provider_txid: attemptResult.pix?.txid || null,
-      pix_copy_paste: attemptResult.pix?.copyPaste || null,
-      pix_qr_code_base64: attemptResult.pix?.qrCodeBase64 || null,
-      expires_at: attemptResult.pix?.expiresAt || null,
-      authorized_at: status === "succeeded" ? nowIso : null,
-      captured_at: status === "succeeded" ? nowIso : null,
-      failed_at: status === "failed" ? nowIso : null,
-      paid_at: status === "succeeded" ? nowIso : null,
     })
     .eq("id", paymentId)
     .eq("organization_id", organizationId)
@@ -259,25 +309,11 @@ export async function createPayment(
   payment = paymentData as Record<string, unknown> | null;
   if (updateError || !payment) {
     console.warn("[payments] update with attempt_log failed; retrying without it:", updateError?.message);
+    // Retry sem attempt_log e sem payer_* (caso coluna ainda não exista)
+    const { payer_name: _pn, payer_document: _pd, ...safeUpdate } = baseUpdate;
     const retry = await supabaseAdmin
       .from("payments")
-      .update({
-        status,
-        provider: usedProviderId,
-        provider_payment_id: attemptResult.providerPaymentId || null,
-        provider_response: attemptResult.rawResponse ?? null,
-        fee_amount: feeAmount,
-        net_amount: netAmount,
-        fee_rule_snapshot: feeSnapshot,
-        provider_txid: attemptResult.pix?.txid || null,
-        pix_copy_paste: attemptResult.pix?.copyPaste || null,
-        pix_qr_code_base64: attemptResult.pix?.qrCodeBase64 || null,
-        expires_at: attemptResult.pix?.expiresAt || null,
-        authorized_at: status === "succeeded" ? nowIso : null,
-        captured_at: status === "succeeded" ? nowIso : null,
-        failed_at: status === "failed" ? nowIso : null,
-        paid_at: status === "succeeded" ? nowIso : null,
-      })
+      .update(safeUpdate)
       .eq("id", paymentId)
       .eq("organization_id", organizationId)
       .eq("environment", environment)
