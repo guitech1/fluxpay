@@ -14,6 +14,7 @@ import {
 import {
   getPaymentByProviderReference,
   markPixPaymentSucceeded,
+  persistPayerInfo,
 } from "../services/payments.js";
 import { decideWebhookAction } from "../services/provider-events.js";
 import { notifyAfterPixConfirmed } from "../services/payments-queries-notify.js";
@@ -73,6 +74,7 @@ interface NexusPagWebhookPayload {
   fee?: number;
   net_amount?: number;
   payer_name?: string;
+  payer_document?: string;
   payer_document_masked?: string;
   paid_at?: string;
   verified_at?: string;
@@ -81,6 +83,17 @@ interface NexusPagWebhookPayload {
   shop_external_ref?: string;
   verification_id?: string;
   id?: string;
+}
+
+function extractPayer(payload: {
+  payer_name?: string | null;
+  payer_document?: string | null;
+  payer_document_masked?: string | null;
+}) {
+  return {
+    name: payload.payer_name ?? null,
+    document: payload.payer_document ?? payload.payer_document_masked ?? null,
+  };
 }
 
 router.post("/nexuspag", async (req, res, next) => {
@@ -173,7 +186,7 @@ router.post("/nexuspag", async (req, res, next) => {
       return;
     }
 
-    // ---- Payment events (existente) ----
+    // ---- Payment events ----
     const txid = payload.txid;
     const externalId = payload.external_id || null;
 
@@ -220,6 +233,10 @@ router.post("/nexuspag", async (req, res, next) => {
       alreadyProcessed = Boolean(previous?.processed_at);
 
       if (alreadyProcessed) {
+        // Mesmo duplicado: tenta preencher pagador se ainda nao tiver
+        if (payment) {
+          await persistPayerInfo(payment.id, extractPayer(payload));
+        }
         res.status(200).json({ received: true, duplicate: true });
         return;
       }
@@ -256,13 +273,16 @@ router.post("/nexuspag", async (req, res, next) => {
       alreadyProcessed,
     });
 
+    const payer = extractPayer(payload);
+
     switch (decision.action) {
       case "duplicate":
+        if (payment) await persistPayerInfo(payment.id, payer);
         res.status(200).json({ received: true, duplicate: true });
         return;
 
       case "confirm":
-        await markPixPaymentSucceeded(payment!);
+        await markPixPaymentSucceeded(payment!, payer);
         notifyAfterPixConfirmed(payment!);
         await markProcessed();
         res.status(200).json({ received: true });
@@ -294,9 +314,6 @@ router.post("/provider", async (req, res, next) => {
   let providerEventId: string | null = null;
 
   try {
-    // The query claim narrows verification to one secret; it never selects a
-    // secret without HMAC verification. Without a claim, the helper identifies
-    // the secret that actually verifies the raw body.
     const claimedProvider =
       typeof req.query.provider === "string" ? req.query.provider.toLowerCase() : null;
     const signatureHeader =
@@ -306,8 +323,6 @@ router.post("/provider", async (req, res, next) => {
     const isKavroHeader = Boolean(req.headers["x-kavro-signature"]);
     const rawBody = typeof (req as any).rawBody === "string" ? (req as any).rawBody : "";
 
-    // Never authenticate a re-serialized body: signatures must cover the exact
-    // bytes received from the acquirer.
     if (!rawBody) {
       res.status(500).json({ error: "raw_body_unavailable" });
       return;
@@ -334,6 +349,9 @@ router.post("/provider", async (req, res, next) => {
       external_id?: string | null;
       status?: string;
       id?: string;
+      payer_name?: string;
+      payer_document?: string;
+      payer_document_masked?: string;
     };
     const eventType =
       payload.event ||
@@ -343,8 +361,6 @@ router.post("/provider", async (req, res, next) => {
     const externalId = payload.external_id || payload.id || null;
     providerEventId = `${eventType}:${txid || externalId || createHash("sha256").update(rawBody).digest("hex")}`;
 
-    // Persist authenticated events before changing payment state. An existing
-    // unprocessed row can be retried; a processed row is an idempotent replay.
     const { data: insertedEvent, error: insertError } = await supabaseAdmin
       .from("provider_events")
       .insert({
@@ -405,8 +421,6 @@ router.post("/provider", async (req, res, next) => {
     };
 
     if (!payment) {
-      // Keep processed_at NULL: the payment may be persisted shortly after the
-      // provider callback. Reconciliation can retry this authenticated event.
       if (providerEventRowId) {
         const { error } = await supabaseAdmin
           .from("provider_events")
@@ -418,9 +432,6 @@ router.post("/provider", async (req, res, next) => {
       return;
     }
 
-    // The authenticated secret must agree with the acquirer stored on the
-    // payment. A URL claim or valid signature for a different provider cannot
-    // authorize a payment belonging to another provider.
     if (!paymentProviderMatchesClaim(payment.provider, verifiedProviderId)) {
       await finishEvent("payment_provider_mismatch");
       res.status(401).json({ error: "payment_provider_mismatch" });
@@ -443,19 +454,20 @@ router.post("/provider", async (req, res, next) => {
       return;
     }
 
+    const payer = extractPayer(payload);
+
     if (payment.status === "succeeded") {
+      await persistPayerInfo(payment.id, payer);
       await finishEvent();
       res.status(200).json({ received: true, already_processed: true });
       return;
     }
 
-    await markPixPaymentSucceeded(payment);
+    await markPixPaymentSucceeded(payment, payer);
     notifyAfterPixConfirmed(payment);
     await finishEvent();
     res.status(200).json({ received: true, matched: true, payment_id: payment.id });
   } catch (err) {
-    // Leave an event unprocessed when a transient exception occurs so a
-    // provider retry can resume safely.
     next(err);
   }
 });
