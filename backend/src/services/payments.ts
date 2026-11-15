@@ -27,6 +27,7 @@ import {
   reconcileOrphanPixCharges,
   reprocessUnmatchedProviderEvents,
   simulateSandboxPayment as simulateSandboxPaymentCore,
+  persistPayerInfo,
 } from "./payments-queries.js";
 
 export async function createPayment(
@@ -58,13 +59,16 @@ export async function createPayment(
 }
 
 /** Confirma PIX no ledger — recusa sandbox/test em producao. */
-export async function markPixPaymentSucceeded(payment: Payment): Promise<Payment> {
+export async function markPixPaymentSucceeded(
+  payment: Payment,
+  payer?: { name?: string | null; document?: string | null } | null
+): Promise<Payment> {
   assertCanCreditLedger({
     environment: payment.environment,
     provider: payment.provider,
     context: "markPixPaymentSucceeded",
   });
-  return markPixPaymentSucceededCore(payment);
+  return markPixPaymentSucceededCore(payment, payer);
 }
 
 /** Simulacao de pagamento de teste — desligada em producao. */
@@ -93,4 +97,5 @@ export {
   markPixPaymentFailedOrExpired,
   reconcileOrphanPixCharges,
   reprocessUnmatchedProviderEvents,
+  persistPayerInfo,
 };
