@@ -21,6 +21,8 @@ import {
   saveAntifraudRules,
   DEFAULT_ANTIFRAUD_RULES,
 } from "../services/antifraud.js";
+import { getAntifraudRadar } from "../services/antifraud-radar.js";
+import { testWebhookDelivery } from "../services/webhook-test.js";
 import { AppError } from "../middleware/error.js";
 import { inScopeOrNull } from "../utils/scope.js";
 
@@ -86,7 +88,6 @@ router.post("/webhooks/endpoints", requireRole("owner", "admin", "developer"), a
   }
 });
 
-// Antifraude — regras do lojista
 router.get("/antifraud/rules", async (req, res, next) => {
   try {
     const rules = await getAntifraudRules(req.dashboardAuth!.organizationId);
@@ -115,6 +116,40 @@ router.put("/antifraud/rules", requireRole("owner", "admin"), async (req, res, n
     next(err);
   }
 });
+
+router.get("/antifraud/radar", async (req, res, next) => {
+  try {
+    const data = await getAntifraudRadar(
+      req.dashboardAuth!.organizationId,
+      req.dashboardAuth!.environment
+    );
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post(
+  "/webhooks/endpoints/:id/test",
+  requireRole("owner", "admin", "developer"),
+  async (req, res, next) => {
+    try {
+      const schema = z.object({
+        event_type: z.string().min(3).max(80).default("payment.succeeded"),
+      });
+      const body = schema.parse(req.body ?? {});
+      const result = await testWebhookDelivery({
+        organizationId: req.dashboardAuth!.organizationId,
+        environment: req.dashboardAuth!.environment,
+        endpointId: req.params.id,
+        eventType: body.event_type || "payment.succeeded",
+      });
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 router.post("/payments", requireRole("owner", "admin", "developer"), async (req, res, next) => {
   try {
@@ -347,7 +382,7 @@ async function findEndpointInScope(organizationId: string, environment: string, 
     .from("webhook_endpoints")
     .select(WEBHOOK_COLUMNS)
     .eq("id", id)
-    .eq("organization_id", organizationId)
+    .eq("organization_id", environment)
     .eq("environment", environment)
     .maybeSingle();
 
