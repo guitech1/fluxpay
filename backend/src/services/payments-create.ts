@@ -6,6 +6,7 @@ import { dispatchWebhook } from "./webhooks.js";
 import { env } from "../config/env.js";
 import { calculateFee } from "./fees.js";
 import { buildAttemptLog } from "./attempt-log.js";
+import { assertAntifraudAllowsPayment } from "./antifraud.js";
 import {
   buildProviderExternalId,
   getPaymentByIdempotencyKey,
@@ -19,10 +20,7 @@ import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
  * Cria cobranca com roteamento multi-adquirente e failover.
- * Persiste provider_attempt_log; se a coluna falhar no update,
- * faz retry sem o campo (success/fail/ambiguous). Nunca reenvia cobranca ao adquirente.
- *
- * PIX na Nexus vai sempre para a carteira principal (sem shop_id / splits).
+ * PIX na carteira principal. Aplica regras antifraude do lojista antes de gerar.
  */
 export async function createPayment(
   organizationId: string,
@@ -35,6 +33,26 @@ export async function createPayment(
 
   const currency = (input.currency || "BRL").toUpperCase();
   const paymentType = input.payment_method?.type === "pix" ? "pix" : "card";
+
+  const meta = (input.metadata || {}) as Record<string, unknown>;
+  const payerDocument =
+    typeof meta.document === "string"
+      ? meta.document
+      : typeof meta.payer_document === "string"
+        ? meta.payer_document
+        : null;
+  const confirmDeniedPayer = Boolean(
+    meta.confirm_denied_payer === true ||
+      (input as { confirm_denied_payer?: boolean }).confirm_denied_payer
+  );
+
+  await assertAntifraudAllowsPayment({
+    organizationId,
+    environment,
+    paymentType,
+    payerDocument,
+    confirmDeniedPayer,
+  });
 
   const paymentId = uuidv4();
   const providerExternalId = buildProviderExternalId(paymentId);
@@ -120,11 +138,6 @@ export async function createPayment(
 
   if (!attemptResult.success) {
     if (attemptResult.ambiguous) {
-      console.warn("[payments] resultado ambiguo — sem failover adicional:", {
-        paymentId,
-        providerId: attemptResult.providerId,
-        error: attemptResult.errorMessage,
-      });
       const ambiguousPatch = {
         provider: attemptResult.providerId,
         provider_response: {
@@ -141,7 +154,6 @@ export async function createPayment(
         .select()
         .single();
       if (ambErr || !pendingRow) {
-        console.warn("[payments] ambiguous update with attempt_log failed; retrying without it:", ambErr?.message);
         const { provider_attempt_log: _drop, ...withoutLog } = ambiguousPatch;
         const retry = await supabaseAdmin
           .from("payments")
@@ -155,7 +167,6 @@ export async function createPayment(
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
         return pendingRow as Payment;
       }
-      console.error("[payments] ambiguous result could not be persisted:", { paymentId });
       throw new AppError(
         502,
         "provider_error",
@@ -182,7 +193,6 @@ export async function createPayment(
       .select()
       .single();
     if (failErr || !failedRow) {
-      console.warn("[payments] failed update with attempt_log failed; retrying without it:", failErr?.message);
       const { provider_attempt_log: _drop, ...withoutLog } = failedPatch;
       const retry = await supabaseAdmin
         .from("payments")
@@ -228,7 +238,7 @@ export async function createPayment(
       : providerStatus;
 
   const payerName = attemptResult.pix?.payerName ?? null;
-  const payerDocument = attemptResult.pix?.payerDocument ?? null;
+  const payerDocumentOut = attemptResult.pix?.payerDocument ?? null;
 
   const baseUpdate: Record<string, unknown> = {
     status,
@@ -249,7 +259,7 @@ export async function createPayment(
   };
 
   if (payerName) baseUpdate.payer_name = payerName;
-  if (payerDocument) baseUpdate.payer_document = payerDocument;
+  if (payerDocumentOut) baseUpdate.payer_document = payerDocumentOut;
 
   let payment: Record<string, unknown> | null = null;
   const { data: paymentData, error: updateError } = await supabaseAdmin
@@ -266,7 +276,6 @@ export async function createPayment(
 
   payment = paymentData as Record<string, unknown> | null;
   if (updateError || !payment) {
-    console.warn("[payments] update with attempt_log failed; retrying without it:", updateError?.message);
     const { payer_name: _pn, payer_document: _pd, ...safeUpdate } = baseUpdate;
     const retry = await supabaseAdmin
       .from("payments")
@@ -277,11 +286,6 @@ export async function createPayment(
       .select()
       .single();
     if (retry.error || !retry.data) {
-      console.error("Create payment error (update pos-provider):", {
-        paymentId,
-        providerExternalId,
-        error: retry.error || updateError,
-      });
       throw new AppError(
         500,
         "api_error",
@@ -307,10 +311,6 @@ export async function createPayment(
 
       const confirmedPayment = Array.isArray(confirmed) ? confirmed[0] : confirmed;
       if (ledgerError || !confirmedPayment) {
-        console.error("Atomic PIX ledger confirmation failed:", {
-          paymentId: paymentRow.id,
-          error: ledgerError,
-        });
         throw new AppError(
           500,
           "api_error",
