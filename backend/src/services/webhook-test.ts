@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
-import { signWebhookPayload } from "./webhooks.js";
+import { signWebhookPayload } from "../utils/crypto.js";
 
 /**
  * Envia um evento sintético ao endpoint (sem criar cobrança real).

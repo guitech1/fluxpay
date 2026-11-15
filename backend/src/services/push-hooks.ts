@@ -1,11 +1,6 @@
 /**
  * Pontos de integracao seguros para disparar push a partir do fluxo de pagamentos.
  * Falhas de push nunca rebentam a cobranca.
- *
- * Em Netlify Functions o runtime congela logo apos a resposta HTTP.
- * Por isso o caminho de producao AGUARDA o envio (com timeout) em vez de
- * fire-and-forget — senao so o primeiro endpoint (muitas vezes o desktop)
- * recebe e o telemovel fica de fora.
  */
 import { notifyOrganizationMembers } from "./push.js";
 
@@ -57,6 +52,7 @@ export function notifySalePaidSafe(params: {
   organizationId: string;
   paymentId: string;
   amountCents?: number;
+  payerName?: string | null;
 }): void {
   void notifySalePaidAwaited(params);
 }
@@ -65,14 +61,19 @@ export async function notifySalePaidAwaited(params: {
   organizationId: string;
   paymentId: string;
   amountCents?: number;
+  payerName?: string | null;
 }): Promise<{ sent: number; skipped: boolean } | null> {
   const eventKey = `sale_paid:${params.paymentId}`;
   let amountLabel: string | undefined;
   if (typeof params.amountCents === "number") {
-    amountLabel = (params.amountCents / 100).toLocaleString("pt-BR", {
+    const money = (params.amountCents / 100).toLocaleString("pt-BR", {
       style: "currency",
       currency: "BRL",
     });
+    const who = params.payerName?.trim();
+    amountLabel = who ? `${money} de ${who}` : money;
+  } else if (params.payerName?.trim()) {
+    amountLabel = `de ${params.payerName.trim()}`;
   }
   return withTimeout(
     notifyOrganizationMembers({
