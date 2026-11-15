@@ -17,14 +17,6 @@ interface PaymentDetail extends Payment {
   metadata: Record<string, unknown> | null;
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  nexuspag: "NexusPag",
-  gothampay: "GothamPay",
-  smokepay: "SmokePay",
-  kavropay: "KavroPay",
-  sandbox: "Sandbox (teste)",
-};
-
 export default async function PaymentDetailPage({
   params,
 }: {
@@ -54,9 +46,6 @@ export default async function PaymentDetailPage({
   const refunds = (refundRows || []) as Refund[];
   const isPix = payment.payment_type === "pix";
   const isSimulated = environment === "test" && payment.provider === "sandbox";
-  const providerKey = payment.provider ?? "";
-  const providerLabel =
-    (providerKey ? PROVIDER_LABEL[providerKey] : undefined) || payment.provider || "—";
 
   return (
     <div className="space-y-6">
@@ -111,10 +100,6 @@ export default async function PaymentDetailPage({
                 <StatusBadge status={payment.status} />
               </DetailRow>
               <DetailRow label="Método">{paymentTypeLabel(payment.payment_type)}</DetailRow>
-              <DetailRow label="Adquirente">
-                <span className="font-medium">{providerLabel}</span>
-                <span className="text-xs text-flux-muted ml-2">({payment.provider})</span>
-              </DetailRow>
               <DetailRow label="Valor">{formatCurrency(payment.amount, payment.currency)}</DetailRow>
               <DetailRow label="Taxa">
                 {payment.fee_amount ? formatCurrency(payment.fee_amount, payment.currency) : "—"}
