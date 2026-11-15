@@ -1,6 +1,9 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
-import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
+import {
+  createNexusPagWithdrawal,
+  createNexusPagShopWithdrawal,
+} from "../providers/nexuspag.js";
 import type { Environment } from "../types/index.js";
 import { WITHDRAWAL_FEE_CENTS, WITHDRAWAL_MIN_CENTS } from "./withdrawal-fee.js";
 import { getRequiresManualWithdrawalApproval } from "./withdrawal-approval.js";
@@ -45,7 +48,6 @@ export interface WithdrawalRequest {
 function mapWithdrawalRow(row: any): WithdrawalRequest {
   const providerRef = row.provider_reference ?? row.provider_withdrawal_id ?? null;
   let e2e: string | null = row.e2e_id ?? row.gateway_e2eid ?? null;
-  // Formato opcional: "withdrawalId|E2E..." quando salvamos composto sem migration
   if (!e2e && typeof providerRef === "string" && providerRef.includes("|")) {
     const parts = providerRef.split("|");
     if (parts[1]) e2e = parts[1];
@@ -138,11 +140,22 @@ function assertPixKey(type: PixKeyType, key: string): void {
       break;
     case "qrc":
       if (k.length < 20) throw new AppError(400, "validation_error", "PIX copia-e-cola invalido.");
-      if (!k.startsWith("000201")) {
-        // Aviso suave: muitos EMV validos começam com 000201; nao bloqueamos outros formatos
-        // que a NexusPag possa aceitar no futuro.
-      }
       break;
+  }
+}
+
+/** Se a org tiver subconta Nexus, o saque sai da subconta; senao da carteira principal. */
+async function resolveOrgShopId(organizationId: string): Promise<string | null> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("organizations")
+      .select("nexus_shop_id")
+      .eq("id", organizationId)
+      .maybeSingle();
+    const ref = data?.nexus_shop_id;
+    return typeof ref === "string" && ref.trim() ? ref.trim() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -465,14 +478,24 @@ export async function approveAndExecuteWithdrawal(params: {
     stateAfter: "processing",
   });
 
+  const shopId = await resolveOrgShopId(w.organization_id);
+
   let providerResult;
   try {
-    providerResult = await createNexusPagWithdrawal({
-      amountCents: w.net,
-      pixKey: w.pix_key,
-      pixKeyType: w.pix_key_type as PixKeyType,
-      externalId: w.id,
-    });
+    if (shopId) {
+      providerResult = await createNexusPagShopWithdrawal(shopId, {
+        amountCents: w.net,
+        pixKey: w.pix_key,
+        pixKeyType: w.pix_key_type as PixKeyType,
+      });
+    } else {
+      providerResult = await createNexusPagWithdrawal({
+        amountCents: w.net,
+        pixKey: w.pix_key,
+        pixKeyType: w.pix_key_type as PixKeyType,
+        externalId: w.id,
+      });
+    }
   } catch (err) {
     const e = err as Error & { code?: string; status?: number };
     const failureReason = e.message || "Falha no adquirente";
@@ -498,7 +521,6 @@ export async function approveAndExecuteWithdrawal(params: {
 
   const finalStatus = providerResult.status === "completed" ? "completed" : "processing";
   const providerId = providerResult.id || null;
-  // Guarda E2E junto da referencia quando disponivel (sem migration de coluna)
   const providerRef =
     providerResult.e2eId && providerId
       ? `${providerId}|${providerResult.e2eId}`
