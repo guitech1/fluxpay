@@ -11,10 +11,18 @@ export interface CreateChargeContext {
   organizationId: string; amountCents: number; currency: string; description?: string;
   externalId: string; webhookUrl?: string; expirationSeconds?: number;
   metadata?: Record<string, unknown>; attempt: number; attemptedProviders: AcquirerId[];
+  /** external_ref da subconta Nexus do lojista (quando Subcontas estiver ativo) */
+  shopId?: string;
+  /** % da plataforma no split (parent). Ex: 5 = 5% */
+  platformFeePercent?: number;
 }
 export interface ChargeAttemptResult {
   providerId: AcquirerId; success: boolean; providerPaymentId?: string; status?: PaymentStatus;
-  pix?: { txid: string; copyPaste: string; qrCodeBase64: string; expiresAt: string; feeAmountCents: number; netAmountCents: number };
+  pix?: {
+    txid: string; copyPaste: string; qrCodeBase64: string; expiresAt: string;
+    feeAmountCents: number; netAmountCents: number;
+    payerName?: string | null; payerDocument?: string | null; paidAt?: string | null;
+  };
   errorCode?: string; errorMessage?: string; retryable?: boolean; ambiguous?: boolean;
   rawResponse?: unknown; latencyMs: number;
 }
