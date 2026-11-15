@@ -2,35 +2,42 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, CreditCard, ArrowLeftRight, FileText, Settings2 } from "lucide-react";
+import { LayoutGrid, CreditCard, ArrowLeftRight, FileText, Settings2, Store, Percent } from "lucide-react";
 import { PixMark } from "./PixMark";
 
 const TABS = [
-  { href: "/dashboard/carteira", label: "Visão geral", exact: true, pix: false },
-  { href: "/dashboard/carteira/pix", label: "Pix", exact: false, pix: true },
-  { href: "/dashboard/carteira/cartao", label: "Cartão virtual", exact: false, pix: false },
-  { href: "/dashboard/carteira/extrato", label: "Extrato", exact: false, pix: false },
-  { href: "/dashboard/carteira/comprovantes", label: "Comprovantes", exact: false, pix: false },
-  { href: "/dashboard/carteira/config", label: "Configurações", exact: false, pix: false },
+  { href: "/dashboard/carteira", label: "Visão geral", exact: true, kind: "grid" as const },
+  { href: "/dashboard/carteira/caixa", label: "Modo Caixa", exact: false, kind: "caixa" as const },
+  { href: "/dashboard/carteira/pix", label: "Pix", exact: false, kind: "pix" as const },
+  { href: "/dashboard/carteira/splits", label: "Splits", exact: false, kind: "splits" as const },
+  { href: "/dashboard/carteira/cartao", label: "Cartão", exact: false, kind: "card" as const },
+  { href: "/dashboard/carteira/extrato", label: "Extrato", exact: false, kind: "extrato" as const },
+  { href: "/dashboard/carteira/comprovantes", label: "Comprovantes", exact: false, kind: "docs" as const },
+  { href: "/dashboard/carteira/config", label: "Config", exact: false, kind: "config" as const },
 ];
 
-function TabIcon({ href, pix }: { href: string; pix: boolean }) {
-  if (pix) {
+function TabIcon({ kind }: { kind: (typeof TABS)[number]["kind"] }) {
+  if (kind === "pix") {
     return (
       <span className="fxb-tab-ico fxb-tab-ico--pix">
         <PixMark size={14} />
       </span>
     );
   }
-  const Icon = href.endsWith("/carteira")
-    ? LayoutGrid
-    : href.endsWith("/cartao")
-      ? CreditCard
-      : href.endsWith("/extrato")
-        ? ArrowLeftRight
-        : href.endsWith("/comprovantes")
-          ? FileText
-          : Settings2;
+  const Icon =
+    kind === "grid"
+      ? LayoutGrid
+      : kind === "caixa"
+        ? Store
+        : kind === "splits"
+          ? Percent
+          : kind === "card"
+            ? CreditCard
+            : kind === "extrato"
+              ? ArrowLeftRight
+              : kind === "docs"
+                ? FileText
+                : Settings2;
   return (
     <span className="fxb-tab-ico">
       <Icon size={16} />
@@ -53,7 +60,7 @@ export function WalletNav() {
             className="fxb-tab"
             aria-current={active ? "page" : undefined}
           >
-            <TabIcon href={tab.href} pix={tab.pix} />
+            <TabIcon kind={tab.kind} />
             {tab.label}
           </Link>
         );

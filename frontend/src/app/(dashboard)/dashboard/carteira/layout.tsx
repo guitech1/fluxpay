@@ -1,16 +1,10 @@
 import "./carteira.css";
+import "./carteira-theme.css";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { CarteiraShell, type WalletKycState } from "@/components/carteira/CarteiraShell";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Layout server da Carteira Digital.
- * - Consulta fluxpay_cards (status, kyc_status, kyc_submitted_at) da organização.
- * - Calcula estado KYC e passa ao shell (redirect / tela de análise / normal).
- * - Erro na consulta → trata como approved (não bloqueia).
- * - Chrome do painel já é omitido por DashboardChrome nas rotas /dashboard/carteira*.
- */
 function resolveWalletKycState(row: {
   status?: string | null;
   kyc_status?: string | null;
@@ -19,9 +13,7 @@ function resolveWalletKycState(row: {
   if (!row) return "none";
   const kyc = row.kyc_status ?? "pending";
   if (kyc === "approved") return "approved";
-  // Conta antiga (pending sem envio) ou recusada → precisa preencher cadastro
   if (kyc === "rejected" || !row.kyc_submitted_at) return "needs_kyc";
-  // pending + já enviou formulário → em análise
   if (kyc === "pending") return "in_review";
   return "needs_kyc";
 }
@@ -33,7 +25,6 @@ export default async function CarteiraLayout({
 }) {
   const { supabase, organization } = await requireDashboardContext();
 
-  // default em erro: approved (não bloqueia quem já opera)
   let walletKycState: WalletKycState = "approved";
   const { data: walletRow, error: walletLookupError } = await supabase
     .from("fluxpay_cards")
