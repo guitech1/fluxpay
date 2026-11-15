@@ -4,16 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { dashboardFetch } from "@/lib/dashboard-api";
 import { friendlyError } from "@/lib/labels";
 import { formatCurrency } from "@/lib/utils";
+import { paymentClientMessage } from "@/lib/payment-client-message";
 
-type Phase = "amount" | "qr" | "success";
+type Phase = "amount" | "confirming" | "qr" | "success";
 
 type PaymentPayload = {
   id: string;
   status: string;
   amount: number;
+  provider?: string | null;
+  provider_response?: unknown;
   pix_copy_paste?: string | null;
   pix_qr_code_base64?: string | null;
   payer_name?: string | null;
+  client_message?: string | null;
 };
 
 function parseCents(digits: string): number {
@@ -32,7 +36,6 @@ function playCashSound() {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const now = ctx.currentTime;
-    // “ding” curto estilo caixa
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.type = "triangle";
@@ -46,7 +49,7 @@ function playCashSound() {
     o.start(now);
     o.stop(now + 0.4);
   } catch {
-    /* silencioso se autoplay bloquear */
+    /* silencioso */
   }
 }
 
@@ -55,6 +58,7 @@ export function ModoCaixa() {
   const [phase, setPhase] = useState<Phase>("amount");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
   const [payment, setPayment] = useState<PaymentPayload | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -69,6 +73,57 @@ export function ModoCaixa() {
 
   useEffect(() => () => stopPoll(), [stopPoll]);
 
+  function applyPaymentUpdate(p: PaymentPayload) {
+    setPayment(p);
+    const msg = paymentClientMessage(p);
+    setHint(msg);
+
+    if (p.status === "succeeded" || p.status === "processing") {
+      stopPoll();
+      setPhase("success");
+      playCashSound();
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        try {
+          navigator.vibrate([80, 40, 80]);
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+
+    if (p.status === "failed") {
+      stopPoll();
+      setPhase("amount");
+      setError(msg || "Não foi possível gerar o PIX. Tente de novo.");
+      return;
+    }
+
+    if (p.pix_copy_paste || p.pix_qr_code_base64) {
+      setPhase("qr");
+      return;
+    }
+
+    // Sem QR ainda — adquirente instável / fila
+    setPhase("confirming");
+  }
+
+  function startPolling(id: string) {
+    stopPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        // tenta drenar a fila no backend (best-effort)
+        void dashboardFetch("/payments/process-provider-queue", { method: "POST", body: {} }).catch(
+          () => null
+        );
+        const check = await dashboardFetch<{ data: PaymentPayload }>(`/payments/${id}`);
+        if (check.data) applyPaymentUpdate(check.data);
+      } catch {
+        /* mantém polling */
+      }
+    }, 2500);
+  }
+
   function press(key: string) {
     setError(null);
     if (key === "C") {
@@ -79,7 +134,7 @@ export function ModoCaixa() {
       setDigits((d) => d.slice(0, -1));
       return;
     }
-    if (digits.length >= 8) return; // até 999.999,99
+    if (digits.length >= 8) return;
     setDigits((d) => (d === "0" ? key : d + key));
   }
 
@@ -90,6 +145,7 @@ export function ModoCaixa() {
     }
     setLoading(true);
     setError(null);
+    setHint(null);
     try {
       const res = await dashboardFetch<{ data: PaymentPayload }>("/payments", {
         method: "POST",
@@ -100,33 +156,11 @@ export function ModoCaixa() {
         },
       });
       const p = res.data;
-      setPayment(p);
-      setPhase("qr");
-      // polling status
-      stopPoll();
-      pollRef.current = setInterval(async () => {
-        try {
-          const check = await dashboardFetch<{ data: PaymentPayload }>(`/payments/${p.id}`);
-          const st = check.data?.status;
-          if (st === "succeeded" || st === "processing") {
-            stopPoll();
-            setPayment(check.data);
-            setPhase("success");
-            playCashSound();
-            if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-              try {
-                navigator.vibrate([80, 40, 80]);
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-        } catch {
-          /* mantém polling */
-        }
-      }, 2500);
+      applyPaymentUpdate(p);
+      startPolling(p.id);
     } catch (err) {
       setError(friendlyError(err, "Não foi possível gerar o QR. Tente de novo."));
+      setPhase("amount");
     } finally {
       setLoading(false);
     }
@@ -138,6 +172,7 @@ export function ModoCaixa() {
     setPayment(null);
     setDigits("");
     setError(null);
+    setHint(null);
   }
 
   if (phase === "success" && payment) {
@@ -156,6 +191,39 @@ export function ModoCaixa() {
     );
   }
 
+  if (phase === "confirming" && payment) {
+    return (
+      <div className="fxb-caixa fxb-rise" role="status" aria-live="polite">
+        <p style={{ textAlign: "center", color: "var(--fx-muted)", fontWeight: 700 }}>
+          Conectando ao banco
+        </p>
+        <p className="fxb-caixa-amount">{formatCurrency(payment.amount)}</p>
+        <div
+          className="fxb-note"
+          style={{
+            margin: "0 auto",
+            maxWidth: 360,
+            textAlign: "center",
+            borderColor: "rgba(56, 189, 248, 0.35)",
+            background: "rgba(14, 165, 233, 0.12)",
+          }}
+        >
+          <p style={{ fontWeight: 700, marginBottom: 6 }}>Aguarde nesta tela</p>
+          <p>
+            {hint ||
+              "Estamos gerando seu PIX. Não feche e não peça ao cliente para pagar de outro lugar."}
+          </p>
+        </div>
+        <p style={{ textAlign: "center", color: "var(--fx-muted)", fontSize: "0.85rem" }}>
+          Retentativa automática em andamento…
+        </p>
+        <button type="button" className="btn btn-secondary" onClick={reset}>
+          Cancelar
+        </button>
+      </div>
+    );
+  }
+
   if (phase === "qr" && payment) {
     const qr = payment.pix_qr_code_base64 || "";
     const src = qr.startsWith("data:") ? qr : qr ? `data:image/png;base64,${qr}` : "";
@@ -165,6 +233,11 @@ export function ModoCaixa() {
           Mostre o QR para o cliente
         </p>
         <p className="fxb-caixa-amount">{formatCurrency(payment.amount)}</p>
+        {hint ? (
+          <div className="fxb-note fxb-note--warn" style={{ textAlign: "center" }}>
+            {hint}
+          </div>
+        ) : null}
         <div className="fxb-caixa-qr">
           {src ? (
             // eslint-disable-next-line @next/next/no-img-element
