@@ -1,9 +1,6 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
-import {
-  createNexusPagWithdrawal,
-  createNexusPagShopWithdrawal,
-} from "../providers/nexuspag.js";
+import { createNexusPagWithdrawal } from "../providers/nexuspag.js";
 import type { Environment } from "../types/index.js";
 import { WITHDRAWAL_FEE_CENTS, WITHDRAWAL_MIN_CENTS } from "./withdrawal-fee.js";
 import { getRequiresManualWithdrawalApproval } from "./withdrawal-approval.js";
@@ -41,7 +38,6 @@ export interface WithdrawalRequest {
   balance_transaction_id: string | null;
   created_at: string;
   updated_at: string;
-  /** E2E quando capturado da resposta/listagem NexusPag (pode estar em provider_reference composto) */
   e2e_id?: string | null;
 }
 
@@ -141,21 +137,6 @@ function assertPixKey(type: PixKeyType, key: string): void {
     case "qrc":
       if (k.length < 20) throw new AppError(400, "validation_error", "PIX copia-e-cola invalido.");
       break;
-  }
-}
-
-/** Se a org tiver subconta Nexus, o saque sai da subconta; senao da carteira principal. */
-async function resolveOrgShopId(organizationId: string): Promise<string | null> {
-  try {
-    const { data } = await supabaseAdmin
-      .from("organizations")
-      .select("nexus_shop_id")
-      .eq("id", organizationId)
-      .maybeSingle();
-    const ref = data?.nexus_shop_id;
-    return typeof ref === "string" && ref.trim() ? ref.trim() : null;
-  } catch {
-    return null;
   }
 }
 
@@ -478,24 +459,15 @@ export async function approveAndExecuteWithdrawal(params: {
     stateAfter: "processing",
   });
 
-  const shopId = await resolveOrgShopId(w.organization_id);
-
+  // Sempre carteira principal da Nexus (sem subconta)
   let providerResult;
   try {
-    if (shopId) {
-      providerResult = await createNexusPagShopWithdrawal(shopId, {
-        amountCents: w.net,
-        pixKey: w.pix_key,
-        pixKeyType: w.pix_key_type as PixKeyType,
-      });
-    } else {
-      providerResult = await createNexusPagWithdrawal({
-        amountCents: w.net,
-        pixKey: w.pix_key,
-        pixKeyType: w.pix_key_type as PixKeyType,
-        externalId: w.id,
-      });
-    }
+    providerResult = await createNexusPagWithdrawal({
+      amountCents: w.net,
+      pixKey: w.pix_key,
+      pixKeyType: w.pix_key_type as PixKeyType,
+      externalId: w.id,
+    });
   } catch (err) {
     const e = err as Error & { code?: string; status?: number };
     const failureReason = e.message || "Falha no adquirente";
