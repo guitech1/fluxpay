@@ -20,6 +20,10 @@ export interface Organization {
   status: string;
   default_currency: string;
   created_at: string;
+  /** external_ref da subconta Nexus (quando Subcontas estiver ativo) */
+  nexus_shop_id?: string | null;
+  /** taxa da plataforma em % sobre o líquido (split parent) */
+  platform_fee_percent?: number | null;
 }
 
 export interface ApiKey {
@@ -71,6 +75,10 @@ export interface Payment {
   expires_at?: string | null;
   paid_at?: string | null;
   expired_at?: string | null;
+  /** Nome de quem pagou o PIX (vindo da consulta/webhook Nexus) */
+  payer_name?: string | null;
+  /** CPF/CNPJ mascarado do pagador */
+  payer_document?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -135,6 +143,11 @@ export interface PixDetails {
   expiresAt: string;
   feeAmountCents: number;
   netAmountCents: number;
+  /** Nome do pagador (após confirmação do PIX) */
+  payerName?: string | null;
+  /** Documento mascarado do pagador */
+  payerDocument?: string | null;
+  paidAt?: string | null;
 }
 
 // Provider abstraction – never store full card data
@@ -151,6 +164,15 @@ export interface PaymentProvider {
     externalId?: string;
     webhookUrl?: string;
     expirationSeconds?: number;
+    /** Subconta Nexus (external_ref). Opcional. */
+    shopId?: string;
+    /** Percentual da plataforma (split parent). Opcional. */
+    platformFeePercent?: number;
+    /** Regras de split explícitas (avançado). Opcional. */
+    splits?: Array<
+      | { parent: true; amount?: number; percent?: number }
+      | { shop_id: string; amount?: number; percent?: number }
+    >;
   }): Promise<{
     providerPaymentId: string;
     status: PaymentStatus;
