@@ -382,7 +382,7 @@ async function findEndpointInScope(organizationId: string, environment: string, 
     .from("webhook_endpoints")
     .select(WEBHOOK_COLUMNS)
     .eq("id", id)
-    .eq("organization_id", environment)
+    .eq("organization_id", organizationId)
     .eq("environment", environment)
     .maybeSingle();
 
