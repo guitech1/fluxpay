@@ -41,6 +41,35 @@ function mapWithdrawalKeyType(type: string): string {
   return t;
 }
 
+/** Regra de split entre subcontas (campo `splits` plural na docs). */
+export type NexusPagShopSplitRule =
+  | { parent: true; amount?: number; percent?: number; shop_id?: never }
+  | { shop_id: string; amount?: number; percent?: number; parent?: never };
+
+export interface NexusPagCreatePaymentParams {
+  amount: number;
+  currency: string;
+  paymentMethodToken?: string;
+  metadata?: Record<string, unknown>;
+  description?: string;
+  externalId?: string;
+  webhookUrl?: string;
+  expirationSeconds?: number;
+  /** external_ref da subconta; a Nexus cria automaticamente no primeiro uso */
+  shopId?: string;
+  /**
+   * Splits entre subcontas (docs: campo `splits`).
+   * Cada item: { parent: true } OU { shop_id } + amount OU percent.
+   * Soma dos percent deve ser < 100. O restante fica na subconta do shop_id top-level.
+   */
+  splits?: NexusPagShopSplitRule[];
+  /**
+   * Atalho: percentual da plataforma (carteira principal / parent).
+   * Gera `splits: [{ parent: true, percent }]`. Ignorado se `splits` for passado.
+   */
+  platformFeePercent?: number;
+}
+
 export class NexusPagProvider implements PaymentProvider {
   name = "nexuspag";
   id = "nexuspag" as const;
@@ -61,23 +90,38 @@ export class NexusPagProvider implements PaymentProvider {
     }
   }
 
-  async createPayment(params: {
-    amount: number;
-    currency: string;
-    paymentMethodToken?: string;
-    metadata?: Record<string, unknown>;
-    description?: string;
-    externalId?: string;
-    webhookUrl?: string;
-    expirationSeconds?: number;
-  }) {
+  async createPayment(params: NexusPagCreatePaymentParams) {
     if (params.currency !== "BRL") throw new Error("NexusPag: apenas BRL");
     if (params.amount < 100) throw new Error("NexusPag: minimo R$ 1,00");
+
     const body: Record<string, unknown> = { amount: centsToReais(params.amount) };
     if (params.description) body.description = params.description;
     if (params.externalId) body.external_id = params.externalId;
     if (params.webhookUrl) body.webhook_url = params.webhookUrl;
     if (params.expirationSeconds) body.expiration = params.expirationSeconds;
+
+    // Subconta: shop_id = external_ref (criada automaticamente no primeiro uso)
+    if (params.shopId) body.shop_id = params.shopId;
+
+    // Splits entre subcontas (plural). Preferência: array explícito; senão atalho platformFeePercent.
+    let splits: NexusPagShopSplitRule[] | undefined = params.splits;
+    if (!splits && params.platformFeePercent != null && params.platformFeePercent > 0) {
+      const pct = Number(params.platformFeePercent);
+      if (pct > 0 && pct < 100) {
+        splits = [{ parent: true, percent: pct }];
+      }
+    }
+    if (splits && splits.length > 0) {
+      body.splits = splits.map((rule) => {
+        const item: Record<string, unknown> = {};
+        if ("parent" in rule && rule.parent) item.parent = true;
+        if ("shop_id" in rule && rule.shop_id) item.shop_id = rule.shop_id;
+        if (rule.amount != null) item.amount = rule.amount;
+        if (rule.percent != null) item.percent = rule.percent;
+        return item;
+      });
+    }
+
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), Math.max(500, Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 2000) || 2000));
     let res: Response;
@@ -94,13 +138,17 @@ export class NexusPagProvider implements PaymentProvider {
       const e = new Error(amb ? "NexusPag: timeout" : "NexusPag: rede") as Error & { retryable?: boolean; ambiguous?: boolean };
       e.retryable = true; e.ambiguous = amb; throw e;
     } finally { clearTimeout(to); }
+
     const data = (await res.json().catch(() => null)) as {
       success?: boolean;
       transaction?: {
         id: string; txid: string; status: string; fee: number; net_amount: number;
         pix_copia_cola: string; qr_code_base64: string; expires_at: string;
+        shop_id?: string; shop_external_ref?: string;
+        splits_preview?: unknown;
       };
     } | null;
+
     if (!res.ok || !data?.success || !data.transaction) {
       const e = new Error(`NexusPag HTTP ${res.status}`) as Error & { retryable?: boolean; ambiguous?: boolean; statusCode?: number };
       e.statusCode = res.status;
@@ -108,6 +156,7 @@ export class NexusPagProvider implements PaymentProvider {
       e.ambiguous = false;
       throw e;
     }
+
     const tx = data.transaction;
     return {
       providerPaymentId: tx.id,
@@ -133,8 +182,15 @@ export class NexusPagProvider implements PaymentProvider {
     const data = (await res.json().catch(() => null)) as {
       id?: string; txid?: string; status?: string; fee?: number; net_amount?: number;
       pix_copia_cola?: string; qr_code_base64?: string; expires_at?: string;
+      payer_name?: string | null;
+      payer_document?: string | null;
+      paid_at?: string | null;
+      splits?: unknown;
+      shop_id?: string;
+      shop_external_ref?: string;
     } | null;
     if (!res.ok || !data) throw new Error(`consulta HTTP ${res.status}`);
+
     return {
       status: mapNexusPagStatus(data.status ?? "pending"),
       providerPaymentId: data.id,
@@ -146,6 +202,9 @@ export class NexusPagProvider implements PaymentProvider {
         expiresAt: data.expires_at ?? "",
         feeAmountCents: reaisToCents(data.fee ?? 0),
         netAmountCents: reaisToCents(data.net_amount ?? 0),
+        payerName: data.payer_name ?? null,
+        payerDocument: data.payer_document ?? null,
+        paidAt: data.paid_at ?? null,
       } : undefined,
     };
   }
@@ -163,6 +222,208 @@ export class NexusPagProvider implements PaymentProvider {
 }
 
 export const nexuspagProvider = new NexusPagProvider();
+
+// ---------------------------------------------------------------------------
+// Subcontas (Shops)
+// ---------------------------------------------------------------------------
+
+export interface NexusPagShop {
+  id: string;
+  externalRef: string | null;
+  name: string | null;
+  status: string | null;
+  raw: unknown;
+}
+
+export interface NexusPagShopBalance {
+  availableCents: number;
+  blockedCents?: number;
+  pendingCents?: number;
+  totalReceivedCents?: number;
+  totalWithdrawnCents?: number;
+  totalSplitsCents?: number;
+  raw: unknown;
+}
+
+export async function listNexusPagShops(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<{ shops: NexusPagShop[]; raw: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.search) qs.set("search", params.search);
+  const url = `${NEXUSPAG_BASE_URL}/api/shops${qs.toString() ? `?${qs}` : ""}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) throw new Error(`NexusPag list shops HTTP ${res.status}: ${JSON.stringify(data)}`);
+  const list = (data?.shops ?? data?.data ?? data?.items ?? []) as any[];
+  return {
+    shops: list.map((s) => ({
+      id: String(s.id ?? s.shop_id ?? ""),
+      externalRef: s.external_ref ?? s.externalRef ?? null,
+      name: s.name ?? null,
+      status: s.status ?? null,
+      raw: s,
+    })),
+    raw: data,
+  };
+}
+
+export async function getNexusPagShop(idOrRef: string): Promise<NexusPagShop> {
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/shops/${encodeURIComponent(idOrRef)}`, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) throw new Error(`NexusPag get shop HTTP ${res.status}: ${JSON.stringify(data)}`);
+  const s = data?.shop ?? data;
+  return {
+    id: String(s.id ?? s.shop_id ?? idOrRef),
+    externalRef: s.external_ref ?? s.externalRef ?? null,
+    name: s.name ?? null,
+    status: s.status ?? null,
+    raw: data,
+  };
+}
+
+export async function getNexusPagShopBalance(idOrRef: string): Promise<NexusPagShopBalance> {
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/shops/${encodeURIComponent(idOrRef)}/balance`, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) throw new Error(`NexusPag shop balance HTTP ${res.status}: ${JSON.stringify(data)}`);
+  const b = data?.balance ?? data;
+  return {
+    availableCents: reaisToCents(Number(b.available ?? b.wallet_balance ?? b.balance ?? 0)),
+    blockedCents: b.blocked != null ? reaisToCents(Number(b.blocked)) : undefined,
+    pendingCents: b.pending != null ? reaisToCents(Number(b.pending)) : undefined,
+    totalReceivedCents: b.total_received != null ? reaisToCents(Number(b.total_received)) : undefined,
+    totalWithdrawnCents: b.total_withdrawn != null ? reaisToCents(Number(b.total_withdrawn)) : undefined,
+    totalSplitsCents: b.total_splits != null ? reaisToCents(Number(b.total_splits)) : undefined,
+    raw: data,
+  };
+}
+
+export async function getNexusPagShopTransactions(
+  idOrRef: string,
+  params?: { page?: number; limit?: number }
+): Promise<{ transactions: unknown[]; raw: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const url = `${NEXUSPAG_BASE_URL}/api/shops/${encodeURIComponent(idOrRef)}/transactions${qs.toString() ? `?${qs}` : ""}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) throw new Error(`NexusPag shop transactions HTTP ${res.status}: ${JSON.stringify(data)}`);
+  return {
+    transactions: data?.transactions ?? data?.data ?? data?.items ?? [],
+    raw: data,
+  };
+}
+
+export async function createNexusPagShopWithdrawal(
+  idOrRef: string,
+  params: {
+    amountCents: number;
+    pixKey: string;
+    pixKeyType: string;
+    description?: string;
+  }
+): Promise<{
+  id: string;
+  status: string;
+  rawResponse: unknown;
+  e2eId?: string | null;
+  feeCents?: number;
+  receiverName?: string | null;
+}> {
+  const body: Record<string, unknown> = {
+    amount: centsToReais(params.amountCents),
+    pix_key: params.pixKey,
+    pix_key_type: mapWithdrawalKeyType(params.pixKeyType),
+  };
+  if (params.description) body.description = params.description;
+
+  const res = await fetch(`${NEXUSPAG_BASE_URL}/api/shops/${encodeURIComponent(idOrRef)}/withdraw`, {
+    method: "POST",
+    headers: { "x-api-key": getApiKey(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok || !data) {
+    const error = new Error(`NexusPag shop saque HTTP ${res.status}: ${JSON.stringify(data)}`) as Error & {
+      status?: number;
+      code?: string;
+    };
+    error.status = res.status;
+    if (res.status === 429) error.code = "cooldown";
+    if (res.status === 403 && data?.requires_kyc) error.code = "requires_kyc";
+    throw error;
+  }
+
+  const withdrawal = data.withdrawal ?? data;
+  const id =
+    data.withdrawal_id ||
+    data.id ||
+    withdrawal?.id ||
+    withdrawal?.withdrawal_id ||
+    "";
+  const status = (data.status || withdrawal?.status || "processing").toString().toLowerCase();
+  const e2e =
+    withdrawal?.gateway_e2eid ||
+    withdrawal?.end_to_end_id ||
+    withdrawal?.e2e_id ||
+    data.gateway_e2eid ||
+    data.end_to_end_id ||
+    null;
+  const receiverName =
+    withdrawal?.recipient_name ||
+    withdrawal?.beneficiary_name ||
+    withdrawal?.receiver_name ||
+    data.recipient_name ||
+    null;
+  const feeRaw = withdrawal?.fee ?? data.fee;
+  const feeCents = feeRaw != null ? reaisToCents(Number(feeRaw)) : undefined;
+
+  return {
+    id: String(id),
+    status,
+    rawResponse: data,
+    e2eId: e2e ? String(e2e) : null,
+    feeCents,
+    receiverName: receiverName ? String(receiverName) : null,
+  };
+}
+
+export async function listNexusPagShopWithdrawals(
+  idOrRef: string,
+  params?: { page?: number; limit?: number }
+): Promise<{ withdrawals: unknown[]; raw: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const url = `${NEXUSPAG_BASE_URL}/api/shops/${encodeURIComponent(idOrRef)}/withdrawals${qs.toString() ? `?${qs}` : ""}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": getApiKey() },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = (await res.json().catch(() => null)) as any;
+  if (!res.ok) throw new Error(`NexusPag shop withdrawals HTTP ${res.status}: ${JSON.stringify(data)}`);
+  return {
+    withdrawals: data?.withdrawals ?? data?.data ?? data?.items ?? [],
+    raw: data,
+  };
+}
 
 /**
  * POST /api/withdrawals — Criar Saque (carteira principal)
