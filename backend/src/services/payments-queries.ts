@@ -275,13 +275,42 @@ export async function getPaymentByProviderTxid(txid: string): Promise<Payment | 
 }
 
 /**
+ * Persiste nome/documento do pagador quando as colunas existirem.
+ * Nao quebra se a migration ainda nao foi aplicada.
+ */
+export async function persistPayerInfo(
+  paymentId: string,
+  payer?: { name?: string | null; document?: string | null } | null
+): Promise<void> {
+  if (!payer?.name && !payer?.document) return;
+  const patch: Record<string, unknown> = {};
+  if (payer.name) patch.payer_name = payer.name;
+  if (payer.document) patch.payer_document = payer.document;
+  try {
+    const { error } = await supabaseAdmin.from("payments").update(patch).eq("id", paymentId);
+    if (error) {
+      // Coluna ausente ou RLS — ignora; o fluxo principal nao depende disso
+      console.warn("[payments] persistPayerInfo skipped:", error.message);
+    }
+  } catch (err) {
+    console.warn("[payments] persistPayerInfo error:", err);
+  }
+}
+
+/**
  * Confirma PIX no ledger via RPC atomica.
  * Em sucesso devolve o pagamento atualizado.
  * Em falha da RPC LANCA erro — nunca engole falha como se o credito tivesse ocorrido.
  * Callers (webhook, reconcile, sandbox) devem capturar e registrar processing_error /
  * responder 5xx para o adquirente reenviar, ou deixar o evento sem processed_at.
  */
-export async function markPixPaymentSucceeded(payment: Payment): Promise<Payment> {
+export async function markPixPaymentSucceeded(
+  payment: Payment,
+  payer?: { name?: string | null; document?: string | null } | null
+): Promise<Payment> {
+  // Grava pagador antes/depois da RPC — melhor esforco, nao bloqueia credito
+  await persistPayerInfo(payment.id, payer);
+
   const { data: updated, error } = await supabaseAdmin.rpc(
     "fluxpay_confirm_pix_payment",
     {
@@ -306,9 +335,9 @@ export async function markPixPaymentSucceeded(payment: Payment): Promise<Payment
 
   const confirmed = (Array.isArray(updated) ? updated[0] : updated) as Payment;
 
-  // Push automatico em todos os caminhos de confirmacao (webhook, reconcile,
-  // sandbox, admin, API). Idempotente via push_notification_log.event_key.
-  // Falha de push nunca invalida o pagamento ja creditado.
+  // Reforca gravacao do pagador apos confirmacao (caso a coluna exista)
+  await persistPayerInfo(payment.id, payer);
+
   try {
     const { notifyAfterPixConfirmed } = await import("./payments-queries-notify.js");
     notifyAfterPixConfirmed(confirmed || payment);
@@ -336,7 +365,7 @@ export async function simulateSandboxPayment(
   }
 
   try {
-    await markPixPaymentSucceeded(payment);
+    await markPixPaymentSucceeded(payment, { name: "Pagador Sandbox", document: null });
   } catch (err) {
     console.error("[sandbox] confirmacao simulada falhou:", err);
     throw new AppError(
@@ -401,6 +430,8 @@ export async function reconcileOrphanPixCharges(): Promise<{
           expiresAt: string;
           feeAmountCents: number;
           netAmountCents: number;
+          payerName?: string | null;
+          payerDocument?: string | null;
         }
       | undefined;
     let providerPaymentId: string | undefined;
@@ -420,6 +451,8 @@ export async function reconcileOrphanPixCharges(): Promise<{
               expiresAt: remote.pix.expiresAt,
               feeAmountCents: remote.pix.feeAmountCents,
               netAmountCents: remote.pix.netAmountCents,
+              payerName: remote.pix.payerName,
+              payerDocument: remote.pix.payerDocument,
             }
           : undefined;
         if (remote.status === "succeeded") providerStatus = "paid";
@@ -451,7 +484,10 @@ export async function reconcileOrphanPixCharges(): Promise<{
 
     if (decision.action === "confirm") {
       try {
-        await markPixPaymentSucceeded(row);
+        await markPixPaymentSucceeded(row, {
+          name: providerPix?.payerName,
+          document: providerPix?.payerDocument,
+        });
         result.confirmed += 1;
       } catch (err) {
         console.error("[reconcile] falha ao confirmar cobranca orfa:", {
@@ -463,16 +499,16 @@ export async function reconcileOrphanPixCharges(): Promise<{
     }
 
     if (decision.action === "attach" && providerPix) {
-      await supabaseAdmin
-        .from("payments")
-        .update({
-          provider_payment_id: providerPaymentId || row.provider_payment_id,
-          provider_txid: providerPix.txid,
-          pix_copy_paste: providerPix.copyPaste,
-          pix_qr_code_base64: providerPix.qrCodeBase64,
-          expires_at: providerPix.expiresAt,
-        })
-        .eq("id", row.id);
+      const attachPatch: Record<string, unknown> = {
+        provider_payment_id: providerPaymentId || row.provider_payment_id,
+        provider_txid: providerPix.txid,
+        pix_copy_paste: providerPix.copyPaste,
+        pix_qr_code_base64: providerPix.qrCodeBase64,
+        expires_at: providerPix.expiresAt,
+      };
+      if (providerPix.payerName) attachPatch.payer_name = providerPix.payerName;
+      if (providerPix.payerDocument) attachPatch.payer_document = providerPix.payerDocument;
+      await supabaseAdmin.from("payments").update(attachPatch).eq("id", row.id);
       result.attached += 1;
       continue;
     }
@@ -509,7 +545,17 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
     id: string;
     provider: string;
     event_type: string | null;
-    payload: { event?: string; status?: string; txid?: string; transaction_id?: string; external_id?: string; id?: string } | null;
+    payload: {
+      event?: string;
+      status?: string;
+      txid?: string;
+      transaction_id?: string;
+      external_id?: string;
+      id?: string;
+      payer_name?: string;
+      payer_document?: string;
+      payer_document_masked?: string;
+    } | null;
   }[]) {
     result.checked += 1;
 
@@ -521,7 +567,6 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
       externalId: payload.external_id || payload.id,
     });
 
-    // Never apply an event authenticated with one acquirer's secret to another provider's payment.
     if (!payment) continue;
 
     if (!paymentProviderMatchesClaim(payment.provider, event.provider)) {
@@ -558,9 +603,14 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
       continue;
     }
 
+    const payer = {
+      name: payload.payer_name ?? null,
+      document: payload.payer_document ?? payload.payer_document_masked ?? null,
+    };
+
     if (payment.status !== "succeeded") {
       try {
-        await markPixPaymentSucceeded(payment);
+        await markPixPaymentSucceeded(payment, payer);
         result.confirmed += 1;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -569,7 +619,6 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
           paymentId: payment.id,
           error: msg,
         });
-        // Nao marca processed_at: proxima passada tenta de novo.
         await supabaseAdmin.from("provider_events").update({
           processing_error: `reconcile_confirm_failed: ${msg}`.slice(0, 500),
           payment_id: payment.id,
@@ -578,6 +627,8 @@ export async function reprocessUnmatchedProviderEvents(): Promise<{
         }).eq("id", event.id);
         continue;
       }
+    } else {
+      await persistPayerInfo(payment.id, payer);
     }
 
     await supabaseAdmin.from("provider_events").update({
