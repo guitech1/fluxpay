@@ -3,6 +3,7 @@ import { formatDate } from "@/lib/utils";
 import { deliveryStatusLabel } from "@/lib/labels";
 import { PageHeader, ErrorState, Table, Mono } from "@/components/dashboard/ui";
 import { WebhooksManager } from "@/components/dashboard/WebhooksManager";
+import { WebhookPlayground } from "@/components/dashboard/WebhookPlayground";
 import type { WebhookEndpoint } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -32,12 +33,13 @@ export default async function WebhooksPage() {
     .limit(30);
 
   const rows = (deliveries || []) as unknown as DeliveryRow[];
+  const endpoints = (data || []) as WebhookEndpoint[];
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Webhooks"
-        description="Endpoints profissionais: eventos em tempo real, assinatura HMAC e histórico de entregas"
+        description="Endpoints profissionais: eventos em tempo real, assinatura HMAC e playground de teste"
       />
 
       <div className="card text-sm text-flux-muted leading-relaxed space-y-2">
@@ -47,27 +49,24 @@ export default async function WebhooksPage() {
           <code className="font-mono text-xs text-white">FluxPay-Signature</code> (HMAC-SHA256).
         </p>
         <p>
-          Responda <code className="font-mono text-xs text-white">2xx</code> rápido. Em caso de falha,
-          o FluxPay reenvia com backoff. Use o <code className="font-mono text-xs text-white">id</code>{" "}
-          do evento para não processar duas vezes.
+          Responda <code className="font-mono text-xs text-white">2xx</code> rápido. Use o playground
+          abaixo para validar antes de ir para produção.
         </p>
       </div>
 
       {error ? (
         <ErrorState detail={error.message} />
       ) : (
-        <WebhooksManager
-          endpoints={(data || []) as WebhookEndpoint[]}
-          canWrite={canWrite(role)}
-        />
+        <WebhooksManager endpoints={endpoints} canWrite={canWrite(role)} />
       )}
+
+      <WebhookPlayground endpoints={endpoints} canWrite={canWrite(role)} />
 
       <div className="space-y-3">
         <h2 className="font-medium">Entregas recentes</h2>
         {rows.length === 0 ? (
           <p className="text-sm text-flux-muted">
-            Ainda não há entregas neste ambiente. Quando um evento for disparado, ele aparece aqui com
-            status HTTP e tentativas.
+            Ainda não há entregas. Envie um teste no playground ou aguarde um pagamento real.
           </p>
         ) : (
           <Table headers={["ID", "Evento", "Tentativas", "HTTP", "Status", "Quando"]}>
@@ -76,7 +75,7 @@ export default async function WebhooksPage() {
                 <td className="px-6 py-4">
                   <Mono>{d.id.slice(0, 8)}</Mono>
                 </td>
-                <td className="px-6 py-4 font-mono text-xs">{d.webhook_events?.type || "—"}</td>
+                <td className="px-6 py-4 font-mono text-xs">{d.webhook_events?.type || "teste"}</td>
                 <td className="px-6 py-4 text-flux-muted">{d.attempt_count ?? 0}</td>
                 <td className="px-6 py-4 text-flux-muted">{d.response_status ?? "—"}</td>
                 <td className="px-6 py-4">
