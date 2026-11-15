@@ -18,41 +18,11 @@ import type {
 import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
 /**
- * Carrega vínculo de subconta Nexus da organização (quando a coluna existir).
- * Não quebra se a migration ainda não tiver sido aplicada.
- */
-async function loadOrgNexusShop(organizationId: string): Promise<{
-  shopId?: string;
-  platformFeePercent?: number;
-}> {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("organizations")
-      .select("nexus_shop_id, platform_fee_percent")
-      .eq("id", organizationId)
-      .maybeSingle();
-
-    if (error || !data) return {};
-
-    const shopId =
-      typeof data.nexus_shop_id === "string" && data.nexus_shop_id.trim()
-        ? data.nexus_shop_id.trim()
-        : undefined;
-    const pct =
-      data.platform_fee_percent != null && Number(data.platform_fee_percent) > 0
-        ? Number(data.platform_fee_percent)
-        : undefined;
-
-    return { shopId, platformFeePercent: pct };
-  } catch {
-    return {};
-  }
-}
-
-/**
  * Cria cobranca com roteamento multi-adquirente e failover.
  * Persiste provider_attempt_log; se a coluna falhar no update,
  * faz retry sem o campo (success/fail/ambiguous). Nunca reenvia cobranca ao adquirente.
+ *
+ * PIX na Nexus vai sempre para a carteira principal (sem shop_id / splits).
  */
 export async function createPayment(
   organizationId: string,
@@ -116,10 +86,6 @@ export async function createPayment(
 
   const webhookUrl = `${env.API_BASE_URL}/v1/webhooks/provider`;
 
-  // Subconta + taxa da plataforma (só em live; sandbox ignora)
-  const orgShop =
-    environment === "live" ? await loadOrgNexusShop(organizationId) : {};
-
   let attemptResult;
   try {
     attemptResult = await createChargeWithFailover(
@@ -134,8 +100,6 @@ export async function createPayment(
         metadata: input.metadata,
         attempt: 0,
         attemptedProviders: [],
-        shopId: orgShop.shopId,
-        platformFeePercent: orgShop.platformFeePercent,
       },
       environment
     );
@@ -176,7 +140,6 @@ export async function createPayment(
         .eq("id", paymentId)
         .select()
         .single();
-      // Soft-retry without log — never creates a second charge at the acquirer.
       if (ambErr || !pendingRow) {
         console.warn("[payments] ambiguous update with attempt_log failed; retrying without it:", ambErr?.message);
         const { provider_attempt_log: _drop, ...withoutLog } = ambiguousPatch;
@@ -192,8 +155,6 @@ export async function createPayment(
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
         return pendingRow as Payment;
       }
-      // DB still failed: local row may remain "pending" with provider "pending".
-      // Do NOT retry createCharge — outcome is uncertain; reconciliation must handle it.
       console.error("[payments] ambiguous result could not be persisted:", { paymentId });
       throw new AppError(
         502,
@@ -237,7 +198,6 @@ export async function createPayment(
       return failedRow as Payment;
     }
 
-    // No second charge: acquirer already returned definitive failure.
     throw new AppError(
       502,
       "provider_error",
@@ -288,8 +248,6 @@ export async function createPayment(
     paid_at: status === "succeeded" ? nowIso : null,
   };
 
-  // Campos de pagador: só grava se a coluna existir (migration em outro chat).
-  // Tentamos com eles; se o PostgREST reclamar, retry sem.
   if (payerName) baseUpdate.payer_name = payerName;
   if (payerDocument) baseUpdate.payer_document = payerDocument;
 
@@ -309,7 +267,6 @@ export async function createPayment(
   payment = paymentData as Record<string, unknown> | null;
   if (updateError || !payment) {
     console.warn("[payments] update with attempt_log failed; retrying without it:", updateError?.message);
-    // Retry sem attempt_log e sem payer_* (caso coluna ainda não exista)
     const { payer_name: _pn, payer_document: _pd, ...safeUpdate } = baseUpdate;
     const retry = await supabaseAdmin
       .from("payments")
