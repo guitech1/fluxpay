@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CreditCard, FileText, ArrowLeftRight, Settings2, UserPlus, ChevronRight } from "lucide-react";
+import { CreditCard, FileText, ArrowLeftRight, Settings2, UserPlus, ChevronRight, Store, Percent } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { formatCurrency } from "@/lib/utils";
 import { BalanceHero } from "@/components/carteira/BalanceHero";
@@ -116,6 +116,22 @@ export default async function CarteiraDigitalPage() {
   const canOperate = isApproved;
 
   const more = [
+    ...(canOperate
+      ? [
+          {
+            href: "/dashboard/carteira/caixa",
+            label: "Modo Caixa",
+            description: "Celular vira maquininha de Pix",
+            icon: Store,
+          },
+          {
+            href: "/dashboard/carteira/splits",
+            label: "Splits e repasses",
+            description: "Divida entre sócios e parceiros",
+            icon: Percent,
+          },
+        ]
+      : []),
     ...(hasNoWallet || walletStatus === "rejected"
       ? [
           {
@@ -169,21 +185,21 @@ export default async function CarteiraDigitalPage() {
           >
             {canOperate ? (
               <>
+                <Link href="/dashboard/carteira/caixa" className="fxb-act">
+                  <span className="fxb-act-btn"><Store size={24} /></span>
+                  <span className="fxb-act-label">Caixa</span>
+                </Link>
                 <Link href="/dashboard/carteira/pix" className="fxb-act">
                   <span className="fxb-act-btn"><PixMark size={26} /></span>
                   <span className="fxb-act-label">Pix</span>
                 </Link>
+                <Link href="/dashboard/carteira/splits" className="fxb-act">
+                  <span className="fxb-act-btn"><Percent size={24} /></span>
+                  <span className="fxb-act-label">Splits</span>
+                </Link>
                 <Link href="/dashboard/carteira/cartao" className="fxb-act">
                   <span className="fxb-act-btn"><CreditCard size={24} /></span>
                   <span className="fxb-act-label">Cartão</span>
-                </Link>
-                <span className="fxb-act" aria-disabled="true" style={{ opacity: 0.45, pointerEvents: "none" }}>
-                  <span className="fxb-act-btn"><ArrowLeftRight size={24} /></span>
-                  <span className="fxb-act-label">Extrato</span>
-                </span>
-                <Link href="/dashboard/carteira/comprovantes" className="fxb-act">
-                  <span className="fxb-act-btn"><FileText size={24} /></span>
-                  <span className="fxb-act-label">Comprovantes</span>
                 </Link>
               </>
             ) : (
