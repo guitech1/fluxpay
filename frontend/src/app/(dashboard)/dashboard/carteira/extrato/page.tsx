@@ -60,7 +60,22 @@ export default async function CarteiraExtratoPage({
 
   const all = (txData || []) as WalletMove[];
   const hasMore = all.length > PAGE_SIZE;
-  const moves = all.slice(0, PAGE_SIZE);
+  const movesRaw = all.slice(0, PAGE_SIZE);
+
+  // Enriquece com payer_name das cobranças
+  const paymentIds = [...new Set(movesRaw.map((m) => m.payment_id).filter(Boolean))] as string[];
+  let payerMap = new Map<string, string | null>();
+  if (paymentIds.length) {
+    const { data: pays } = await supabase
+      .from("payments")
+      .select("id, payer_name")
+      .in("id", paymentIds);
+    payerMap = new Map((pays || []).map((p: { id: string; payer_name?: string | null }) => [p.id, p.payer_name ?? null]));
+  }
+  const moves: WalletMove[] = movesRaw.map((m) => ({
+    ...m,
+    payer_name: m.payment_id ? payerMap.get(m.payment_id) ?? null : null,
+  }));
 
   const balances = (balance || []) as { currency: string; available: number; pending: number }[];
   const primary = balances[0];
@@ -72,7 +87,7 @@ export default async function CarteiraExtratoPage({
     <div className="fxb-narrow" style={{ maxWidth: 760 }}>
       <ScreenHeader
         title="Extrato"
-        description="Toda entrada e saída, na ordem em que aconteceram"
+        description="Quem pagou, quanto entrou e quando — na ordem dos fatos"
         icon={<span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>}
       />
 
@@ -106,25 +121,6 @@ export default async function CarteiraExtratoPage({
         />
       </section>
 
-      {balances.length > 1 && (
-        <section className="fxb-panel" style={{ marginBottom: "1.5rem" }}>
-          <div className="fxb-section-head">
-            <div>
-              <h2>Outras moedas</h2>
-              <p>Cada moeda tem saldo próprio, sem conversão automática.</p>
-            </div>
-          </div>
-          <dl className="fxb-sum">
-            {balances.slice(1).map((b) => (
-              <div key={b.currency}>
-                <dt>{b.currency}</dt>
-                <dd>{formatCurrency(b.available, b.currency)}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      )}
-
       <section>
         <div className="fxb-section-head">
           <h2>Movimentações</h2>
@@ -138,7 +134,7 @@ export default async function CarteiraExtratoPage({
           <div className="fxb-panel fxb-empty">
             <span className="fxb-round fxb-round--lg"><ArrowLeftRight size={22} /></span>
             <h3>Nenhuma movimentação ainda</h3>
-            <p>Quando uma cobrança for paga, reembolsada ou tiver taxa, ela aparece aqui.</p>
+            <p>Quando uma cobrança for paga, o nome de quem pagou aparece aqui.</p>
             <Link href="/dashboard/payments/new" className="btn btn-primary">
               <Plus size={16} />
               Nova cobrança

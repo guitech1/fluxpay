@@ -15,6 +15,8 @@ export interface WalletMove {
   payment_id: string | null;
   available_on: string | null;
   created_at: string;
+  /** Nome de quem pagou o PIX (quando disponível) */
+  payer_name?: string | null;
 }
 
 export const MOVE_LABELS: Record<string, string> = {
@@ -42,6 +44,13 @@ function MoveIcon({ type }: { type: string }) {
   );
 }
 
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export function MoveRow({
   move,
   detailed = false,
@@ -54,12 +63,27 @@ export function MoveRow({
   const negative = move.amount < 0;
   const released = !move.available_on || new Date(move.available_on) <= new Date();
   const style = { "--i": index } as CSSProperties;
+  const payer = move.payer_name?.trim() || null;
+  const title =
+    move.type === "charge" && payer
+      ? `Recebido de ${payer}`
+      : MOVE_LABELS[move.type] || move.type;
 
   const body = (
     <>
-      <MoveIcon type={move.type} />
+      {payer && move.type === "charge" ? (
+        <span
+          className="fxb-round"
+          style={{ fontSize: "0.75rem", fontWeight: 800, letterSpacing: "-0.02em" }}
+          aria-hidden
+        >
+          {initials(payer)}
+        </span>
+      ) : (
+        <MoveIcon type={move.type} />
+      )}
       <div className="fxb-row-main">
-        <p className="fxb-row-title">{MOVE_LABELS[move.type] || move.type}</p>
+        <p className="fxb-row-title">{title}</p>
         <p className="fxb-row-sub">
           {move.description ? `${move.description} · ` : ""}
           {formatDate(move.created_at)}
