@@ -23,6 +23,10 @@ import {
 } from "../services/antifraud.js";
 import { getAntifraudRadar } from "../services/antifraud-radar.js";
 import { testWebhookDelivery } from "../services/webhook-test.js";
+import {
+  processProviderQueue,
+  clientMessageForPayment,
+} from "../services/provider-queue.js";
 import { AppError } from "../middleware/error.js";
 import { inScopeOrNull } from "../utils/scope.js";
 
@@ -189,12 +193,26 @@ router.post("/payments", requireRole("owner", "admin", "developer"), async (req,
   }
 });
 
+/** Drena a fila local de PIX quando a adquirente voltou — ANTES de /payments/:id */
+router.post(
+  "/payments/process-provider-queue",
+  requireRole("owner", "admin", "developer"),
+  async (req, res, next) => {
+    try {
+      const result = await processProviderQueue(20);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.get("/payments/:id", async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("payments")
       .select(
-        "id, amount, currency, status, payment_type, description, pix_copy_paste, pix_qr_code_base64, expires_at, paid_at, created_at, payer_name, fee_amount, net_amount"
+        "id, amount, currency, status, payment_type, description, provider, provider_response, pix_copy_paste, pix_qr_code_base64, expires_at, paid_at, created_at, payer_name, fee_amount, net_amount"
       )
       .eq("id", req.params.id)
       .eq("organization_id", req.dashboardAuth!.organizationId)
@@ -203,7 +221,12 @@ router.get("/payments/:id", async (req, res, next) => {
 
     if (error) throw error;
     if (!data) throw new AppError(404, "not_found", "Cobrança não encontrada.");
-    res.json({ data });
+    res.json({
+      data: {
+        ...data,
+        client_message: clientMessageForPayment(data),
+      },
+    });
   } catch (err) {
     next(err);
   }
