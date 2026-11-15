@@ -8,6 +8,12 @@ import { calculateFee } from "./fees.js";
 import { buildAttemptLog } from "./attempt-log.js";
 import { assertAntifraudAllowsPayment } from "./antifraud.js";
 import {
+  isRetryableProviderFailure,
+  buildQueuedProviderResponse,
+  buildConfirmingProviderResponse,
+  clientMessageForPayment,
+} from "./provider-queue.js";
+import {
   buildProviderExternalId,
   getPaymentByIdempotencyKey,
 } from "./payments-queries.js";
@@ -21,6 +27,7 @@ import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 /**
  * Cria cobranca com roteamento multi-adquirente e failover.
  * PIX na carteira principal. Aplica regras antifraude do lojista antes de gerar.
+ * Falha recuperável da adquirente → fila local + retentativa (não marca failed de cara).
  */
 export async function createPayment(
   organizationId: string,
@@ -128,6 +135,29 @@ export async function createPayment(
       paymentId,
       error: err instanceof Error ? err.message : err,
     });
+    // Falha dura no roteador: ainda assim enfileira em vez de perder a cobrança local
+    const queuedPatch = {
+      status: "pending" as const,
+      provider: "queued",
+      provider_response: buildQueuedProviderResponse({
+        errorMessage: err instanceof Error ? err.message : "router_error",
+        errorCode: "provider_unavailable",
+        retryCount: 0,
+      }),
+    };
+    const { data: queuedRow } = await supabaseAdmin
+      .from("payments")
+      .update(queuedPatch)
+      .eq("id", paymentId)
+      .select()
+      .single();
+    if (queuedRow) {
+      dispatchWebhook(organizationId, environment, "payment.pending", queuedRow).catch(console.error);
+      return {
+        ...(queuedRow as Payment),
+        client_message: clientMessageForPayment(queuedRow as Payment),
+      } as Payment;
+    }
     if (err instanceof AppError) throw err;
     throw new AppError(
       502,
@@ -140,11 +170,11 @@ export async function createPayment(
     if (attemptResult.ambiguous) {
       const ambiguousPatch = {
         provider: attemptResult.providerId,
-        provider_response: {
-          ambiguous: true,
-          error: attemptResult.errorMessage,
+        provider_response: buildConfirmingProviderResponse({
+          providerId: attemptResult.providerId,
+          errorMessage: attemptResult.errorMessage,
           latencyMs: attemptResult.latencyMs,
-        },
+        }),
         provider_attempt_log: buildAttemptLog(attemptResult),
       };
       let { data: pendingRow, error: ambErr } = await supabaseAdmin
@@ -165,13 +195,53 @@ export async function createPayment(
       }
       if (pendingRow) {
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
-        return pendingRow as Payment;
+        return {
+          ...(pendingRow as Payment),
+          client_message: clientMessageForPayment(pendingRow as Payment),
+        } as Payment;
       }
       throw new AppError(
         502,
         "provider_error",
-        "Cobranca registrada localmente; confirmacao pendente de reconciliacao."
+        "Cobrança registrada localmente. Estamos confirmando com o banco — não pague de novo."
       );
+    }
+
+    if (isRetryableProviderFailure(attemptResult)) {
+      const queuedPatch = {
+        status: "pending" as const,
+        provider: "queued",
+        provider_response: buildQueuedProviderResponse({
+          errorMessage: attemptResult.errorMessage,
+          errorCode: attemptResult.errorCode,
+          attemptLog: buildAttemptLog(attemptResult),
+          retryCount: 0,
+        }),
+        provider_attempt_log: buildAttemptLog(attemptResult),
+      };
+      let { data: queuedRow, error: qErr } = await supabaseAdmin
+        .from("payments")
+        .update(queuedPatch)
+        .eq("id", paymentId)
+        .select()
+        .single();
+      if (qErr || !queuedRow) {
+        const { provider_attempt_log: _drop, ...withoutLog } = queuedPatch;
+        const retry = await supabaseAdmin
+          .from("payments")
+          .update(withoutLog)
+          .eq("id", paymentId)
+          .select()
+          .single();
+        queuedRow = retry.data;
+      }
+      if (queuedRow) {
+        dispatchWebhook(organizationId, environment, "payment.pending", queuedRow).catch(console.error);
+        return {
+          ...(queuedRow as Payment),
+          client_message: clientMessageForPayment(queuedRow as Payment),
+        } as Payment;
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -183,6 +253,7 @@ export async function createPayment(
         error: attemptResult.errorMessage,
         errorCode: attemptResult.errorCode,
         latencyMs: attemptResult.latencyMs,
+        queue_state: "exhausted",
       },
       provider_attempt_log: buildAttemptLog(attemptResult),
     };
@@ -205,7 +276,10 @@ export async function createPayment(
 
     if (failedRow) {
       dispatchWebhook(organizationId, environment, "payment.failed", failedRow).catch(console.error);
-      return failedRow as Payment;
+      return {
+        ...(failedRow as Payment),
+        client_message: clientMessageForPayment(failedRow as Payment),
+      } as Payment;
     }
 
     throw new AppError(
