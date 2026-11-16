@@ -7,32 +7,24 @@ import {
   CreditCard,
   Users,
   RefreshCcw,
-  AlertTriangle,
   Webhook,
-  Code2,
+  Key,
   Settings,
-  Building2,
-  FileText,
+  BookOpen,
   Wallet,
+  Landmark,
   Banknote,
   Link2,
-  Menu,
-  X,
-  Trophy,
-  UserCircle,
-  FlaskConical,
-  Landmark,
+  Shield,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
-import { FluxMark } from "@/components/brand/FluxLogo";
-import { environmentLabel } from "@/lib/labels";
+import { FluxMark } from "@/components/brand/FluxMark";
 
-const NAV_GROUPS: {
-  label?: string;
-  items: { href: string; label: string; icon: React.ElementType }[];
+const NAV: {
+  label: string;
+  items: { href: string; label: string; icon: typeof LayoutDashboard }[];
 }[] = [
   {
+    label: "Geral",
     items: [{ href: "/dashboard", label: "Visão geral", icon: LayoutDashboard }],
   },
   {
@@ -42,129 +34,69 @@ const NAV_GROUPS: {
       { href: "/dashboard/payment-links", label: "Link de pagamento", icon: Link2 },
       { href: "/dashboard/carteira", label: "Carteira Digital", icon: Landmark },
       { href: "/dashboard/wallet", label: "Extrato e saques", icon: Wallet },
-      { href: "/dashboard/fluxpay-card", label: "FluxPay Card", icon: Banknote },
+      { href: "/dashboard/fluxpay-card", label: "FluxPay Card · Em breve", icon: Banknote },
       { href: "/dashboard/customers", label: "Clientes", icon: Users },
     ],
   },
   {
-    label: "Operação",
+    label: "Desenvolvedor",
     items: [
-      { href: "/dashboard/refunds", label: "Reembolsos", icon: RefreshCcw },
-      { href: "/dashboard/disputes", label: "Disputas", icon: AlertTriangle },
-    ],
-  },
-  {
-    label: "Desenvolvedores",
-    items: [
-      { href: "/dashboard/api", label: "API e documentação", icon: Code2 },
+      { href: "/dashboard/api-keys", label: "Chaves de API", icon: Key },
       { href: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
-      { href: "/dashboard/logs", label: "Registro de chamadas", icon: FileText },
+      { href: "/dashboard/docs", label: "Documentação", icon: BookOpen },
     ],
   },
   {
     label: "Conta",
     items: [
-      { href: "/dashboard/profile", label: "Perfil público", icon: UserCircle },
-      { href: "/dashboard/company", label: "Empresa", icon: Building2 },
+      { href: "/dashboard/security", label: "Segurança", icon: Shield },
       { href: "/dashboard/settings", label: "Configurações", icon: Settings },
-      { href: "/ranking", label: "Ranking", icon: Trophy },
-      { href: "/labs", label: "Labs", icon: FlaskConical },
     ],
   },
 ];
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/dashboard") return pathname === "/dashboard";
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
-export function Sidebar({
-  environment = "test",
-  organizationName,
-}: {
-  environment?: "test" | "live";
-  organizationName?: string;
-}) {
-  const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
+export function Sidebar() {
+  const pathname = usePathname() || "";
 
   return (
-    <>
-      <button
-        className="lg:hidden fixed top-3 left-3 z-50 p-2.5 rounded-lg bg-flux-dark border border-flux-border text-flux-muted hover:text-white"
-        onClick={() => setMobileOpen((v) => !v)}
-        aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
-        aria-expanded={mobileOpen}
-      >
-        {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-      </button>
-
-      {mobileOpen && (
-        <div
-          className="lg:hidden fixed inset-0 bg-black/70 z-40"
-          onClick={() => setMobileOpen(false)}
-          aria-hidden
-        />
-      )}
-
-      <aside
-        className={cn(
-          "fixed lg:sticky lg:top-0 inset-y-0 left-0 z-40 w-64 shrink-0 h-screen flex flex-col bg-flux-dark border-r border-flux-border transition-transform duration-200",
-          mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        )}
-      >
-        <div className="flex items-center gap-2.5 px-5 h-16 border-b border-flux-border shrink-0">
-          <FluxMark className="w-7 h-7 shrink-0" />
-          <span className="font-semibold tracking-tight">FluxPay</span>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5" aria-label="Menu principal">
-          {NAV_GROUPS.map((group, gi) => (
-            <div key={group.label || gi} className="space-y-0.5">
-              {group.label && (
-                <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-flux-muted/70">
-                  {group.label}
-                </p>
-              )}
-              {group.items.map((item) => {
-                const active = isActive(pathname, item.href);
+    <aside className="hidden lg:flex lg:flex-col w-60 shrink-0 border-r border-flux-border bg-flux-card/40">
+      <div className="h-14 flex items-center gap-2 px-4 border-b border-flux-border">
+        <FluxMark className="w-7 h-7" />
+        <span className="font-semibold tracking-tight">FluxPay</span>
+      </div>
+      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-5">
+        {NAV.map((section) => (
+          <div key={section.label}>
+            <p className="px-2 mb-1.5 text-[0.65rem] font-semibold uppercase tracking-wider text-flux-muted">
+              {section.label}
+            </p>
+            <ul className="space-y-0.5">
+              {section.items.map((item) => {
+                const active =
+                  item.href === "/dashboard"
+                    ? pathname === "/dashboard"
+                    : pathname === item.href || pathname.startsWith(item.href + "/");
                 const Icon = item.icon;
                 return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
-                      active
-                        ? "bg-flux-gray-light text-white font-medium"
-                        : "text-flux-muted hover:text-white hover:bg-flux-gray"
-                    )}
-                  >
-                    <Icon className="w-[18px] h-[18px] shrink-0" />
-                    <span className={cn("truncate")}>{item.label}</span>
-                  </Link>
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={
+                        active
+                          ? "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium bg-flux-gray text-white"
+                          : "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-flux-muted hover:text-white hover:bg-flux-gray/50"
+                      }
+                    >
+                      <Icon className="w-4 h-4 shrink-0 opacity-80" />
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                  </li>
                 );
               })}
-            </div>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-flux-border shrink-0">
-          <div className="text-xs">
-            <div className={cn("font-medium", "truncate")}>
-              {organizationName || "FluxPay"}
-            </div>
-            <div className="text-flux-muted mt-0.5">
-              Ambiente de {environmentLabel(environment).toLowerCase()}
-            </div>
+            </ul>
           </div>
-        </div>
-      </aside>
-    </>
+        ))}
+      </nav>
+    </aside>
   );
 }
