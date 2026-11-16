@@ -10,7 +10,13 @@ const TABS = [
   { href: "/dashboard/carteira/caixa", label: "Modo Caixa", exact: false, kind: "caixa" as const },
   { href: "/dashboard/carteira/pix", label: "Pix", exact: false, kind: "pix" as const },
   { href: "/dashboard/carteira/splits", label: "Splits", exact: false, kind: "splits" as const },
-  { href: "/dashboard/carteira/cartao", label: "Cartão", exact: false, kind: "card" as const },
+  {
+    href: "/dashboard/carteira/cartao",
+    label: "Cartão",
+    badge: "Em breve",
+    exact: false,
+    kind: "card" as const,
+  },
   { href: "/dashboard/carteira/extrato", label: "Extrato", exact: false, kind: "extrato" as const },
   { href: "/dashboard/carteira/comprovantes", label: "Comprovantes", exact: false, kind: "docs" as const },
   { href: "/dashboard/carteira/config", label: "Config", exact: false, kind: "config" as const },
@@ -61,7 +67,23 @@ export function WalletNav() {
             aria-current={active ? "page" : undefined}
           >
             <TabIcon kind={tab.kind} />
-            {tab.label}
+            <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 1 }}>
+              <span>{tab.label}</span>
+              {"badge" in tab && tab.badge ? (
+                <span
+                  style={{
+                    fontSize: "0.62rem",
+                    fontWeight: 800,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "#fca5a5",
+                    lineHeight: 1,
+                  }}
+                >
+                  {tab.badge}
+                </span>
+              ) : null}
+            </span>
           </Link>
         );
       })}
