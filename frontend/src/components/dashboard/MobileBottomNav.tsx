@@ -21,7 +21,7 @@ const ITEMS: {
   { href: "/dashboard/payments", label: "Pagamentos", icon: CreditCard },
   { href: "/dashboard/carteira", label: "Digital", icon: Landmark },
   { href: "/dashboard", label: "FluxPay", icon: FluxMark, center: true },
-  { href: "/dashboard/fluxpay-card", label: "Card", icon: Banknote },
+  { href: "/dashboard/fluxpay-card", label: "Em breve", icon: Banknote },
   { href: "/dashboard/wallet", label: "Extrato", icon: Wallet },
   { href: "/dashboard/payment-links", label: "Link", icon: Link2 },
 ];
@@ -48,47 +48,35 @@ export function MobileBottomNav() {
   return (
     <nav
       className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-flux-border bg-flux-dark"
-      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Navegação principal"
-      data-pending={pending ? "1" : "0"}
     >
-      <ul className="grid grid-cols-6 h-14 max-w-lg mx-auto">
+      <ul className="grid grid-cols-6 h-16">
         {ITEMS.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname || "", item.href);
           const Icon = item.icon;
-          if (item.center) {
-            return (
-              <li key={item.href} className="flex items-center justify-center -mt-2">
-                <button
-                  type="button"
-                  onClick={() => go(item.href)}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={item.label}
-                  className={cn(
-                    "flex items-center justify-center w-12 h-12 rounded-full border-2 shadow-md",
-                    active
-                      ? "bg-flux-red border-flux-red text-white"
-                      : "bg-flux-gray border-flux-border text-white"
-                  )}
-                >
-                  <Icon className="w-6 h-6" />
-                </button>
-              </li>
-            );
-          }
           return (
-            <li key={item.href} className="flex">
+            <li key={item.href} className="relative">
               <button
                 type="button"
                 onClick={() => go(item.href)}
-                aria-current={active ? "page" : undefined}
+                disabled={pending}
                 className={cn(
-                  "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium",
-                  active ? "text-flux-red" : "text-flux-muted"
+                  "w-full h-full flex flex-col items-center justify-center gap-0.5 text-[0.65rem]",
+                  item.center && "-mt-3",
+                  active ? "text-white" : "text-flux-muted"
                 )}
               >
-                <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} />
-                <span className="leading-none">{item.label}</span>
+                {item.center ? (
+                  <span className="w-11 h-11 rounded-full bg-flux-red flex items-center justify-center shadow-lg shadow-red-900/40">
+                    <Icon className="w-6 h-6 text-white" />
+                  </span>
+                ) : (
+                  <>
+                    <Icon className="w-5 h-5" />
+                    <span className="truncate max-w-[4.5rem]">{item.label}</span>
+                  </>
+                )}
               </button>
             </li>
           );
