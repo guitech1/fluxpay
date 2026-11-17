@@ -1,5 +1,6 @@
 import "./carteira.css";
 import "./carteira-theme.css";
+import "./analysis.css";
 import { requireDashboardContext } from "@/lib/dashboard-server";
 import { CarteiraShell, type WalletKycState } from "@/components/carteira/CarteiraShell";
 
