@@ -3,7 +3,7 @@ import { formatDate } from "@/lib/utils";
 import { deliveryStatusLabel } from "@/lib/labels";
 import { PageHeader, ErrorState, Table, Mono } from "@/components/dashboard/ui";
 import { WebhooksManager } from "@/components/dashboard/WebhooksManager";
-import { WebhookPlayground } from "@/components/dashboard/WebhookPlayground";
+import { WebhookPlayground, type PlaygroundDelivery } from "@/components/dashboard/WebhookPlayground";
 import type { WebhookEndpoint } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,8 @@ interface DeliveryRow {
   attempt_count: number | null;
   response_status: number | null;
   created_at: string;
+  request_body?: unknown;
+  response_body?: string | null;
   webhook_events?: { type: string } | null;
 }
 
@@ -28,9 +30,11 @@ export default async function WebhooksPage() {
 
   const { data: deliveries } = await supabase
     .from("webhook_deliveries")
-    .select("id, status, attempt_count, response_status, created_at, webhook_events(type)")
+    .select(
+      "id, status, attempt_count, response_status, created_at, request_body, response_body, webhook_events(type)"
+    )
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(40);
 
   const rows = (deliveries || []) as unknown as DeliveryRow[];
   const endpoints = (data || []) as WebhookEndpoint[];
@@ -39,7 +43,7 @@ export default async function WebhooksPage() {
     <div className="space-y-8">
       <PageHeader
         title="Webhooks"
-        description="Endpoints profissionais: eventos em tempo real, assinatura HMAC e playground de teste"
+        description="Endpoints profissionais: eventos em tempo real, assinatura HMAC e playground osciloscópio"
       />
 
       <div className="card text-sm text-flux-muted leading-relaxed space-y-2">
@@ -60,7 +64,11 @@ export default async function WebhooksPage() {
         <WebhooksManager endpoints={endpoints} canWrite={canWrite(role)} />
       )}
 
-      <WebhookPlayground endpoints={endpoints} canWrite={canWrite(role)} />
+      <WebhookPlayground
+        endpoints={endpoints}
+        canWrite={canWrite(role)}
+        deliveries={rows as PlaygroundDelivery[]}
+      />
 
       <div className="space-y-3">
         <h2 className="font-medium">Entregas recentes</h2>
