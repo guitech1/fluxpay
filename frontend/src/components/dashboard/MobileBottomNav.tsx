@@ -21,7 +21,7 @@ const ITEMS: {
   { href: "/dashboard/payments", label: "Pagamentos", icon: CreditCard },
   { href: "/dashboard/carteira", label: "Digital", icon: Landmark },
   { href: "/dashboard", label: "FluxPay", icon: FluxMark, center: true },
-  { href: "/dashboard/fluxpay-card", label: "Em breve", icon: Banknote },
+  { href: "/dashboard/fluxpay-card", label: "Card", icon: Banknote },
   { href: "/dashboard/wallet", label: "Extrato", icon: Wallet },
   { href: "/dashboard/payment-links", label: "Link", icon: Link2 },
 ];
@@ -74,7 +74,7 @@ export function MobileBottomNav() {
                 ) : (
                   <>
                     <Icon className="w-5 h-5" />
-                    <span className="truncate max-w-[4.5rem]">{item.label}</span>
+                    <span className="truncate max-w-full px-0.5">{item.label}</span>
                   </>
                 )}
               </button>
