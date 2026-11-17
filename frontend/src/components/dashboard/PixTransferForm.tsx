@@ -62,7 +62,6 @@ export function PixTransferForm({
   const [success, setSuccess] = useState<string | null>(null);
   const [lastWithdrawalId, setLastWithdrawalId] = useState<string | null>(null);
 
-  // QR camera
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -85,7 +84,6 @@ export function PixTransferForm({
     return () => stopCamera();
   }, [stopCamera]);
 
-  // Attach stream only after the <video> is mounted (fixes black screen race)
   useEffect(() => {
     if (!cameraActive || !streamRef.current) return;
 
@@ -99,7 +97,11 @@ export function PixTransferForm({
 
     const startScan = () => {
       if (cancelled || !streamRef.current) return;
-      const BD = (window as unknown as { BarcodeDetector?: new (opts: { formats: string[] }) => { detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>> } }).BarcodeDetector;
+      const BD = (window as unknown as {
+        BarcodeDetector?: new (opts: { formats: string[] }) => {
+          detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+        };
+      }).BarcodeDetector;
       if (BD) {
         const detector = new BD({ formats: ["qr_code"] });
         const loop = async () => {
@@ -147,7 +149,6 @@ export function PixTransferForm({
         video.srcObject = null;
       }
     };
-    // handleEmvDetected is stable enough for this mount cycle
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraActive]);
 
@@ -169,7 +170,6 @@ export function PixTransferForm({
         audio: false,
       });
       streamRef.current = stream;
-      // Mount <video> first; the effect above attaches srcObject + starts scan
       setCameraActive(true);
     } catch (err) {
       const msg =
@@ -266,7 +266,6 @@ export function PixTransferForm({
       return;
     }
 
-    // QR / copia e cola
     if (!validateEmvAndGoConfirm()) return;
     setStep("confirm");
   }
@@ -350,7 +349,6 @@ export function PixTransferForm({
       ? parseAmountToCents(amountReais)
       : parsedEmv?.amountCents ?? parseAmountToCents(amountReais);
 
-  // ---- Confirm step ----
   if (step === "confirm") {
     const isEmv = mode !== "key";
     return (
@@ -390,18 +388,20 @@ export function PixTransferForm({
           )}
           {isEmv && parsedEmv?.merchantName && (
             <div>
-              <dt>Nome no QR (informativo)</dt>
-              <dd>
+              <dt>Para</dt>
+              <dd style={{ fontWeight: 700, fontSize: "1.05rem" }}>
                 {parsedEmv.merchantName}
-                <span className="fxb-row-sub" style={{ display: "block", marginTop: 2 }}>
-                  Dado presente no QR — não é consulta DICT da instituição.
+                <span className="fxb-row-sub" style={{ display: "block", marginTop: 2, fontWeight: 400 }}>
+                  Nome no QR (informativo)
                 </span>
               </dd>
             </div>
           )}
           <div>
             <dt>Valor</dt>
-            <dd>{centsPreview != null ? formatCurrency(centsPreview, currency) : "—"}</dd>
+            <dd style={{ fontWeight: 700, fontSize: "1.05rem" }}>
+              {centsPreview != null ? formatCurrency(centsPreview, currency) : "—"}
+            </dd>
           </div>
           <div>
             <dt>Taxa</dt>
@@ -465,10 +465,8 @@ export function PixTransferForm({
     );
   }
 
-  // ---- Form step ----
   return (
     <div className="space-y-4">
-      {/* Mode switcher */}
       <div className="fxb-chips" role="tablist" aria-label="Forma de pagamento Pix">
         <button
           type="button"
@@ -586,22 +584,20 @@ export function PixTransferForm({
             </p>
             {!cameraActive ? (
               <button type="button" className="btn btn-primary w-full" onClick={startCamera}>
-                <Camera size={18} style={{ marginRight: 8 }} />
                 Abrir câmera
               </button>
             ) : (
-              <div style={{ position: "relative", borderRadius: 12, overflow: "hidden" }}>
+              <div className="relative rounded-2xl overflow-hidden bg-black">
                 <video
                   ref={videoRef}
+                  className="w-full aspect-[3/4] object-cover"
                   playsInline
                   muted
                   autoPlay
-                  style={{ width: "100%", maxHeight: 320, objectFit: "cover", background: "#000" }}
                 />
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  style={{ position: "absolute", top: 8, right: 8 }}
+                  className="absolute top-3 right-3 btn btn-secondary"
                   onClick={stopCamera}
                 >
                   <X size={16} /> Fechar
@@ -609,35 +605,12 @@ export function PixTransferForm({
               </div>
             )}
             {cameraError && (
-              <div className="fxb-note fxb-note--warn" role="status">
-                {cameraError}
-              </div>
+              <div className="fxb-note fxb-note--warn">{cameraError}</div>
             )}
             {emvCode && (
               <div className="fxb-note fxb-note--ok">
-                Código lido. Valor detectado:{" "}
-                {parsedEmv?.amountCents != null
-                  ? formatCurrency(parsedEmv.amountCents, currency)
-                  : "informe manualmente se o QR não tiver valor"}
+                QR lido. Revise os dados abaixo e continue.
               </div>
-            )}
-            {!emvCode && cameraActive && !cameraError && (
-              <p className="fxb-row-sub">Procurando QR Code…</p>
-            )}
-            {(!parsedEmv?.amountCents || !emvCode) && (
-              <label className="block">
-                <span className="fxb-label">Valor a pagar (se o QR não trouxer)</span>
-                <div className="fxb-amount-wrap">
-                  <span>R$</span>
-                  <input
-                    className="fxb-amount-input"
-                    inputMode="decimal"
-                    placeholder="0,00"
-                    value={amountReais}
-                    onChange={(e) => setAmountReais(e.target.value)}
-                  />
-                </div>
-              </label>
             )}
           </div>
         )}
@@ -677,15 +650,51 @@ export function PixTransferForm({
             {parsedEmv && (
               <div className={parsedEmv.isValid ? "fxb-note fxb-note--ok" : "fxb-note fxb-note--warn"}>
                 {parsedEmv.isValid ? (
-                  <>
-                    Código válido.
-                    {parsedEmv.amountCents != null && (
-                      <> Valor: {formatCurrency(parsedEmv.amountCents, currency)}.</>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p style={{ margin: 0, fontWeight: 600, opacity: 0.9 }}>Código válido</p>
+                    {parsedEmv.merchantName ? (
+                      <div>
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                            opacity: 0.7,
+                            marginBottom: 2,
+                          }}
+                        >
+                          Para
+                        </div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, lineHeight: 1.3 }}>
+                          {parsedEmv.merchantName}
+                        </div>
+                      </div>
+                    ) : null}
+                    {parsedEmv.amountCents != null ? (
+                      <div>
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                            opacity: 0.7,
+                            marginBottom: 2,
+                          }}
+                        >
+                          Valor
+                        </div>
+                        <div style={{ fontSize: "1.2rem", fontWeight: 800, lineHeight: 1.2 }}>
+                          {formatCurrency(parsedEmv.amountCents, currency)}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="fxb-row-sub" style={{ marginTop: 0 }}>
+                        Este código não traz valor — informe abaixo.
+                      </p>
                     )}
-                    {parsedEmv.merchantName && (
-                      <> Nome no QR (informativo): {parsedEmv.merchantName}.</>
-                    )}
-                  </>
+                  </div>
                 ) : (
                   parsedEmv.errors.join(" ")
                 )}
@@ -712,12 +721,16 @@ export function PixTransferForm({
           </>
         )}
 
+        {(mode === "qr" || mode === "copiacola") && parsedEmv?.amountCents != null && emvCode ? null : null}
+
         <label className="block">
           <span className="fxb-label">Descrição (opcional)</span>
           <input
             className="w-full"
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, 140))}
+            placeholder="Ex.: pagamento fornecedor"
+            maxLength={140}
           />
         </label>
 
@@ -727,15 +740,13 @@ export function PixTransferForm({
           </div>
         )}
         {success && (
-          <div className="fxb-note fxb-note--ok" role="status">
+          <div className="fxb-note fxb-note--ok">
             {success}
-            {lastWithdrawalId && (
-              <p style={{ marginTop: 8 }}>
-                <a href={`/dashboard/carteira/comprovantes`} className="fxb-link-pill">
-                  Ver comprovantes
-                </a>
-              </p>
-            )}
+            {lastWithdrawalId ? (
+              <span className="fxb-row-sub" style={{ display: "block", marginTop: 4 }}>
+                ID {lastWithdrawalId.slice(0, 8)}…
+              </span>
+            ) : null}
           </div>
         )}
 
