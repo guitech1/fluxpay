@@ -18,6 +18,7 @@ import {
   Network,
   Trophy,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FluxMark } from "@/components/brand/FluxLogo";
@@ -25,6 +26,7 @@ import { FluxMark } from "@/components/brand/FluxLogo";
 const NAV = [
   { href: "/admin", label: "Visão geral", icon: ShieldCheck },
   { href: "/admin/control-room", label: "Sala de controle", icon: Radio },
+  { href: "/admin/antifraud", label: "Antifraude", icon: ShieldAlert },
   { href: "/admin/organizations", label: "Contas", icon: Building2 },
   { href: "/admin/users", label: "Usuários", icon: Users },
   { href: "/admin/payments", label: "Pagamentos", icon: CreditCard },

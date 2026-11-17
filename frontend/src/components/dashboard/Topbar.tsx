@@ -92,10 +92,11 @@ export function Topbar({
               <span>Producao</span>
             </div>
 
+            {/* ADM sempre visível (mobile + desktop) para platform admin */}
             {isPlatformAdmin && (
               <Link
                 href="/admin"
-                className="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium text-flux-muted hover:text-white border border-flux-border rounded-lg px-2.5 py-2"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-flux-red hover:bg-flux-red-dark border border-flux-red rounded-lg px-2.5 py-2"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 ADM
@@ -123,6 +124,17 @@ export function Topbar({
                     <div className="px-3 py-2 border-b border-flux-border mb-1">
                       <p className="text-xs text-flux-muted truncate">{userEmail}</p>
                     </div>
+                    {isPlatformAdmin && (
+                      <Link
+                        href="/admin"
+                        role="menuitem"
+                        onClick={() => setMenuOpen(false)}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white hover:bg-flux-red/20"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        Painel ADM
+                      </Link>
+                    )}
                     <Link
                       href="/dashboard/settings"
                       role="menuitem"
@@ -176,6 +188,18 @@ export function Topbar({
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {isPlatformAdmin && (
+              <div className="px-3 pt-3">
+                <Link
+                  href="/admin"
+                  onClick={() => setDrawerOpen(false)}
+                  className="flex items-center justify-center gap-2 w-full rounded-lg bg-flux-red text-white text-sm font-semibold py-2.5"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  Painel ADM
+                </Link>
+              </div>
+            )}
             <SidebarNavLinks onNavigate={() => setDrawerOpen(false)} />
           </div>
         </div>

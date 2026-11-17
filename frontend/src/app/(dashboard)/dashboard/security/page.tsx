@@ -1,23 +1,11 @@
-import { requireDashboardContext, canWrite } from "@/lib/dashboard-server";
-import { PageHeader } from "@/components/dashboard/ui";
-import { AntifraudSettings } from "@/components/dashboard/AntifraudSettings";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Motor antifraude do LOJISTA (regras on/off).
- * Radar visual de plataforma fica só no ADM.
+ * Antifraude / segurança de plataforma não fica no painel do lojista.
+ * Só no ADM (/admin/security e sala de controle).
  */
-export default async function SecurityPage() {
-  const { role } = await requireDashboardContext();
-
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Antifraude"
-        description="Regras do seu motor — ligue e desligue sem ajuda técnica"
-      />
-      <AntifraudSettings canWrite={canWrite(role)} />
-    </div>
-  );
+export default function SecurityRedirect() {
+  redirect("/dashboard");
 }

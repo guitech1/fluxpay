@@ -14,7 +14,6 @@ import {
   Landmark,
   Banknote,
   Link2,
-  ShieldAlert,
 } from "lucide-react";
 import { FluxMark } from "@/components/brand/FluxLogo";
 import type { Environment } from "@/lib/types";
@@ -43,15 +42,12 @@ const NAV: {
     items: [
       { href: "/dashboard/api-keys", label: "Chaves de API", icon: Key },
       { href: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
-      { href: "/dashboard/docs", label: "Documentação", icon: BookOpen },
+      { href: "/dashboard/api", label: "Documentação", icon: BookOpen },
     ],
   },
   {
     label: "Conta",
-    items: [
-      { href: "/dashboard/security", label: "Antifraude", icon: ShieldAlert },
-      { href: "/dashboard/settings", label: "Configurações", icon: Settings },
-    ],
+    items: [{ href: "/dashboard/settings", label: "Configurações", icon: Settings }],
   },
 ];
 
