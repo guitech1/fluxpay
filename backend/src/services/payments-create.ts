@@ -1,102 +1,85 @@
-import { v4 as uuidv4 } from "uuid";
+/**
+ * Criação de cobranças PIX com failover de adquirente e cálculo de taxa FluxPay.
+ */
+import { randomUUID } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
-import { createChargeWithFailover } from "../providers/index.js";
-import { AppError } from "../middleware/error.js";
-import { dispatchWebhook } from "./webhooks.js";
 import { env } from "../config/env.js";
+import { AppError } from "../middleware/error.js";
 import { calculateFee } from "./fees.js";
+import { createChargeWithFailover } from "../providers/index.js";
 import { buildAttemptLog } from "./attempt-log.js";
-import { assertAntifraudAllowsPayment } from "./antifraud.js";
+import { dispatchWebhook } from "./webhooks.js";
 import {
-  isRetryableProviderFailure,
   buildQueuedProviderResponse,
   buildConfirmingProviderResponse,
   clientMessageForPayment,
 } from "./provider-queue.js";
-import {
-  buildProviderExternalId,
-  getPaymentByIdempotencyKey,
-} from "./payments-queries.js";
-import type {
-  CreatePaymentInput,
-  Payment,
-  Environment,
-} from "../types/index.js";
+import type { CreatePaymentInput, Payment, Environment } from "../types/index.js";
 import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
-/**
- * Cria cobranca com roteamento multi-adquirente e failover.
- * PIX na carteira principal. Aplica regras antifraude do lojista antes de gerar.
- * Falha recuperável da adquirente → fila local + retentativa (não marca failed de cara).
- */
 export async function createPayment(
   organizationId: string,
   environment: Environment,
   input: CreatePaymentInput
 ): Promise<Payment> {
-  if (!input.amount || input.amount <= 0) {
-    throw new AppError(400, "validation_error", "Informe um valor valido para a cobranca.");
-  }
+  const paymentType =
+    input.payment_method?.type === "pix" || !input.payment_method
+      ? "pix"
+      : (input.payment_method.type as string);
 
   const currency = (input.currency || "BRL").toUpperCase();
-  const paymentType = input.payment_method?.type === "pix" ? "pix" : "card";
+  if (currency !== "BRL") {
+    throw new AppError(400, "invalid_request", "Apenas BRL é suportado no momento.");
+  }
 
-  const meta = (input.metadata || {}) as Record<string, unknown>;
-  const payerDocument =
-    typeof meta.document === "string"
-      ? meta.document
-      : typeof meta.payer_document === "string"
-        ? meta.payer_document
-        : null;
-  const confirmDeniedPayer = Boolean(
-    meta.confirm_denied_payer === true ||
-      (input as { confirm_denied_payer?: boolean }).confirm_denied_payer
-  );
+  if (!input.amount || input.amount < 100) {
+    throw new AppError(400, "invalid_request", "Valor mínimo é R$ 1,00.");
+  }
 
-  await assertAntifraudAllowsPayment({
-    organizationId,
-    environment,
-    paymentType,
-    payerDocument,
-    confirmDeniedPayer,
-  });
+  const paymentId = randomUUID();
+  const providerExternalId = input.idempotency_key
+    ? `${organizationId}:${input.idempotency_key}`
+    : paymentId;
 
-  const paymentId = uuidv4();
-  const providerExternalId = buildProviderExternalId(paymentId);
-
-  const { data: created, error: insertError } = await supabaseAdmin
+  // Linha local antes de falar com a adquirente
+  const { data: inserted, error: insertError } = await supabaseAdmin
     .from("payments")
     .insert({
       id: paymentId,
       organization_id: organizationId,
-      customer_id: input.customer_id || null,
       environment,
       amount: input.amount,
       currency,
-      status: "pending",
       description: input.description || null,
-      idempotency_key: input.idempotency_key || null,
-      provider: "pending",
+      status: "pending",
+      payment_type: paymentType,
+      provider: null,
       provider_external_id: providerExternalId,
+      metadata: input.metadata || {},
       fee_amount: 0,
       net_amount: null,
-      metadata: input.metadata || {},
-      payment_type: paymentType,
+      idempotency_key: input.idempotency_key || null,
     })
     .select()
     .single();
 
-  if (insertError) {
-    if (insertError.code === "23505" && input.idempotency_key) {
-      const existing = await getPaymentByIdempotencyKey(
-        organizationId,
-        environment,
-        input.idempotency_key
-      );
-      if (existing) return existing;
+  if (insertError || !inserted) {
+    if ((insertError as { code?: string } | null)?.code === "23505" && input.idempotency_key) {
+      const { data: existing } = await supabaseAdmin
+        .from("payments")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .eq("environment", environment)
+        .eq("idempotency_key", input.idempotency_key)
+        .maybeSingle();
+      if (existing) {
+        return {
+          ...(existing as Payment),
+          client_message: clientMessageForPayment(existing as Payment),
+        } as Payment;
+      }
     }
-    console.error("Create payment error (insert):", insertError);
-    throw new AppError(500, "api_error", "Nao foi possivel registrar a cobranca. Tente novamente.");
+    throw insertError || new Error("Falha ao criar cobrança local");
   }
 
   const preferredProviderId = (
@@ -135,7 +118,6 @@ export async function createPayment(
       paymentId,
       error: err instanceof Error ? err.message : err,
     });
-    // Falha dura no roteador: ainda assim enfileira em vez de perder a cobrança local
     const queuedPatch = {
       status: "pending" as const,
       provider: "queued",
@@ -177,22 +159,12 @@ export async function createPayment(
         }),
         provider_attempt_log: buildAttemptLog(attemptResult),
       };
-      let { data: pendingRow, error: ambErr } = await supabaseAdmin
+      const { data: pendingRow } = await supabaseAdmin
         .from("payments")
         .update(ambiguousPatch)
         .eq("id", paymentId)
         .select()
         .single();
-      if (ambErr || !pendingRow) {
-        const { provider_attempt_log: _drop, ...withoutLog } = ambiguousPatch;
-        const retry = await supabaseAdmin
-          .from("payments")
-          .update(withoutLog)
-          .eq("id", paymentId)
-          .select()
-          .single();
-        pendingRow = retry.data;
-      }
       if (pendingRow) {
         dispatchWebhook(organizationId, environment, "payment.pending", pendingRow).catch(console.error);
         return {
@@ -200,14 +172,9 @@ export async function createPayment(
           client_message: clientMessageForPayment(pendingRow as Payment),
         } as Payment;
       }
-      throw new AppError(
-        502,
-        "provider_error",
-        "Cobrança registrada localmente. Estamos confirmando com o banco — não pague de novo."
-      );
     }
 
-    if (isRetryableProviderFailure(attemptResult)) {
+    if (attemptResult.retryable) {
       const queuedPatch = {
         status: "pending" as const,
         provider: "queued",
@@ -219,22 +186,12 @@ export async function createPayment(
         }),
         provider_attempt_log: buildAttemptLog(attemptResult),
       };
-      let { data: queuedRow, error: qErr } = await supabaseAdmin
+      const { data: queuedRow } = await supabaseAdmin
         .from("payments")
         .update(queuedPatch)
         .eq("id", paymentId)
         .select()
         .single();
-      if (qErr || !queuedRow) {
-        const { provider_attempt_log: _drop, ...withoutLog } = queuedPatch;
-        const retry = await supabaseAdmin
-          .from("payments")
-          .update(withoutLog)
-          .eq("id", paymentId)
-          .select()
-          .single();
-        queuedRow = retry.data;
-      }
       if (queuedRow) {
         dispatchWebhook(organizationId, environment, "payment.pending", queuedRow).catch(console.error);
         return {
@@ -244,35 +201,20 @@ export async function createPayment(
       }
     }
 
-    const nowIso = new Date().toISOString();
-    const failedPatch = {
-      status: "failed" as const,
-      provider: attemptResult.providerId,
-      failed_at: nowIso,
-      provider_response: {
-        error: attemptResult.errorMessage,
-        errorCode: attemptResult.errorCode,
-        latencyMs: attemptResult.latencyMs,
-        queue_state: "exhausted",
-      },
-      provider_attempt_log: buildAttemptLog(attemptResult),
-    };
-    let { data: failedRow, error: failErr } = await supabaseAdmin
+    const { data: failedRow } = await supabaseAdmin
       .from("payments")
-      .update(failedPatch)
+      .update({
+        status: "failed",
+        failed_at: new Date().toISOString(),
+        provider_response: {
+          error: attemptResult.errorMessage,
+          errorCode: attemptResult.errorCode,
+        },
+        provider_attempt_log: buildAttemptLog(attemptResult),
+      })
       .eq("id", paymentId)
       .select()
       .single();
-    if (failErr || !failedRow) {
-      const { provider_attempt_log: _drop, ...withoutLog } = failedPatch;
-      const retry = await supabaseAdmin
-        .from("payments")
-        .update(withoutLog)
-        .eq("id", paymentId)
-        .select()
-        .single();
-      failedRow = retry.data;
-    }
 
     if (failedRow) {
       dispatchWebhook(organizationId, environment, "payment.failed", failedRow).catch(console.error);
@@ -298,10 +240,10 @@ export async function createPayment(
     });
   }
 
-  const feeAmount =
-    attemptResult.pix?.feeAmountCents ?? feeCalc.feeAmountCents;
-  const netAmount =
-    attemptResult.pix?.netAmountCents ?? feeCalc.netAmountCents;
+  // Taxa SEMPRE pela regra FluxPay (calculateFee). fee/net da adquirente
+  // é só custo dela e NÃO pode sobrescrever margem da plataforma.
+  const feeAmount = feeCalc.feeAmountCents;
+  const netAmount = feeCalc.netAmountCents;
   const feeSnapshot: FeeRuleSnapshot = feeCalc.snapshot;
 
   const nowIso = new Date().toISOString();
@@ -335,99 +277,23 @@ export async function createPayment(
   if (payerName) baseUpdate.payer_name = payerName;
   if (payerDocumentOut) baseUpdate.payer_document = payerDocumentOut;
 
-  let payment: Record<string, unknown> | null = null;
   const { data: paymentData, error: updateError } = await supabaseAdmin
     .from("payments")
-    .update({
-      ...baseUpdate,
-      provider_attempt_log: buildAttemptLog(attemptResult),
-    })
+    .update(baseUpdate)
     .eq("id", paymentId)
-    .eq("organization_id", organizationId)
-    .eq("environment", environment)
     .select()
     .single();
 
-  payment = paymentData as Record<string, unknown> | null;
-  if (updateError || !payment) {
-    const { payer_name: _pn, payer_document: _pd, ...safeUpdate } = baseUpdate;
-    const retry = await supabaseAdmin
-      .from("payments")
-      .update(safeUpdate)
-      .eq("id", paymentId)
-      .eq("organization_id", organizationId)
-      .eq("environment", environment)
-      .select()
-      .single();
-    if (retry.error || !retry.data) {
-      throw new AppError(
-        500,
-        "api_error",
-        "A cobranca foi criada, mas houve falha ao registra-la. Consulte em instantes antes de tentar de novo."
-      );
-    }
-    payment = retry.data as Record<string, unknown>;
+  if (updateError || !paymentData) {
+    console.error("[payments] update após PIX:", updateError);
+    throw new AppError(500, "api_error", "Cobrança criada na adquirente, mas falhou ao gravar localmente.");
   }
 
-  const paymentRow = payment as unknown as Payment;
-  let finalPayment = paymentRow;
+  const payment = paymentData as Payment;
+  dispatchWebhook(organizationId, environment, "payment.pending", payment).catch(console.error);
 
-  if (providerStatus === "succeeded") {
-    if (paymentRow.payment_type === "pix") {
-      const { data: confirmed, error: ledgerError } = await supabaseAdmin.rpc(
-        "fluxpay_confirm_pix_payment",
-        {
-          p_payment_id: paymentRow.id,
-          p_organization_id: organizationId,
-          p_environment: environment,
-        }
-      );
-
-      const confirmedPayment = Array.isArray(confirmed) ? confirmed[0] : confirmed;
-      if (ledgerError || !confirmedPayment) {
-        throw new AppError(
-          500,
-          "api_error",
-          "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
-        );
-      }
-      finalPayment = confirmedPayment as Payment;
-    } else {
-      const { error: ledgerError } = await supabaseAdmin
-        .from("balance_transactions")
-        .insert({
-          organization_id: organizationId,
-          environment,
-          type: "charge",
-          amount: input.amount,
-          currency,
-          net: netAmount,
-          fee: feeAmount,
-          payment_id: paymentRow.id,
-          description: input.description || "Payment",
-          available_on: nowIso,
-        });
-
-      if (ledgerError && ledgerError.code !== "23505") {
-        throw new AppError(
-          500,
-          "api_error",
-          "A cobranca foi aprovada pelo provedor, mas o registro financeiro esta pendente de reconciliacao."
-        );
-      }
-    }
-  }
-
-  const eventType =
-    finalPayment.status === "succeeded"
-      ? "payment.succeeded"
-      : finalPayment.status === "failed"
-        ? "payment.failed"
-        : finalPayment.status === "pending"
-          ? "payment.pending"
-          : "payment.created";
-
-  dispatchWebhook(organizationId, environment, eventType, finalPayment).catch(console.error);
-
-  return finalPayment;
+  return {
+    ...payment,
+    client_message: clientMessageForPayment(payment),
+  } as Payment;
 }
