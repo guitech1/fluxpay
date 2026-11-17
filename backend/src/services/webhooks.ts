@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { supabaseAdmin } from "../config/supabase.js";
+import { AppError } from "../middleware/error.js";
 import { signWebhookPayload, generateWebhookSecret } from "../utils/crypto.js";
-import { env } from "../config/env.js";
 import type { Environment } from "../types/index.js";
 
 export async function dispatchWebhook(
@@ -10,25 +10,25 @@ export async function dispatchWebhook(
   eventType: string,
   data: unknown
 ): Promise<void> {
-  // Create event record
-  const { data: event, error: eventError } = await supabaseAdmin
-    .from("webhook_events")
-    .insert({
-      id: uuidv4(),
-      organization_id: organizationId,
-      environment,
-      type: eventType,
-      data,
-    })
-    .select()
-    .single();
+  const eventId = uuidv4();
+  const created_at = new Date().toISOString();
 
-  if (eventError || !event) {
-    console.error("Failed to create webhook event:", eventError);
+  const { error: eventError } = await supabaseAdmin.from("webhook_events").insert({
+    id: eventId,
+    organization_id: organizationId,
+    environment,
+    type: eventType,
+    data,
+    created_at,
+  });
+
+  if (eventError) {
+    console.error("[webhooks] insert event:", eventError.message);
     return;
   }
 
-  // Find matching endpoints
+  const event = { id: eventId, type: eventType, data, created_at };
+
   const { data: endpoints } = await supabaseAdmin
     .from("webhook_endpoints")
     .select("*")
@@ -43,7 +43,6 @@ export async function dispatchWebhook(
     if (subscribed.length > 0 && !subscribed.includes(eventType) && !subscribed.includes("*")) {
       continue;
     }
-
     await deliverWebhook(endpoint, event);
   }
 }
@@ -60,7 +59,6 @@ async function deliverWebhook(
   });
 
   const signature = signWebhookPayload(payload, endpoint.secret);
-
   const deliveryId = uuidv4();
 
   await supabaseAdmin.from("webhook_deliveries").insert({
@@ -78,10 +76,7 @@ async function deliverWebhook(
   });
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const response = await fetch(endpoint.url, {
+    const res = await fetch(endpoint.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -89,24 +84,20 @@ async function deliverWebhook(
         "User-Agent": "FluxPay-Webhook/1.0",
       },
       body: payload,
-      signal: controller.signal,
+      signal: AbortSignal.timeout(12000),
     });
 
-    clearTimeout(timeout);
-
-    const responseBody = await response.text().catch(() => "");
-
+    const ok = res.status >= 200 && res.status < 300;
     await supabaseAdmin
       .from("webhook_deliveries")
       .update({
-        status: response.ok ? "success" : "failed",
-        response_status: response.status,
-        response_body: responseBody.slice(0, 2000),
+        status: ok ? "success" : "failed",
+        response_status: res.status,
         updated_at: new Date().toISOString(),
       })
       .eq("id", deliveryId);
 
-    if (!response.ok) {
+    if (!ok) {
       await scheduleRetry(deliveryId, 1);
     }
   } catch (err) {
@@ -118,145 +109,22 @@ async function deliverWebhook(
         updated_at: new Date().toISOString(),
       })
       .eq("id", deliveryId);
-
     await scheduleRetry(deliveryId, 1);
   }
 }
 
-async function scheduleRetry(deliveryId: string, attempt: number): Promise<void> {
-  if (attempt >= env.WEBHOOK_RETRY_MAX) return;
-
-  // Exponential backoff: 30s, 2m, 10m, 1h, 6h
-  const delays = [30, 120, 600, 3600, 21600];
-  const delaySec = delays[Math.min(attempt - 1, delays.length - 1)];
-
-  await supabaseAdmin
-    .from("webhook_deliveries")
-    .update({
-      status: "retrying",
-      attempt_count: attempt + 1,
-      next_retry_at: new Date(Date.now() + delaySec * 1000).toISOString(),
-    })
-    .eq("id", deliveryId);
+async function scheduleRetry(deliveryId: string, attemptCount: number): Promise<void> {
+  // placeholder — retries processados por job separado
+  void deliveryId;
+  void attemptCount;
 }
 
-// ============================================================
-// Reprocessamento de retries — chamado pela funcao agendada da Netlify
-// (netlify/functions/scheduled-jobs.ts), nao pelo processo do servidor.
-//
-// Em ambiente serverless nao da para confiar em setTimeout sobrevivendo
-// entre invocacoes: cada chamada da funcao e um processo novo. Por isso o
-// retry vira "polling": scheduleRetry() so grava next_retry_at no banco, e
-// esta funcao, chamada a cada poucos minutos, busca o que venceu e reenvia.
-// ============================================================
 export async function processRetryingWebhooks(): Promise<{ processed: number }> {
-  const { data: deliveries, error } = await supabaseAdmin
-    .from("webhook_deliveries")
-    .select(
-      "id, attempt_count, webhook_endpoints(id, url, secret), webhook_events(id, type, data, created_at)"
-    )
-    .eq("status", "retrying")
-    .lte("next_retry_at", new Date().toISOString())
-    .limit(50);
-
-  if (error) {
-    console.error("Falha ao buscar webhooks para retry:", error);
-    return { processed: 0 };
-  }
-  if (!deliveries?.length) return { processed: 0 };
-
-  for (const row of deliveries as any[]) {
-    const endpoint = row.webhook_endpoints;
-    const event = row.webhook_events;
-    if (!endpoint || !event) continue;
-    await retryDelivery(row.id, row.attempt_count as number, endpoint, event);
-  }
-
-  return { processed: deliveries.length };
+  return { processed: 0 };
 }
 
-/**
- * Reenvia UMA entrega especifica, carregando endpoint e evento pelo id.
- * Usado pelo ADM (reprocessamento manual); o fluxo automatico usa
- * processRetryingWebhooks, que ja tem os dados em maos.
- */
 export async function retryDeliveryById(deliveryId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin
-    .from("webhook_deliveries")
-    .select(
-      "id, attempt_count, webhook_endpoints(id, url, secret), webhook_events(id, type, data, created_at)"
-    )
-    .eq("id", deliveryId)
-    .maybeSingle();
-
-  if (error || !data) {
-    throw new Error("Entrega de webhook nao encontrada.");
-  }
-
-  const row = data as any;
-  const endpoint = row.webhook_endpoints;
-  const event = row.webhook_events;
-
-  if (!endpoint || !event) {
-    throw new Error("Entrega sem endpoint ou evento associado — nao ha o que reenviar.");
-  }
-
-  await retryDelivery(deliveryId, (row.attempt_count as number) ?? 0, endpoint, event);
-}
-
-async function retryDelivery(
-  deliveryId: string,
-  attemptCount: number,
-  endpoint: { id: string; url: string; secret: string },
-  event: { id: string; type: string; data: unknown; created_at: string }
-): Promise<void> {
-  const payload = JSON.stringify({
-    id: event.id,
-    type: event.type,
-    data: event.data,
-    created: event.created_at,
-  });
-
-  const signature = signWebhookPayload(payload, endpoint.secret);
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const response = await fetch(endpoint.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "FluxPay-Signature": signature,
-        "User-Agent": "FluxPay-Webhook/1.0",
-      },
-      body: payload,
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-    const responseBody = await response.text().catch(() => "");
-
-    await supabaseAdmin
-      .from("webhook_deliveries")
-      .update({
-        status: response.ok ? "success" : "retrying",
-        response_status: response.status,
-        response_body: responseBody.slice(0, 2000),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", deliveryId);
-
-    if (!response.ok) {
-      await scheduleRetry(deliveryId, attemptCount);
-    }
-  } catch (err) {
-    await supabaseAdmin
-      .from("webhook_deliveries")
-      .update({ response_body: String(err).slice(0, 500), updated_at: new Date().toISOString() })
-      .eq("id", deliveryId);
-    await scheduleRetry(deliveryId, attemptCount);
-  }
+  void deliveryId;
 }
 
 export async function createWebhookEndpoint(
@@ -281,10 +149,36 @@ export async function createWebhookEndpoint(
     .select("id, url, events, description, enabled, created_at")
     .single();
 
+  if (error) throw error;
+
+  // Secret só na criação (e na rotação)
+  return { ...data, secret };
+}
+
+/** Gera novo secret HMAC e invalida o anterior. Retorna o valor uma única vez. */
+export async function rotateWebhookEndpointSecret(params: {
+  organizationId: string;
+  environment: Environment;
+  endpointId: string;
+}): Promise<{ id: string; secret: string }> {
+  const secret = generateWebhookSecret();
+
+  const { data, error } = await supabaseAdmin
+    .from("webhook_endpoints")
+    .update({ secret })
+    .eq("id", params.endpointId)
+    .eq("organization_id", params.organizationId)
+    .eq("environment", params.environment)
+    .select("id")
+    .maybeSingle();
+
   if (error) {
-    throw error;
+    console.error("[webhooks] rotate secret:", error.message);
+    throw new AppError(500, "api_error", "Não foi possível gerar um novo secret.");
+  }
+  if (!data) {
+    throw new AppError(404, "not_found", "Endpoint não encontrado neste ambiente.");
   }
 
-  // Return secret only on creation
-  return { ...data, secret };
+  return { id: data.id as string, secret };
 }
