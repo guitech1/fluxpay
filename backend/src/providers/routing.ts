@@ -82,6 +82,6 @@ export function parseActivePool(envValue: string | undefined): string[] {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
   }
-  // Default sem profanuspay até validação independente do endpoint oficial.
-  return ["nexuspag", "gothampay", "smokepay", "kavropay"];
+  // Pool completo: admin (acquirer_cost_config.enabled) decide quem entra de fato.
+  return ["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay"];
 }
