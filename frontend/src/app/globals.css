@@ -71,8 +71,8 @@ a {
     @apply bg-flux-dark border border-flux-border rounded-xl p-5 sm:p-6;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-colors
-           px-4 py-2.5 min-h-[44px] text-sm disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 font-medium rounded-full transition-colors
+           px-5 py-2.5 min-h-[44px] text-sm disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-primary {
     @apply btn bg-flux-red hover:bg-flux-red-dark text-white;
