@@ -17,7 +17,7 @@ import {
   Link2,
   Shield,
 } from "lucide-react";
-import { FluxMark } from "@/components/brand/FluxMark";
+import { FluxMark } from "@/components/brand/FluxLogo";
 
 const NAV: {
   label: string;
