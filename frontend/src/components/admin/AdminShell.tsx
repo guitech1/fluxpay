@@ -17,12 +17,14 @@ import {
   Headphones,
   Network,
   Trophy,
+  Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FluxMark } from "@/components/brand/FluxLogo";
 
 const NAV = [
   { href: "/admin", label: "Visão geral", icon: ShieldCheck },
+  { href: "/admin/control-room", label: "Sala de controle", icon: Radio },
   { href: "/admin/organizations", label: "Contas", icon: Building2 },
   { href: "/admin/users", label: "Usuários", icon: Users },
   { href: "/admin/payments", label: "Pagamentos", icon: CreditCard },

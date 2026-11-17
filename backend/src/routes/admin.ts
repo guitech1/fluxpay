@@ -4,6 +4,7 @@ import orgsRouter from "./admin-orgs.js";
 import usersPayRouter from "./admin-users-pay.js";
 import platformRouter from "./admin-platform.js";
 import acquirersRouter from "./admin-acquirers.js";
+import controlRoomRouter from "./admin-control-room.js";
 
 const router = Router();
 router.use(platformAdminAuth);
@@ -11,5 +12,6 @@ router.use(orgsRouter);
 router.use(usersPayRouter);
 router.use(platformRouter);
 router.use(acquirersRouter);
+router.use(controlRoomRouter);
 
 export default router;
