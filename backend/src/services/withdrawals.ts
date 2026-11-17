@@ -60,8 +60,6 @@ function mapWithdrawalRow(row: any): WithdrawalRequest {
 }
 
 const MIN_WITHDRAWAL_CENTS = WITHDRAWAL_MIN_CENTS;
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function recordWithdrawalDecision(params: {
   withdrawalId: string;
@@ -134,7 +132,6 @@ async function failWithdrawalAndRefundBalance(params: {
   const w = params.withdrawal;
   const now = new Date().toISOString();
 
-  // Estorno do valor reservado (mesmo padrão do reject)
   const { error: balErr } = await supabaseAdmin.from("balance_transactions").insert({
     organization_id: w.organization_id,
     environment: w.environment,
@@ -143,13 +140,12 @@ async function failWithdrawalAndRefundBalance(params: {
     currency: w.currency || "BRL",
     net: w.amount,
     fee: 0,
-    description: `Estorno de saque falhou (${String(w.id).slice(0, 8)})`,
+    description: `ERRO no saque — estorno (${String(w.id).slice(0, 8)})`,
     available_on: now,
   });
 
   if (balErr) {
     console.error("[withdrawals] refund apos failover falhou:", balErr);
-    // Mesmo assim marca failed para não ficar processing eterno
   }
 
   const { data: updated, error: upErr } = await supabaseAdmin
@@ -209,7 +205,7 @@ export async function requestWithdrawal(params: {
   assertPixKey(params.pixKeyType, params.pixKey);
 
   const fee = WITHDRAWAL_FEE_CENTS;
-  const net = params.amountCents; // taxa por cima no RPC; net enviado ao adquirente
+  const net = params.amountCents;
 
   const { data, error } = await supabaseAdmin.rpc("fluxpay_create_withdrawal_request", {
     p_organization_id: params.organizationId,
@@ -252,7 +248,7 @@ export async function requestWithdrawal(params: {
         note: "auto_execute: requires_manual_withdrawal_approval=false",
       });
     } catch (err) {
-      console.error("[withdrawals] auto-execute failed, leaving pending/processing:", {
+      console.error("[withdrawals] auto-execute failed:", {
         withdrawalId: withdrawal.id,
         err: err instanceof Error ? err.message : err,
       });
@@ -264,6 +260,10 @@ export async function requestWithdrawal(params: {
         );
       } catch {
         /* keep */
+      }
+      // Se o failover já estornou, propaga mensagem de ERRO pro cliente
+      if (withdrawal.status === "failed" && err instanceof AppError) {
+        throw err;
       }
     }
   }
@@ -440,7 +440,6 @@ export async function approveAndExecuteWithdrawal(params: {
     stateAfter: "processing",
   });
 
-  // Failover rápido: Nexus primeiro, depois as demais configuradas
   const providerResult = await createWithdrawalWithFailover({
     amountCents: w.net,
     pixKey: w.pix_key,
@@ -449,7 +448,7 @@ export async function approveAndExecuteWithdrawal(params: {
   });
 
   if (!providerResult.success) {
-    const failed = await failWithdrawalAndRefundBalance({
+    await failWithdrawalAndRefundBalance({
       withdrawal: w,
       reason: providerResult.errorMessage,
       actorId: params.adminUserId,
@@ -458,7 +457,7 @@ export async function approveAndExecuteWithdrawal(params: {
     throw new AppError(
       502,
       "provider_error",
-      "Nao foi possivel concluir o saque em nenhuma adquirente. O valor voltou para sua carteira."
+      "ERRO no saque: nenhuma adquirente concluiu a transferência. O dinheiro voltou para a carteira."
     );
   }
 
