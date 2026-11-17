@@ -48,7 +48,6 @@ export function Topbar({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Trava scroll do body com drawer aberto
   useEffect(() => {
     if (!drawerOpen) return;
     const prev = document.body.style.overflow;
@@ -72,7 +71,6 @@ export function Topbar({
     <>
       <header className="h-16 border-b border-flux-border bg-flux-black/80 backdrop-blur sticky top-0 z-30">
         <div ref={containerRef} className="h-full px-4 lg:px-8 flex items-center gap-3">
-          {/* Hamburger — só mobile */}
           <button
             type="button"
             className="lg:hidden -ml-1 p-2 rounded-lg text-flux-muted hover:text-white hover:bg-flux-gray/50"
@@ -121,7 +119,7 @@ export function Topbar({
               {menuOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
-                  ind className="absolute right-0 mt-2 w-56 rounded-xl border border-flux-border bg-flux-dark shadow-xl z-20 p-1.5">
+                  <div className="absolute right-0 mt-2 w-56 rounded-xl border border-flux-border bg-flux-dark shadow-xl z-20 p-1.5">
                     <div className="px-3 py-2 border-b border-flux-border mb-1">
                       <p className="text-xs text-flux-muted truncate">{userEmail}</p>
                     </div>
@@ -155,7 +153,6 @@ export function Topbar({
         </div>
       </header>
 
-      {/* Drawer lateral mobile — 3 barrinhas */}
       {drawerOpen && (
         <div className="lg:hidden fixed inset-0 z-50">
           <button
