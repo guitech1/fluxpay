@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { WalletNav } from "./WalletNav";
+import { AnalysisWaiting } from "./AnalysisWaiting";
 
 export type WalletKycState = "none" | "needs_kyc" | "in_review" | "approved";
 
@@ -19,7 +20,7 @@ function isCarteiraRoot(pathname: string): boolean {
 /**
  * Shell client da carteira:
  * - none / needs_kyc → qualquer rota (exceto cadastro) vai para /dashboard/carteira/cadastro; sem submenu
- * - in_review → submenu oculto; tela "Cadastro em análise" no root; bloqueia subrotas de operação
+ * - in_review → submenu oculto; tela profissional de análise no root; bloqueia subrotas de operação
  * - approved → comportamento normal
  */
 export function CarteiraShell({
@@ -43,7 +44,6 @@ export function CarteiraShell({
       return;
     }
     if (inReview) {
-      // Bloqueia pix, cartão, extrato, comprovantes, config → root da carteira
       if (isCadastroPath(pathname) || isCarteiraRoot(pathname)) return;
       router.replace("/dashboard/carteira");
     }
@@ -67,13 +67,7 @@ export function CarteiraShell({
 
       {inReview && isCarteiraRoot(pathname) ? (
         <div className="fxb-page">
-          <div className="fxb-note fxb-note--warn" style={{ maxWidth: 480, margin: "1.5rem auto" }}>
-            <p style={{ fontWeight: 600 }}>Cadastro em análise</p>
-            <p style={{ marginTop: 8, opacity: 0.9 }}>
-              Seus dados foram enviados. Aguarde a aprovação da equipe. Pix, transferências e cartão
-              ficam bloqueados até a liberação.
-            </p>
-          </div>
+          <AnalysisWaiting />
         </div>
       ) : (
         <div className="fxb-page">{children}</div>
