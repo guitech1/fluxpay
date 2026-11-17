@@ -26,7 +26,7 @@ router.post("/", requireRole("owner", "admin"), async (req, res, next) => {
     const withdrawal = await requestWithdrawal({
       organizationId: req.dashboardAuth!.organizationId,
       environment: req.dashboardAuth!.environment,
-      userId: req.dashboardAuth!.userId,
+      requestedBy: req.dashboardAuth!.userId,
       amountCents: body.amount,
       pixKey: body.pix_key,
       pixKeyType: body.pix_key_type as PixKeyType,

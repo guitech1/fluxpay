@@ -238,7 +238,7 @@ export async function requestWithdrawal(params: {
   }
 
   let withdrawal = mapWithdrawalRow(row);
-  const requiresManual = await getRequiresManualWithdrawalApproval();
+  const requiresManual = await getRequiresManualWithdrawalApproval(params.organizationId);
 
   if (!requiresManual && withdrawal.status === "pending") {
     try {
@@ -306,9 +306,12 @@ export async function getWithdrawal(
 export async function listWithdrawals(
   organizationId: string,
   environment: Environment,
-  limit = 30
+  options: { status?: string; limit?: number } | number = 30
 ): Promise<{ data: WithdrawalRequest[]; has_more: boolean }> {
-  const { data } = await supabaseAdmin
+  const limit = typeof options === "number" ? options : (options.limit ?? 30);
+  const status = typeof options === "object" ? options.status : undefined;
+
+  let q = supabaseAdmin
     .from("withdrawal_requests")
     .select("*")
     .eq("organization_id", organizationId)
@@ -316,12 +319,16 @@ export async function listWithdrawals(
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
+  if (status) q = q.eq("status", status);
+
+  const { data } = await q;
   const rows = (data || []).map(mapWithdrawalRow);
   return { data: rows.slice(0, limit), has_more: rows.length > limit };
 }
 
 export async function listAllWithdrawals(options: {
   status?: string;
+  organizationId?: string;
   limit?: number;
 }): Promise<WithdrawalRequest[]> {
   let q = supabaseAdmin
@@ -330,6 +337,7 @@ export async function listAllWithdrawals(options: {
     .order("created_at", { ascending: false })
     .limit(options.limit ?? 50);
   if (options.status) q = q.eq("status", options.status);
+  if (options.organizationId) q = q.eq("organization_id", options.organizationId);
   const { data } = await q;
   return (data || []).map(mapWithdrawalRow);
 }

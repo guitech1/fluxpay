@@ -211,8 +211,8 @@ export async function processProviderQueue(limit = 15): Promise<{ processed: num
         pix_copy_paste: attemptResult.pix.copyPaste,
         pix_qr_code_base64: attemptResult.pix.qrCodeBase64,
         expires_at: attemptResult.pix.expiresAt || row.expires_at,
-        fee_amount: attemptResult.pix.feeAmountCents ?? feeCalc?.feeCents ?? 0,
-        net_amount: attemptResult.pix.netAmountCents ?? feeCalc?.netCents ?? null,
+        fee_amount: attemptResult.pix.feeAmountCents ?? feeCalc?.feeAmountCents ?? 0,
+        net_amount: attemptResult.pix.netAmountCents ?? feeCalc?.netAmountCents ?? null,
         provider_response: {
           recovered_from_queue: true,
           queue_state: null,
