@@ -45,13 +45,11 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
       if (params.externalId) body.external_id = params.externalId;
       if (params.webhookUrl) {
         const callbackUrl = new URL(params.webhookUrl);
-        if (opts.id === "profanuspay") {
-          callbackUrl.searchParams.set("provider", "profanuspay");
-        }
+        // Identifica a adquirente no callback genérico /v1/webhooks/provider
+        callbackUrl.searchParams.set("provider", String(opts.id));
         body.webhook_url = callbackUrl.toString();
       }
       if (params.expirationSeconds) body.expiration = params.expirationSeconds;
-      // 8s default — 2s era curto demais e abortava PIX da Profanus/Gotham
       const attemptTimeoutMs = Math.max(
         500,
         Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 8000) || 8000
