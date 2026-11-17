@@ -1,12 +1,11 @@
 /**
- * Criação de cobranças PIX com failover de adquirente e cálculo de taxa FluxPay.
+ * Criação de cobranças (extraído de payments.ts).
  */
-import { randomUUID } from "crypto";
 import { supabaseAdmin } from "../config/supabase.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middleware/error.js";
-import { calculateFee } from "./fees.js";
 import { createChargeWithFailover } from "../providers/index.js";
+import { calculateFee } from "./fees.js";
 import { buildAttemptLog } from "./attempt-log.js";
 import { dispatchWebhook } from "./webhooks.js";
 import {
@@ -17,35 +16,45 @@ import {
 import type { CreatePaymentInput, Payment, Environment } from "../types/index.js";
 import type { AcquirerId, FeeRuleSnapshot } from "../providers/types.js";
 
+function buildProviderExternalId(organizationId: string, paymentId: string): string {
+  return `${organizationId}:${paymentId}`;
+}
+
 export async function createPayment(
   organizationId: string,
   environment: Environment,
   input: CreatePaymentInput
 ): Promise<Payment> {
   const paymentType =
-    input.payment_method?.type === "pix" || !input.payment_method
-      ? "pix"
-      : (input.payment_method.type as string);
-
+    input.payment_method?.type === "card" ? "card" : "pix";
   const currency = (input.currency || "BRL").toUpperCase();
-  if (currency !== "BRL") {
-    throw new AppError(400, "invalid_request", "Apenas BRL é suportado no momento.");
-  }
 
+  if (currency !== "BRL") {
+    throw new AppError(400, "invalid_request", "Apenas BRL é suportado.");
+  }
   if (!input.amount || input.amount < 100) {
     throw new AppError(400, "invalid_request", "Valor mínimo é R$ 1,00.");
   }
 
-  const paymentId = randomUUID();
-  const providerExternalId = input.idempotency_key
-    ? `${organizationId}:${input.idempotency_key}`
-    : paymentId;
+  if (input.idempotency_key) {
+    const { data: existing } = await supabaseAdmin
+      .from("payments")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("environment", environment)
+      .eq("idempotency_key", input.idempotency_key)
+      .maybeSingle();
+    if (existing) {
+      return {
+        ...(existing as Payment),
+        client_message: clientMessageForPayment(existing as Payment),
+      } as Payment;
+    }
+  }
 
-  // Linha local antes de falar com a adquirente
   const { data: inserted, error: insertError } = await supabaseAdmin
     .from("payments")
     .insert({
-      id: paymentId,
       organization_id: organizationId,
       environment,
       amount: input.amount,
@@ -54,7 +63,6 @@ export async function createPayment(
       status: "pending",
       payment_type: paymentType,
       provider: null,
-      provider_external_id: providerExternalId,
       metadata: input.metadata || {},
       fee_amount: 0,
       net_amount: null,
@@ -64,7 +72,7 @@ export async function createPayment(
     .single();
 
   if (insertError || !inserted) {
-    if ((insertError as { code?: string } | null)?.code === "23505" && input.idempotency_key) {
+    if (insertError?.code === "23505" && input.idempotency_key) {
       const { data: existing } = await supabaseAdmin
         .from("payments")
         .select("*")
@@ -81,6 +89,14 @@ export async function createPayment(
     }
     throw insertError || new Error("Falha ao criar cobrança local");
   }
+
+  const paymentId = inserted.id as string;
+  const providerExternalId = buildProviderExternalId(organizationId, paymentId);
+
+  await supabaseAdmin
+    .from("payments")
+    .update({ provider_external_id: providerExternalId })
+    .eq("id", paymentId);
 
   const preferredProviderId = (
     environment === "test" ? "sandbox" : "nexuspag"
@@ -272,6 +288,7 @@ export async function createPayment(
     captured_at: status === "succeeded" ? nowIso : null,
     failed_at: status === "failed" ? nowIso : null,
     paid_at: status === "succeeded" ? nowIso : null,
+    provider_attempt_log: buildAttemptLog(attemptResult),
   };
 
   if (payerName) baseUpdate.payer_name = payerName;
@@ -286,7 +303,11 @@ export async function createPayment(
 
   if (updateError || !paymentData) {
     console.error("[payments] update após PIX:", updateError);
-    throw new AppError(500, "api_error", "Cobrança criada na adquirente, mas falhou ao gravar localmente.");
+    throw new AppError(
+      500,
+      "api_error",
+      "Cobrança criada na adquirente, mas falhou ao gravar localmente."
+    );
   }
 
   const payment = paymentData as Payment;
