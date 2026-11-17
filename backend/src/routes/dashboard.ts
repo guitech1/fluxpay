@@ -3,7 +3,7 @@ import { z } from "zod";
 import { sessionAuth, requireRole } from "../middleware/session-auth.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { generateApiKey } from "../utils/crypto.js";
-import { createWebhookEndpoint } from "../services/webhooks.js";
+import { createWebhookEndpoint, rotateWebhookEndpointSecret } from "../services/webhooks.js";
 import {
   createPayment,
   createRefund,
@@ -91,6 +91,23 @@ router.post("/webhooks/endpoints", requireRole("owner", "admin", "developer"), a
     next(err);
   }
 });
+
+router.post(
+  "/webhooks/endpoints/:id/rotate-secret",
+  requireRole("owner", "admin", "developer"),
+  async (req, res, next) => {
+    try {
+      const result = await rotateWebhookEndpointSecret({
+        organizationId: req.dashboardAuth!.organizationId,
+        environment: req.dashboardAuth!.environment,
+        endpointId: req.params.id,
+      });
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 router.get("/antifraud/rules", async (req, res, next) => {
   try {
@@ -193,7 +210,6 @@ router.post("/payments", requireRole("owner", "admin", "developer"), async (req,
   }
 });
 
-/** Drena a fila local de PIX quando a adquirente voltou — ANTES de /payments/:id */
 router.post(
   "/payments/process-provider-queue",
   requireRole("owner", "admin", "developer"),
