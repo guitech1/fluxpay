@@ -22,7 +22,7 @@ export function isRetryableProviderFailure(result: {
   errorMessage?: string;
   retryable?: boolean;
 }): boolean {
-  if (result.ambiguous) return false; // caso especial: já tratado como confirming
+  if (result.ambiguous) return false;
   if (result.retryable === true) return true;
   const code = (result.errorCode || "").toLowerCase();
   const msg = (result.errorMessage || "").toLowerCase();
@@ -101,9 +101,6 @@ export function buildConfirmingProviderResponse(params: {
   };
 }
 
-/**
- * Processa até `limit` cobranças enfileiradas cujo next_retry_at já passou.
- */
 export async function processProviderQueue(limit = 15): Promise<{ processed: number; recovered: number }> {
   const now = new Date().toISOString();
   const { data: rows, error } = await supabaseAdmin
@@ -211,8 +208,10 @@ export async function processProviderQueue(limit = 15): Promise<{ processed: num
         pix_copy_paste: attemptResult.pix.copyPaste,
         pix_qr_code_base64: attemptResult.pix.qrCodeBase64,
         expires_at: attemptResult.pix.expiresAt || row.expires_at,
-        fee_amount: attemptResult.pix.feeAmountCents ?? feeCalc?.feeAmountCents ?? 0,
-        net_amount: attemptResult.pix.netAmountCents ?? feeCalc?.netAmountCents ?? null,
+        // Taxa sempre pela regra FluxPay — não usa fee/net da adquirente
+        fee_amount: feeCalc?.feeAmountCents ?? 0,
+        net_amount: feeCalc?.netAmountCents ?? null,
+        fee_rule_snapshot: feeCalc?.snapshot ?? null,
         provider_response: {
           recovered_from_queue: true,
           queue_state: null,
@@ -253,7 +252,6 @@ export async function processProviderQueue(limit = 15): Promise<{ processed: num
       continue;
     }
 
-    // ainda falhou — re-enfileira
     await supabaseAdmin
       .from("payments")
       .update({
