@@ -27,7 +27,7 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
     getConfiguredCost: () => ({ percent: opts.defaultCostPercent, fixedCents: 0 }),
     async healthCheck() {
       const t0 = Date.now();
-      if (!adapter.isConfigured()) return { status: "configured" as AcquirerHealthStatus, latencyMs: 0 };
+      if (!adapter.isConfigured()) return { status: "unconfigured" as AcquirerHealthStatus, latencyMs: 0 };
       try {
         const res = await fetch(`${base()}/api/wallet`, { headers: { "x-api-key": getKey() }, signal: AbortSignal.timeout(8000) });
         const ms = Date.now() - t0;
