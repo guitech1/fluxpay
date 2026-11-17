@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   CreditCard,
   Users,
-  RefreshCcw,
   Webhook,
   Key,
   Settings,
@@ -18,6 +17,7 @@ import {
   Shield,
 } from "lucide-react";
 import { FluxMark } from "@/components/brand/FluxLogo";
+import type { Environment } from "@/lib/types";
 
 const NAV: {
   label: string;
@@ -55,7 +55,13 @@ const NAV: {
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  environment: _environment,
+  organizationName: _organizationName,
+}: {
+  environment?: Environment;
+  organizationName?: string;
+} = {}) {
   const pathname = usePathname() || "";
 
   return (
