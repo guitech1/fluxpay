@@ -27,12 +27,12 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
     getConfiguredCost: () => ({ percent: opts.defaultCostPercent, fixedCents: 0 }),
     async healthCheck() {
       const t0 = Date.now();
-      if (!adapter.isConfigured()) return { status: "unconfigured" as AcquirerHealthStatus, latencyMs: 0 };
+      if (!adapter.isConfigured()) return { status: "configured" as AcquirerHealthStatus, latencyMs: 0 };
       try {
         const res = await fetch(`${base()}/api/wallet`, { headers: { "x-api-key": getKey() }, signal: AbortSignal.timeout(8000) });
         const ms = Date.now() - t0;
         if (res.status === 401 || res.status === 403) return { status: "down" as AcquirerHealthStatus, message: "auth", latencyMs: ms };
-        return { status: res.status >= 500 ? "degraded" as AcquirerHealthStatus : "healthy" as AcquirerHealthStatus, latencyMs: ms };
+        return { status: res.status >= 500 ? ("degraded" as const) : ("healthy" as const), latencyMs: ms };
       } catch (e) {
         return { status: "down" as AcquirerHealthStatus, message: e instanceof Error ? e.message : "rede", latencyMs: Date.now() - t0 };
       }
@@ -51,9 +51,10 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
         body.webhook_url = callbackUrl.toString();
       }
       if (params.expirationSeconds) body.expiration = params.expirationSeconds;
+      // 8s default — 2s era curto demais e abortava PIX da Profanus/Gotham
       const attemptTimeoutMs = Math.max(
         500,
-        Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 2000) || 2000
+        Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 8000) || 8000
       );
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
