@@ -162,7 +162,7 @@ export default async function OverviewPage() {
         />
       </div>
 
-      <OverviewCharts series={series} />
+      <OverviewCharts data={series} />
 
       <div className="card overflow-hidden p-0">
         <div className="px-6 py-4 border-b border-flux-border flex items-center justify-between">
