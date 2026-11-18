@@ -1,23 +1,46 @@
-export type Environment = "test" | "live";
+/**
+ * Tipos das linhas do banco que o painel realmente le.
+ * Espelham as migrations 001–010 + KYC (nao sao gerados automaticamente).
+ */
 
-export type OrganizationStatus = "active" | "pending" | "disabled" | "blocked";
+export type Environment = "test" | "live";
 
 export type PaymentStatus =
   | "pending"
   | "processing"
   | "succeeded"
   | "failed"
-  | "expired"
   | "canceled"
   | "refunded"
-  | "partially_refunded";
+  | "partially_refunded"
+  | "expired";
+
+export type OrgRole = "owner" | "admin" | "developer" | "viewer";
+
+export type OrgKycStatus = "none" | "pending" | "verified" | "rejected";
 
 export interface Organization {
   id: string;
   name: string;
-  status: OrganizationStatus;
+  slug: string;
+  legal_name: string | null;
+  document: string | null;
+  email: string;
+  phone: string | null;
+  website: string | null;
+  country: string | null;
+  timezone: string | null;
+  default_currency: string | null;
+  status: string;
+  status_reason: string | null;
+  status_changed_at: string | null;
+  created_at: string;
   kyc_required?: boolean;
-  kyc_status?: string | null;
+  kyc_status?: OrgKycStatus;
+  kyc_verified_at?: string | null;
+  kyc_document_type?: string | null;
+  kyc_document_masked?: string | null;
+  kyc_rejection_reason?: string | null;
 }
 
 export interface Payment {
@@ -37,6 +60,7 @@ export interface Payment {
   expires_at: string | null;
   created_at: string;
   customers?: { id: string; name: string | null; email: string | null } | null;
+  /** Nome de quem pagou o PIX (webhook da adquirente). */
   payer_name?: string | null;
   payer_document?: string | null;
 }
@@ -63,12 +87,13 @@ export interface Refund {
 
 export interface ApiKey {
   id: string;
-  name: string;
+  name: string | null;
   prefix: string;
-  key_type: "secret" | "publishable";
+  last4: string | null;
+  key_type: string;
   environment: Environment;
-  last_used_at: string | null;
   created_at: string;
+  last_used_at: string | null;
   revoked_at: string | null;
 }
 
@@ -77,12 +102,12 @@ export interface WebhookEndpoint {
   url: string;
   description: string | null;
   events: string[];
+  secret: string | null;
   active: boolean;
-  secret_hint?: string | null;
   created_at: string;
 }
 
-export interface BalanceBucket {
+export interface BalanceRow {
   currency: string;
   available: number;
   pending: number;
