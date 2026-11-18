@@ -64,7 +64,7 @@ export default async function OverviewPage() {
   const [{ data: payments }, { data: balance }] = await Promise.all([
     supabase
       .from("payments")
-      .select("id, amount, currency, status, payment_type, created_at, customers(id, name, email)")
+      .select("id, amount, currency, status, payment_type, created_at, payer_name, payer_document, customers(id, name, email)")
       .eq("environment", environment)
       .gte("created_at", since)
       .order("created_at", { ascending: false }),
@@ -76,7 +76,7 @@ export default async function OverviewPage() {
 
   const { data: recent } = await supabase
     .from("payments")
-    .select("id, amount, currency, status, payment_type, created_at, customers(id, name, email)")
+    .select("id, amount, currency, status, payment_type, created_at, payer_name, payer_document, customers(id, name, email)")
     .eq("environment", environment)
     .order("created_at", { ascending: false })
     .limit(8);
@@ -136,7 +136,7 @@ export default async function OverviewPage() {
         <MetricCard
           label="Saldo disponível"
           value={primary ? formatCurrency(primary.available, primary.currency) : formatCurrency(0)}
-          hint={primary ? `${formatCurrency(primary.pending, primary.currency)} a liberar` : "Sem movimentações"}
+          hint={primary ? `${formatCurrency(primary.pending, primary.currency)} a liberar` : undefined}
           icon={Wallet}
         />
         <MetricCard
@@ -156,16 +156,16 @@ export default async function OverviewPage() {
         <MetricCard
           label="Taxa de aprovação"
           value={`${approvalRate}%`}
-          hint={`${failed.length} não concluídas`}
-          icon={XCircle}
-          tone={approvalRate >= 80 ? "success" : "danger"}
+          hint={failed.length ? `${failed.length} falhas/expirados` : "Sem recusas recentes"}
+          icon={failed.length ? XCircle : CreditCard}
+          tone={failed.length ? "danger" : "default"}
         />
       </div>
 
-      <OverviewCharts data={series} />
+      <OverviewCharts series={series} />
 
-      <div>
-        <div className="flex items-center justify-between mb-3">
+      <div className="card overflow-hidden p-0">
+        <div className="px-6 py-4 border-b border-flux-border flex items-center justify-between">
           <h2 className="font-medium">Últimas transações</h2>
           <Link href="/dashboard/payments" className="text-sm text-flux-red hover:underline">
             Ver todas
@@ -173,28 +173,23 @@ export default async function OverviewPage() {
         </div>
 
         {(recent || []).length === 0 ? (
-          <EmptyState
-            icon={CreditCard}
-            title="Nenhuma transação ainda"
-            description="Assim que você gerar a primeira cobrança PIX, ela aparece aqui com o status atualizado automaticamente."
-            action={
-              write ? (
-                <Link href="/dashboard/payments/new" className="btn-primary">
-                  <Plus className="w-4 h-4" />
-                  Criar cobrança
-                </Link>
-              ) : undefined
-            }
-          />
+          <div className="p-6">
+            <EmptyState
+              title="Nenhuma transação ainda"
+              description="Quando houver cobranças, elas aparecem aqui."
+            />
+          </div>
         ) : (
           <Table headers={["ID", "Cliente", "Valor", "Método", "Status", "Data"]}>
             {((recent || []) as unknown as Payment[]).map((p) => (
               <tr key={p.id} className="hover:bg-flux-gray/40">
                 <td className="px-6 py-4">
-                  <Mono>{p.id.slice(0, 8)}</Mono>
+                  <Link href={`/dashboard/payments/${p.id}`} className="hover:underline">
+                    <Mono>{p.id.slice(0, 8)}</Mono>
+                  </Link>
                 </td>
                 <td className="px-6 py-4">
-                  {p.customers?.name || p.customers?.email || (
+                  {p.payer_name || p.customers?.name || p.customers?.email || (
                     <span className="text-flux-muted">—</span>
                   )}
                 </td>
