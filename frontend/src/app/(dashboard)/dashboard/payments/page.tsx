@@ -29,7 +29,7 @@ export default async function PaymentsPage({
   let query = supabase
     .from("payments")
     .select(
-      "id, amount, currency, status, payment_type, provider, provider_txid, fee_amount, net_amount, description, created_at, paid_at, expires_at, customers(id, name, email)"
+      "id, amount, currency, status, payment_type, provider, provider_txid, fee_amount, net_amount, description, created_at, paid_at, expires_at, payer_name, payer_document, customers(id, name, email)"
     )
     .eq("environment", environment)
     .order("created_at", { ascending: false })
@@ -64,8 +64,8 @@ export default async function PaymentsPage({
                     href={f.value === "all" ? "/dashboard/payments" : `/dashboard/payments?status=${f.value}`}
                     className={
                       active
-                        ? "px-3 py-1.5 rounded-lg text-xs font-medium bg-flux-red/10 text-flux-red border border-flux-red/20"
-                        : "px-3 py-1.5 rounded-lg text-xs font-medium text-flux-muted border border-flux-border hover:text-white"
+                        ? "px-3 py-1.5 rounded-lg text-xs font-medium bg-flux-red text-white"
+                        : "px-3 py-1.5 rounded-lg text-xs font-medium text-flux-muted hover:text-white hover:bg-flux-gray"
                     }
                   >
                     {f.label}
@@ -109,7 +109,9 @@ export default async function PaymentsPage({
                 )}
               </td>
               <td className="px-6 py-4">
-                {p.customers?.name || p.customers?.email || <span className="text-flux-muted">—</span>}
+                {p.payer_name || p.customers?.name || p.customers?.email || (
+                  <span className="text-flux-muted">—</span>
+                )}
                 {p.description && (
                   <div className="text-xs text-flux-muted truncate max-w-[220px]">{p.description}</div>
                 )}
