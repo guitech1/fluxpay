@@ -28,7 +28,7 @@ export default async function PaymentDetailPage({
   const { data } = await supabase
     .from("payments")
     .select(
-      "id, amount, currency, status, payment_type, provider, provider_txid, provider_external_id, fee_amount, net_amount, description, created_at, paid_at, expires_at, pix_copy_paste, pix_qr_code_base64, metadata, customers(id, name, email)"
+      "id, amount, currency, status, payment_type, provider, provider_txid, provider_external_id, fee_amount, net_amount, description, created_at, paid_at, expires_at, pix_copy_paste, pix_qr_code_base64, metadata, payer_name, payer_document, customers(id, name, email)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -109,13 +109,20 @@ export default async function PaymentDetailPage({
                   ? formatCurrency(payment.net_amount, payment.currency)
                   : "—"}
               </DetailRow>
-              <DetailRow label="Cliente">
-                {payment.customers ? (
+              <DetailRow label="Pagador">
+                {payment.payer_name ? (
+                  <span>
+                    {payment.payer_name}
+                    {payment.payer_document ? (
+                      <span className="block text-xs text-flux-muted mt-0.5">{payment.payer_document}</span>
+                    ) : null}
+                  </span>
+                ) : payment.customers ? (
                   <Link href="/dashboard/customers" className="hover:underline">
                     {payment.customers.name || payment.customers.email}
                   </Link>
                 ) : (
-                  <span className="text-flux-muted">Não vinculado</span>
+                  <span className="text-flux-muted">Não informado</span>
                 )}
               </DetailRow>
               <DetailRow label="Sua referência" mono>
