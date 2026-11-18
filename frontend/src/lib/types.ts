@@ -85,30 +85,67 @@ export interface Refund {
   created_at: string;
 }
 
+export interface Dispute {
+  id: string;
+  payment_id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  reason: string | null;
+  evidence_due_by: string | null;
+  created_at: string;
+}
+
 export interface ApiKey {
   id: string;
-  name: string | null;
-  prefix: string;
-  last4: string | null;
-  key_type: string;
+  name: string;
+  key_type: "secret" | "publishable";
   environment: Environment;
-  created_at: string;
+  key_prefix: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  created_at: string;
 }
 
 export interface WebhookEndpoint {
   id: string;
   url: string;
-  description: string | null;
   events: string[];
-  secret: string | null;
-  active: boolean;
+  description: string | null;
+  enabled: boolean;
   created_at: string;
 }
 
-export interface BalanceRow {
-  currency: string;
-  available: number;
-  pending: number;
+export interface ApiLog {
+  id: string;
+  method: string;
+  path: string;
+  status_code: number | null;
+  duration_ms: number | null;
+  request_id: string | null;
+  ip_address: string | null;
+  created_at: string;
 }
+
+export interface Member {
+  id: string;
+  user_id: string;
+  role: OrgRole;
+  created_at: string;
+  users?: { id: string; email: string; full_name: string | null } | null;
+}
+
+/** Eventos que um endpoint de webhook pode assinar (enum webhook_event_type). */
+export const WEBHOOK_EVENTS = [
+  "payment.created",
+  "payment.pending",
+  "payment.succeeded",
+  "payment.failed",
+  "payment.refunded",
+  "payment.canceled",
+  "refund.created",
+  "refund.succeeded",
+  "refund.failed",
+  "dispute.created",
+  "dispute.updated",
+] as const;
