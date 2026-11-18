@@ -1,46 +1,23 @@
-/**
- * Tipos das linhas do banco que o painel realmente le.
- * Espelham as migrations 001–010 + KYC (nao sao gerados automaticamente).
- */
-
 export type Environment = "test" | "live";
+
+export type OrganizationStatus = "active" | "pending" | "disabled" | "blocked";
 
 export type PaymentStatus =
   | "pending"
   | "processing"
   | "succeeded"
   | "failed"
+  | "expired"
   | "canceled"
   | "refunded"
-  | "partially_refunded"
-  | "expired";
-
-export type OrgRole = "owner" | "admin" | "developer" | "viewer";
-
-export type OrgKycStatus = "none" | "pending" | "verified" | "rejected";
+  | "partially_refunded";
 
 export interface Organization {
   id: string;
   name: string;
-  slug: string;
-  legal_name: string | null;
-  document: string | null;
-  email: string;
-  phone: string | null;
-  website: string | null;
-  country: string | null;
-  timezone: string | null;
-  default_currency: string | null;
-  status: string;
-  status_reason: string | null;
-  status_changed_at: string | null;
-  created_at: string;
+  status: OrganizationStatus;
   kyc_required?: boolean;
-  kyc_status?: OrgKycStatus;
-  kyc_verified_at?: string | null;
-  kyc_document_type?: string | null;
-  kyc_document_masked?: string | null;
-  kyc_rejection_reason?: string | null;
+  kyc_status?: string | null;
 }
 
 export interface Payment {
@@ -60,6 +37,8 @@ export interface Payment {
   expires_at: string | null;
   created_at: string;
   customers?: { id: string; name: string | null; email: string | null } | null;
+  payer_name?: string | null;
+  payer_document?: string | null;
 }
 
 export interface Customer {
@@ -82,67 +61,29 @@ export interface Refund {
   created_at: string;
 }
 
-export interface Dispute {
-  id: string;
-  payment_id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  evidence_due_by: string | null;
-  created_at: string;
-}
-
 export interface ApiKey {
   id: string;
   name: string;
+  prefix: string;
   key_type: "secret" | "publishable";
   environment: Environment;
-  key_prefix: string;
   last_used_at: string | null;
-  revoked_at: string | null;
   created_at: string;
+  revoked_at: string | null;
 }
 
 export interface WebhookEndpoint {
   id: string;
   url: string;
-  events: string[];
   description: string | null;
-  enabled: boolean;
+  events: string[];
+  active: boolean;
+  secret_hint?: string | null;
   created_at: string;
 }
 
-export interface ApiLog {
-  id: string;
-  method: string;
-  path: string;
-  status_code: number | null;
-  duration_ms: number | null;
-  request_id: string | null;
-  ip_address: string | null;
-  created_at: string;
+export interface BalanceBucket {
+  currency: string;
+  available: number;
+  pending: number;
 }
-
-export interface Member {
-  id: string;
-  user_id: string;
-  role: OrgRole;
-  created_at: string;
-  users?: { id: string; email: string; full_name: string | null } | null;
-}
-
-/** Eventos que um endpoint de webhook pode assinar (enum webhook_event_type). */
-export const WEBHOOK_EVENTS = [
-  "payment.created",
-  "payment.pending",
-  "payment.succeeded",
-  "payment.failed",
-  "payment.refunded",
-  "payment.canceled",
-  "refund.created",
-  "refund.succeeded",
-  "refund.failed",
-  "dispute.created",
-  "dispute.updated",
-] as const;
