@@ -33,9 +33,11 @@ router.post("/", apiKeyAuth, requireSecretKey, async (req, res, next) => {
       .parse(req.body);
 
     const endpoint = await createWebhookEndpoint(
-      req.apiKey!.organizationId,
-      req.apiKey!.environment,
-      body
+      req.auth!.organizationId,
+      req.auth!.environment,
+      body.url,
+      body.events,
+      body.description
     );
     res.status(201).json({ data: endpoint });
   } catch (err) {
@@ -48,8 +50,8 @@ router.get("/", apiKeyAuth, requireSecretKey, async (req, res, next) => {
     const { data, error } = await supabaseAdmin
       .from("webhook_endpoints")
       .select("id, url, events, description, active, created_at")
-      .eq("organization_id", req.apiKey!.organizationId)
-      .eq("environment", req.apiKey!.environment)
+      .eq("organization_id", req.auth!.organizationId)
+      .eq("environment", req.auth!.environment)
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ data: data || [] });
