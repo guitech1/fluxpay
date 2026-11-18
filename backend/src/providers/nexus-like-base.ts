@@ -8,6 +8,56 @@ function mapStatus(s: string): PaymentStatus {
   if (s === "cancelled" || s === "canceled") return "failed";
   return "pending";
 }
+
+/** Extrai pagador de payloads Nexus-like (create, GET /api/pix/:id, webhook). */
+export function extractPayerFromNexusPayload(data: unknown): {
+  payerName: string | null;
+  payerDocument: string | null;
+} {
+  if (!data || typeof data !== "object") return { payerName: null, payerDocument: null };
+  const root = data as Record<string, unknown>;
+  const tx =
+    root.transaction && typeof root.transaction === "object"
+      ? (root.transaction as Record<string, unknown>)
+      : null;
+  const payerObj =
+    (root.payer && typeof root.payer === "object" ? (root.payer as Record<string, unknown>) : null) ||
+    (tx?.payer && typeof tx.payer === "object" ? (tx.payer as Record<string, unknown>) : null);
+  const nameRaw =
+    (typeof root.payer_name === "string" && root.payer_name) ||
+    (typeof root.payerName === "string" && root.payerName) ||
+    (typeof tx?.payer_name === "string" && tx.payer_name) ||
+    (typeof payerObj?.name === "string" && payerObj.name) ||
+    null;
+  const docRaw =
+    (typeof root.payer_document === "string" && root.payer_document) ||
+    (typeof root.payer_document_masked === "string" && root.payer_document_masked) ||
+    (typeof tx?.payer_document === "string" && tx.payer_document) ||
+    (typeof tx?.payer_document_masked === "string" && tx.payer_document_masked) ||
+    (typeof payerObj?.document === "string" && payerObj.document) ||
+    null;
+  const payerName = nameRaw ? String(nameRaw).trim() || null : null;
+  const payerDocument = docRaw ? String(docRaw).trim() || null : null;
+  return { payerName, payerDocument };
+}
+
+function pixFromNexusBody(data: Record<string, unknown>, tx?: Record<string, unknown> | null): PixDetails | undefined {
+  const src = tx || data;
+  const txid = (typeof src.txid === "string" && src.txid) || (typeof data.txid === "string" && data.txid) || "";
+  if (!txid && !src.pix_copia_cola && !data.pix_copia_cola) return undefined;
+  const { payerName, payerDocument } = extractPayerFromNexusPayload(tx ? { ...data, transaction: tx } : data);
+  return {
+    txid: txid || String(src.id || data.id || ""),
+    copyPaste: String(src.pix_copia_cola ?? data.pix_copia_cola ?? ""),
+    qrCodeBase64: String(src.qr_code_base64 ?? data.qr_code_base64 ?? ""),
+    expiresAt: String(src.expires_at ?? data.expires_at ?? ""),
+    feeAmountCents: reaisToCents(Number(src.fee ?? data.fee ?? 0)),
+    netAmountCents: reaisToCents(Number(src.net_amount ?? data.net_amount ?? 0)),
+    payerName,
+    payerDocument,
+  };
+}
+
 export interface NexusLikeOptions {
   id: AcquirerId; displayName: string; baseUrlEnv: string; defaultBaseUrl: string;
   apiKeyEnv: string; defaultCostPercent: number; minAmountCents?: number;
@@ -45,7 +95,6 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
       if (params.externalId) body.external_id = params.externalId;
       if (params.webhookUrl) {
         const callbackUrl = new URL(params.webhookUrl);
-        // Identifica a adquirente no callback genérico /v1/webhooks/provider
         callbackUrl.searchParams.set("provider", String(opts.id));
         body.webhook_url = callbackUrl.toString();
       }
@@ -77,20 +126,34 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
         e.ambiguous = false;
         throw e;
       }
-      const tx = data.transaction;
+      const tx = data.transaction as Record<string, unknown>;
       return {
-        providerPaymentId: tx.id, status: mapStatus(tx.status), rawResponse: data,
-        pix: { txid: tx.txid, copyPaste: tx.pix_copia_cola, qrCodeBase64: tx.qr_code_base64, expiresAt: tx.expires_at, feeAmountCents: reaisToCents(tx.fee), netAmountCents: reaisToCents(tx.net_amount) } satisfies PixDetails,
+        providerPaymentId: String(tx.id),
+        status: mapStatus(String(tx.status || "pending")),
+        rawResponse: data,
+        pix: pixFromNexusBody(data, tx),
       };
     },
     async getPayment(ref: string) {
-      const res = await fetch(`${base()}/api/pix/${encodeURIComponent(ref)}`, { headers: { "x-api-key": getKey() }, signal: AbortSignal.timeout(15000) });
+      // Consulta PIX na adquirente: GET /api/pix/:id_ou_txid (docs Nexus-like)
+      const res = await fetch(`${base()}/api/pix/${encodeURIComponent(ref)}`, {
+        headers: { "x-api-key": getKey() },
+        signal: AbortSignal.timeout(15000),
+      });
       if (res.status === 404) throw new Error("não encontrado");
       const data = (await res.json().catch(() => null)) as any;
       if (!res.ok || !data) throw new Error(`HTTP ${res.status}`);
+      const tx =
+        data.transaction && typeof data.transaction === "object"
+          ? (data.transaction as Record<string, unknown>)
+          : null;
+      const statusRaw = String(tx?.status ?? data.status ?? "pending");
+      const providerPaymentId = String(tx?.id ?? data.id ?? ref);
       return {
-        status: mapStatus(data.status ?? "pending"), providerPaymentId: data.id, rawResponse: data,
-        pix: data.txid ? { txid: data.txid, copyPaste: data.pix_copia_cola ?? "", qrCodeBase64: data.qr_code_base64 ?? "", expiresAt: data.expires_at ?? "", feeAmountCents: reaisToCents(data.fee ?? 0), netAmountCents: reaisToCents(data.net_amount ?? 0) } : undefined,
+        status: mapStatus(statusRaw),
+        providerPaymentId,
+        rawResponse: data,
+        pix: pixFromNexusBody(data as Record<string, unknown>, tx),
       };
     },
     async refundPayment(_params: { providerPaymentId: string; amount: number; }): Promise<{ providerRefundId: string; status: import("../types/index.js").RefundStatus; rawResponse?: unknown; }> {

@@ -14,6 +14,7 @@ import {
   getPaymentByProviderReference,
   markPixPaymentSucceeded,
 } from "../services/payments.js";
+import { backfillPayerNames } from "../services/backfill-payers.js";
 
 const router = Router();
 const reasonSchema = z.string().trim().min(10).max(500);
@@ -73,7 +74,7 @@ router.post(
 router.post(
   "/webhooks/provider-events/:id/reprocess",
   requireAdminRole("superadmin", "admin"),
-  async (req, res, next) => {
+   async (req, res, next) => {
     try {
       const body = z.object({ reason: reasonSchema }).parse(req.body);
       const { data: event, error } = await supabaseAdmin
@@ -128,6 +129,41 @@ router.post(
       });
 
       res.json({ data: { event_id: event.id, payment_id: payment.id } });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Preenche nome do pagador em PIX já pagos:
+ * - payloads de webhook em provider_events
+ * - consulta GET /api/pix/:ref na adquirente (Nexus, Gotham, Smoke, Profanus)
+ */
+router.post(
+  "/payments/backfill-payers",
+  requireAdminRole("superadmin", "admin"),
+  async (req, res, next) => {
+    try {
+      const body = z
+        .object({
+          reason: reasonSchema,
+          limit: z.number().int().min(1).max(100).optional(),
+        })
+        .parse(req.body);
+
+      const result = await backfillPayerNames(body.limit ?? 50);
+
+      await logAdminAction(req, {
+        action: "payments.backfill_payers",
+        targetType: "payments",
+        targetId: "bulk",
+        targetLabel: "payer_name backfill",
+        reason: body.reason,
+        stateAfter: result as unknown as Record<string, unknown>,
+      });
+
+      res.json({ data: result });
     } catch (err) {
       next(err);
     }
