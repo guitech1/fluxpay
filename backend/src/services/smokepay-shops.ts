@@ -47,7 +47,7 @@ async function smokeFetch(path: string, init?: RequestInit): Promise<any> {
     },
     signal: AbortSignal.timeout(20000),
   });
-  const data = await res.json().catch(() => null);
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {
     const msg =
       (data && (data.message || data.error || data.detail)) ||
