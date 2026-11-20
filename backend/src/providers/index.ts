@@ -16,7 +16,9 @@ const adapters: Record<string, AcquirerAdapter | PaymentProvider> = {
   sandbox: sandboxProvider as unknown as AcquirerAdapter,
   nexuspag: nexuspagProvider as unknown as AcquirerAdapter,
   profanuspay: profanuspayProvider,
-  gothampay: gothampayProvider, smokepay: smokepayProvider, kavropay: kavropayProvider,
+  gothampay: gothampayProvider,
+  smokepay: smokepayProvider,
+  kavropay: kavropayProvider,
 };
 
 let routingCache: { at: number; rows: RoutingRow[] } | null = null;
@@ -24,25 +26,34 @@ const ROUTING_TTL_MS = 5_000;
 const cfg0 = readFailoverEnv();
 const circuitBreaker = new CircuitBreaker(cfg0.circuitThreshold, cfg0.circuitOpenMs);
 
+/** Já tentou auto-habilitar nesta instância (evita spam de upsert). */
+const autoEnabledOnce = new Set<string>();
+
 function asA(p: PaymentProvider | AcquirerAdapter): AcquirerAdapter | null {
-  return "id" in p && typeof (p as AcquirerAdapter).isConfigured === "function" ? (p as AcquirerAdapter) : null;
+  return "id" in p && typeof (p as AcquirerAdapter).isConfigured === "function"
+    ? (p as AcquirerAdapter)
+    : null;
 }
 
 export function isLiveEnabled(): boolean {
   return Boolean(
     process.env.NEXUSPAG_API_KEY ||
-    process.env.PROFANUSPAY_API_KEY ||
-    process.env.GOTHAMPAY_API_KEY ||
-    process.env.SMOKEPAY_API_KEY ||
-    process.env.KAVROPAY_API_KEY
+      process.env.PROFANUSPAY_API_KEY ||
+      process.env.GOTHAMPAY_API_KEY ||
+      process.env.SMOKEPAY_API_KEY ||
+      process.env.KAVROPAY_API_KEY
   );
 }
 
-export function invalidateAcquirerRoutingCache(): void { routingCache = null; }
+export function invalidateAcquirerRoutingCache(): void {
+  routingCache = null;
+}
 
 async function loadRoutingRows(): Promise<RoutingRow[]> {
   if (routingCache && Date.now() - routingCache.at < ROUTING_TTL_MS) return routingCache.rows;
-  const { data, error } = await supabaseAdmin.from("acquirer_cost_config").select("acquirer_id, enabled, priority");
+  const { data, error } = await supabaseAdmin
+    .from("acquirer_cost_config")
+    .select("acquirer_id, enabled, priority");
   if (error) {
     console.error("[providers] falha ao ler acquirer_cost_config:", error.message);
     return routingCache?.rows ?? [];
@@ -57,23 +68,123 @@ function isConfiguredId(id: string): boolean {
   return Boolean(asA(adapters[id])?.isConfigured());
 }
 
+/**
+ * Self-heal: se a adquirente TEM chave no ambiente mas a linha do admin
+ * está enabled=false (seed antigo do Profanus ou toggle esquecido),
+ * força enabled=true UMA vez e invalida o cache.
+ * Assim Profanus (e qualquer outra) volta pro pool sem precisar de SQL manual.
+ */
+async function autoEnableConfiguredButDisabled(
+  excluded: Array<{ id: string; reason: string }>
+): Promise<boolean> {
+  let changed = false;
+  for (const ex of excluded) {
+    if (ex.reason !== "disabled_in_admin") continue;
+    if (!isConfiguredId(ex.id)) continue;
+    if (autoEnabledOnce.has(ex.id)) continue;
+
+    const priority = DEFAULT_PRIORITY[ex.id] ?? 100;
+    const { error } = await supabaseAdmin.from("acquirer_cost_config").upsert(
+      {
+        acquirer_id: ex.id,
+        enabled: true,
+        priority,
+        cost_percent: 5.0,
+        cost_fixed_cents: 0,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "acquirer_id" }
+    );
+
+    autoEnabledOnce.add(ex.id);
+    if (error) {
+      console.error(
+        JSON.stringify({
+          tag: "acquirer_auto_enable_failed",
+          id: ex.id,
+          message: error.message,
+        })
+      );
+      continue;
+    }
+    console.info(
+      JSON.stringify({
+        tag: "acquirer_auto_enabled",
+        id: ex.id,
+        reason: "had_credentials_but_disabled_in_admin",
+      })
+    );
+    changed = true;
+  }
+  if (changed) invalidateAcquirerRoutingCache();
+  return changed;
+}
+
 export async function resolveActiveIds(): Promise<AcquirerId[]> {
-  const rows = await loadRoutingRows();
-  const pool = parseActivePool(process.env.FLUXPAY_ACTIVE_ACQUIRERS).filter((id) => id in adapters);
-  const { ordered, excluded } = filterActiveAcquirers({ pool, rows, isConfigured: isConfiguredId, max: 0 });
-  console.info(JSON.stringify({ tag: "acquirer_routing", ordered, excluded, configRows: rows.length }));
+  let rows = await loadRoutingRows();
+  const pool = parseActivePool(process.env.FLUXPAY_ACTIVE_ACQUIRERS).filter(
+    (id) => id in adapters
+  );
+  let { ordered, excluded } = filterActiveAcquirers({
+    pool,
+    rows,
+    isConfigured: isConfiguredId,
+    max: 0,
+  });
+
+  // Self-heal: chave presente + disabled no admin → liga e recalcula
+  if (excluded.some((e) => e.reason === "disabled_in_admin" && isConfiguredId(e.id))) {
+    const healed = await autoEnableConfiguredButDisabled(excluded);
+    if (healed) {
+      rows = await loadRoutingRows();
+      const again = filterActiveAcquirers({
+        pool,
+        rows,
+        isConfigured: isConfiguredId,
+        max: 0,
+      });
+      ordered = again.ordered;
+      excluded = again.excluded;
+    }
+  }
+
+  console.info(
+    JSON.stringify({
+      tag: "acquirer_routing",
+      ordered,
+      excluded,
+      configRows: rows.length,
+      pool,
+    })
+  );
   return ordered;
 }
 
 export function getProvider(environment: Environment, preferred?: string): PaymentProvider {
   if (environment === "test") return sandboxProvider;
-  if (!isLiveEnabled()) throw new AppError(503, "provider_unavailable", "Pagamentos em produção ainda não estão disponíveis nesta conta.");
-  if (preferred && preferred !== "sandbox" && adapters[preferred]) return adapters[preferred] as PaymentProvider;
-  throw new AppError(503, "provider_unavailable", "Nenhum adquirente preferido na cobrança; use o roteador de criação.");
+  if (!isLiveEnabled()) {
+    throw new AppError(
+      503,
+      "provider_unavailable",
+      "Pagamentos em produção ainda não estão disponíveis nesta conta."
+    );
+  }
+  if (preferred && preferred !== "sandbox" && adapters[preferred]) {
+    return adapters[preferred] as PaymentProvider;
+  }
+  throw new AppError(
+    503,
+    "provider_unavailable",
+    "Nenhum adquirente preferido na cobrança; use o roteador de criação."
+  );
 }
 
-export function listProviders() { return Object.keys(adapters); }
-export function getAdapter(id: string) { return adapters[id] ? asA(adapters[id]) : null; }
+export function listProviders() {
+  return Object.keys(adapters);
+}
+export function getAdapter(id: string) {
+  return adapters[id] ? asA(adapters[id]) : null;
+}
 
 export function listAcquirerConfigs(): AcquirerConfig[] {
   const names: Record<AcquirerId, string> = {
@@ -84,23 +195,34 @@ export function listAcquirerConfigs(): AcquirerConfig[] {
     kavropay: "KavroPay",
     sandbox: "Sandbox",
   };
-  return (["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay", "sandbox"] as AcquirerId[]).map((id) => {
-    const a = asA(adapters[id]);
-    const configured = a?.isConfigured() ?? id === "sandbox";
-    const limits = a?.getLimits() ?? { minAmountCents: 100, maxAmountCents: 0 };
-    const cost = a?.getConfiguredCost() ?? { percent: 0, fixedCents: 0 };
-    return {
-      id, displayName: names[id], enabled: id === "sandbox" ? true : configured,
-      priority: DEFAULT_PRIORITY[id] ?? 100,
-      environment: id === "sandbox" ? ("test" as const) : ("live" as const),
-      costPercent: cost.percent, costFixedCents: cost.fixedCents,
-      minAmountCents: limits.minAmountCents, maxAmountCents: limits.maxAmountCents,
-      configured, healthStatus: configured ? ("unknown" as const) : ("unconfigured" as const),
-    };
-  });
+  return (["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay", "sandbox"] as AcquirerId[]).map(
+    (id) => {
+      const a = asA(adapters[id]);
+      const configured = a?.isConfigured() ?? id === "sandbox";
+      const limits = a?.getLimits() ?? { minAmountCents: 100, maxAmountCents: 0 };
+      const cost = a?.getConfiguredCost() ?? { percent: 0, fixedCents: 0 };
+      return {
+        id,
+        displayName: names[id],
+        enabled: id === "sandbox" ? true : configured,
+        priority: DEFAULT_PRIORITY[id] ?? 100,
+        environment: id === "sandbox" ? ("test" as const) : ("live" as const),
+        costPercent: cost.percent,
+        costFixedCents: cost.fixedCents,
+        minAmountCents: limits.minAmountCents,
+        maxAmountCents: limits.maxAmountCents,
+        configured,
+        healthStatus: configured ? ("unknown" as const) : ("unconfigured" as const),
+      };
+    }
+  );
 }
 
-export async function selectProviderForCharge(ctx: CreateChargeContext, environment: Environment, orderedIds?: AcquirerId[]) {
+export async function selectProviderForCharge(
+  ctx: CreateChargeContext,
+  environment: Environment,
+  orderedIds?: AcquirerId[]
+) {
   if (environment === "test") return sandboxProvider;
   const ids = orderedIds ?? (await resolveActiveIds());
   const eligible = ids
@@ -131,5 +253,12 @@ export async function createChargeWithFailover(ctx: CreateChargeContext, environ
 }
 
 export type { AttemptLogEntry } from "./failover-engine.js";
-export { sandboxProvider, nexuspagProvider, gothampayProvider, smokepayProvider, kavropayProvider, profanuspayProvider };
+export {
+  sandboxProvider,
+  nexuspagProvider,
+  gothampayProvider,
+  smokepayProvider,
+  kavropayProvider,
+  profanuspayProvider,
+};
 export type { AcquirerId, AcquirerConfig, ChargeAttemptResult, CreateChargeContext };
