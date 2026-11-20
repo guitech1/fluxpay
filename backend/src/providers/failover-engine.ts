@@ -4,6 +4,7 @@ import {
   CircuitBreaker, attemptTimeoutMs, classifyProviderError, computeMaxAttempts,
   readFailoverEnv, remainingBudgetMs,
 } from "./failover-policy.js";
+import { ensureDefaultShopForOrg } from "../services/smokepay-shops.js";
 
 export type AttemptLogEntry = {
   providerId: string; attempt: number;
@@ -49,7 +50,7 @@ export function makeFailoverEngine(deps: {
         };
       }
 
-      // Subcontas SmokePay: só smokepay, sem failover para Nexus/Gotham/Profanus/Kavro.
+      // Subcontas explícitas: só smokepay, sem failover para Nexus/Gotham/Profanus/Kavro.
       const ordered: AcquirerId[] =
         ctx.forceProviderIds && ctx.forceProviderIds.length > 0
           ? [...ctx.forceProviderIds]
@@ -108,7 +109,33 @@ export function makeFailoverEngine(deps: {
         const a = deps.asA(provider);
         const pid = (a?.id ?? (provider as PaymentProvider).name) as AcquirerId;
         attempted.push(pid);
-        console.info(JSON.stringify({ tag: "acquirer_attempt_started", paymentExternalId: ctx.externalId ?? null, providerId: pid, attempt: i, timeoutMs: sliceMs, ordered, shopId: ctx.shopId ?? null }));
+
+        // SmokePay = SEMPRE subconta. Demais adquirentes ignoram shop_id.
+        let shopIdForAttempt = ctx.shopId;
+        if (pid === "smokepay" && !shopIdForAttempt) {
+          try {
+            shopIdForAttempt = await ensureDefaultShopForOrg(ctx.organizationId, environment);
+            console.info(JSON.stringify({
+              tag: "smokepay_default_shop",
+              paymentExternalId: ctx.externalId ?? null,
+              organizationId: ctx.organizationId,
+              shopId: shopIdForAttempt,
+            }));
+          } catch (err) {
+            console.error("[failover] ensureDefaultShopForOrg:", err instanceof Error ? err.message : err);
+            // Segue sem shop se falhar o mapeamento — melhor tentar do que bloquear o PIX.
+          }
+        }
+
+        console.info(JSON.stringify({
+          tag: "acquirer_attempt_started",
+          paymentExternalId: ctx.externalId ?? null,
+          providerId: pid,
+          attempt: i,
+          timeoutMs: sliceMs,
+          ordered,
+          shopId: shopIdForAttempt ?? null,
+        }));
 
         const prevTimeout = process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS;
         process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS = String(sliceMs);
@@ -122,7 +149,7 @@ export function makeFailoverEngine(deps: {
             webhookUrl: ctx.webhookUrl,
             expirationSeconds: ctx.expirationSeconds,
             metadata: ctx.metadata,
-            shopId: ctx.shopId,
+            shopId: shopIdForAttempt,
             platformFeePercent: ctx.platformFeePercent,
             splits: ctx.splits,
           });
@@ -131,7 +158,7 @@ export function makeFailoverEngine(deps: {
           circuitBreaker.recordSuccess(pid);
           const latencyMs = Date.now() - t0;
           attemptLog.push({ providerId: pid, attempt: i, outcome: "success", latencyMs });
-          console.info(JSON.stringify({ tag: "acquirer_attempt_succeeded", paymentExternalId: ctx.externalId ?? null, providerId: pid, attempt: i, latencyMs }));
+          console.info(JSON.stringify({ tag: "acquirer_attempt_succeeded", paymentExternalId: ctx.externalId ?? null, providerId: pid, attempt: i, latencyMs, shopId: shopIdForAttempt ?? null }));
           console.info(JSON.stringify({ tag: "acquirer_failover_completed", paymentExternalId: ctx.externalId ?? null, finalProviderId: pid, success: true, attempts: attemptLog.length, totalMs: Date.now() - startedAt }));
           return {
             providerId: pid, success: true, providerPaymentId: r.providerPaymentId, status: r.status,

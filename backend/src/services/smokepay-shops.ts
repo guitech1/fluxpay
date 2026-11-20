@@ -1,8 +1,13 @@
 /**
  * Subcontas EXCLUSIVAS da SmokePay.
- * Nexus / Gotham / Profanus não usam este módulo.
+ * Nexus / Gotham / Profanus / Kavro NÃO usam este módulo.
  *
- * Doc: GET/POST /api/shops, saldo, saque, PIX com shop_id.
+ * Regra de produto:
+ * - PIX na Smoke → sempre com shop_id (subconta da org).
+ * - Outras adquirentes → carteira principal FluxPay (sem shop).
+ *
+ * Doc Smoke: GET /api/shops, GET /api/shops/{id}, saldo, saque,
+ * PIX create com shop_id.
  */
 import { supabaseAdmin } from "../config/supabase.js";
 import { AppError } from "../middleware/error.js";
@@ -69,7 +74,13 @@ export type SmokeSubaccountRow = {
   created_at: string;
 };
 
-/** Lista subcontas locais da org + tenta enriquecer com saldo na Smoke. */
+function defaultExternalRef(organizationId: string): string {
+  // Estável por org — mesma subconta em todos os PIX da org na Smoke.
+  const short = organizationId.replace(/-/g, "").slice(0, 12);
+  return `flux_org_${short}`;
+}
+
+/** Lista subcontas locais da org. */
 export async function listLocalSubaccounts(
   organizationId: string,
   environment: Environment
@@ -85,10 +96,111 @@ export async function listLocalSubaccounts(
 }
 
 /**
- * Cria/vincula subconta:
+ * Garante a subconta padrão da organização na Smoke.
+ * Usada em TODO PIX que for processado pela SmokePay (failover ou explícito).
+ * Retorna o shop_id / external_ref a enviar no body do /api/pix/create.
+ */
+export async function ensureDefaultShopForOrg(
+  organizationId: string,
+  environment: Environment
+): Promise<string> {
+  assertSmokeConfigured();
+
+  const external_ref = defaultExternalRef(organizationId);
+
+  // Já existe mapeamento local?
+  const { data: existing } = await supabaseAdmin
+    .from("smoke_subaccounts")
+    .select("provider_shop_id, external_ref, name, metadata")
+    .eq("organization_id", organizationId)
+    .eq("environment", environment)
+    .eq("external_ref", external_ref)
+    .maybeSingle();
+
+  if (existing?.provider_shop_id) return String(existing.provider_shop_id);
+  if (existing?.external_ref) {
+    // Já mapeado; shop pode ser criado no primeiro PIX com esse id.
+    return String(existing.external_ref);
+  }
+
+  // Nome amigável a partir da org
+  let name = "FluxPay";
+  try {
+    const { data: org } = await supabaseAdmin
+      .from("organizations")
+      .select("name, slug")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (org?.name) name = String(org.name).slice(0, 80);
+    else if (org?.slug) name = String(org.slug).slice(0, 80);
+  } catch {
+    /* ignore */
+  }
+
+  let provider_shop_id: string | null = null;
+  let remote: unknown = null;
+
+  // Tenta POST /api/shops (se a Smoke expuser); senão usa external_ref.
+  try {
+    const created = await smokeFetch("/api/shops", {
+      method: "POST",
+      body: JSON.stringify({ name, external_ref }),
+    });
+    remote = created;
+    provider_shop_id =
+      (created as any)?.id ||
+      (created as any)?.shop?.id ||
+      (created as any)?.data?.id ||
+      external_ref;
+  } catch {
+    try {
+      const detail = await smokeFetch(`/api/shops/${encodeURIComponent(external_ref)}`);
+      remote = detail;
+      provider_shop_id =
+        (detail as any)?.id ||
+        (detail as any)?.shop?.id ||
+        (detail as any)?.data?.id ||
+        external_ref;
+    } catch {
+      // Smoke cria shop no primeiro PIX com shop_id = external_ref.
+      provider_shop_id = external_ref;
+    }
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("smoke_subaccounts")
+    .upsert(
+      {
+        organization_id: organizationId,
+        environment,
+        name,
+        external_ref,
+        provider_shop_id,
+        status: "active",
+        metadata: {
+          is_default: true,
+          ...(remote ? { remote } : {}),
+        },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "organization_id,environment,external_ref" }
+    )
+    .select("provider_shop_id, external_ref")
+    .single();
+
+  if (error) {
+    console.error("[smokepay-shops] ensureDefaultShopForOrg upsert:", error.message);
+    return provider_shop_id || external_ref;
+  }
+
+  return String(data?.provider_shop_id || data?.external_ref || external_ref);
+}
+
+/**
+ * Cria/vincula subconta explícita (dashboard):
  * 1) grava local
- * 2) tenta POST /api/shops na Smoke (se a API aceitar)
- * 3) senão usa external_ref como shop_id (GET /api/shops/{external_ref})
+ * 2) tenta POST /api/shops na Smoke
+ * 3) senão usa external_ref como shop_id
  */
 export async function createOrLinkSubaccount(params: {
   organizationId: string;
@@ -106,7 +218,6 @@ export async function createOrLinkSubaccount(params: {
   let provider_shop_id: string | null = null;
   let remote: unknown = null;
 
-  // Tentativa de criação na Smoke
   try {
     const created = await smokeFetch("/api/shops", {
       method: "POST",
@@ -114,17 +225,19 @@ export async function createOrLinkSubaccount(params: {
     });
     remote = created;
     provider_shop_id =
-      created?.id ||
-      created?.shop?.id ||
-      created?.data?.id ||
+      (created as any)?.id ||
+      (created as any)?.shop?.id ||
+      (created as any)?.data?.id ||
       external_ref;
   } catch {
-    // API pode não expor POST — usa external_ref e valida com GET
     try {
       const detail = await smokeFetch(`/api/shops/${encodeURIComponent(external_ref)}`);
       remote = detail;
       provider_shop_id =
-        detail?.id || detail?.shop?.id || detail?.data?.id || external_ref;
+        (detail as any)?.id ||
+        (detail as any)?.shop?.id ||
+        (detail as any)?.data?.id ||
+        external_ref;
     } catch {
       provider_shop_id = external_ref;
     }
@@ -192,7 +305,9 @@ export async function resolveShopIdForOrg(
     .select("provider_shop_id, external_ref")
     .eq("organization_id", organizationId)
     .eq("environment", environment)
-    .or(`id.eq.${externalRefOrId},external_ref.eq.${externalRefOrId},provider_shop_id.eq.${externalRefOrId}`)
+    .or(
+      `id.eq.${externalRefOrId},external_ref.eq.${externalRefOrId},provider_shop_id.eq.${externalRefOrId}`
+    )
     .maybeSingle();
 
   if (data?.provider_shop_id) return data.provider_shop_id;
