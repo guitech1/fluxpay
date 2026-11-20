@@ -11,13 +11,7 @@ import type { Environment } from "../types/index.js";
 import { assertWithdrawalsAllowed } from "./payout-controls.js";
 import { getRequiresManualWithdrawalApproval } from "./withdrawal-approval.js";
 import { withdrawFromSubaccount } from "./smokepay-shops.js";
-import {
-  getWithdrawal,
-  mapWithdrawalRowForSmoke,
-  publicWithdrawalView,
-  type PixKeyType,
-  type WithdrawalRequest,
-} from "./withdrawals.js";
+import type { PixKeyType, WithdrawalRequest } from "./withdrawals.js";
 
 function assertPixKey(type: PixKeyType, key: string): void {
   const t = (key || "").trim();
@@ -52,6 +46,20 @@ export function smokeShopIdFromWithdrawal(w: {
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
+function mapRow(row: any): WithdrawalRequest {
+  return {
+    ...row,
+    fee: Number(row.fee ?? row.fee_amount ?? 0),
+    net: Number(row.net ?? row.net_amount ?? 0),
+    approved_by: row.approved_by ?? row.reviewed_by ?? null,
+    approved_at: row.approved_at ?? row.reviewed_at ?? null,
+    provider_reference: row.provider_reference ?? row.provider_withdrawal_id ?? null,
+    provider_response: row.provider_response ?? null,
+    metadata: row.metadata ?? null,
+    provider: row.provider ?? null,
+  } as WithdrawalRequest;
+}
+
 export async function requestSmokeSubaccountWithdrawal(params: {
   organizationId: string;
   environment: Environment;
@@ -76,7 +84,6 @@ export async function requestSmokeSubaccountWithdrawal(params: {
     throw new AppError(400, "validation_error", "Informe um valor valido.");
   }
 
-  // Guarda em centavos no pedido (padrão da tabela).
   const amountCents = Math.round(amountReais * 100);
   if (amountCents < 100) {
     throw new AppError(400, "validation_error", "Valor minimo: R$ 1,00.");
@@ -97,7 +104,6 @@ export async function requestSmokeSubaccountWithdrawal(params: {
     return { mode: "executed", smoke };
   }
 
-  // Pedido pending — NÃO debita ledger FluxPay (saldo está na Smoke).
   const correlationId = randomUUID();
   const payload = {
     source: "smoke_subaccount",
@@ -135,7 +141,7 @@ export async function requestSmokeSubaccountWithdrawal(params: {
 
   return {
     mode: "pending_approval",
-    withdrawal: mapWithdrawalRowForSmoke(data),
+    withdrawal: mapRow(data),
   };
 }
 
@@ -150,10 +156,9 @@ export async function executeSmokeSubaccountWithdrawal(
     throw new AppError(500, "api_error", "Pedido de subconta sem shop_id.");
   }
 
+  const pr = (w.provider_response || {}) as Record<string, unknown>;
   const amountReais =
-    typeof (w as any).provider_response?.amount_reais === "number"
-      ? Number((w as any).provider_response.amount_reais)
-      : w.net / 100;
+    typeof pr.amount_reais === "number" ? Number(pr.amount_reais) : w.net / 100;
 
   const smoke = await withdrawFromSubaccount({
     shopId,
@@ -189,7 +194,5 @@ export async function executeSmokeSubaccountWithdrawal(
     );
   }
 
-  return mapWithdrawalRowForSmoke(updated);
+  return mapRow(updated);
 }
-
-export { publicWithdrawalView, getWithdrawal };
