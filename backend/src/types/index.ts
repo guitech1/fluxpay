@@ -8,7 +8,7 @@ export type PaymentStatus =
   | "canceled"
   | "refunded"
   | "partially_refunded"
-  | "expired"; // adicionado na migration 005 (cobranças PIX que vencem sem pagamento)
+  | "expired";
 
 export type RefundStatus = "pending" | "succeeded" | "failed" | "canceled";
 
@@ -20,9 +20,7 @@ export interface Organization {
   status: string;
   default_currency: string;
   created_at: string;
-  /** external_ref da subconta Nexus (quando Subcontas estiver ativo) */
   nexus_shop_id?: string | null;
-  /** taxa da plataforma em % sobre o líquido (split parent) */
   platform_fee_percent?: number | null;
 }
 
@@ -66,7 +64,6 @@ export interface Payment {
   fee_amount: number;
   net_amount?: number | null;
   metadata?: Record<string, unknown>;
-  // Campos PIX (migration 006) — nulos para pagamentos por cartao
   payment_type?: "card" | "pix" | "boleto" | "spei" | "transfer" | "wallet";
   provider_txid?: string | null;
   provider_external_id?: string | null;
@@ -75,9 +72,7 @@ export interface Payment {
   expires_at?: string | null;
   paid_at?: string | null;
   expired_at?: string | null;
-  /** Nome de quem pagou o PIX (vindo da consulta/webhook Nexus) */
   payer_name?: string | null;
-  /** CPF/CNPJ mascarado do pagador */
   payer_document?: string | null;
   created_at: string;
   updated_at: string;
@@ -94,8 +89,15 @@ export interface CreatePaymentInput {
     token?: string;
   };
   idempotency_key?: string;
-  /** Validade da cobranca PIX em segundos. Padrao: 3600 (1 hora). */
   expires_in_seconds?: number;
+  /** Subconta SmokePay (shop_id / external_ref). Força provider smokepay. */
+  shop_id?: string;
+  /** % da plataforma no split parent (opcional). */
+  platform_fee_percent?: number;
+  splits?: Array<
+    | { parent: true; amount?: number; percent?: number }
+    | { shop_id: string; amount?: number; percent?: number }
+  >;
 }
 
 export interface CreateCustomerInput {
@@ -135,7 +137,6 @@ export interface AuthenticatedRequest {
   apiKeyType: "secret" | "publishable";
 }
 
-/** Dados de uma cobranca PIX retornados por um provider (opcional — só quem suporta PIX preenche). */
 export interface PixDetails {
   txid: string;
   copyPaste: string;
@@ -143,14 +144,11 @@ export interface PixDetails {
   expiresAt: string;
   feeAmountCents: number;
   netAmountCents: number;
-  /** Nome do pagador (após confirmação do PIX) */
   payerName?: string | null;
-  /** Documento mascarado do pagador */
   payerDocument?: string | null;
   paidAt?: string | null;
 }
 
-// Provider abstraction – never store full card data
 export interface PaymentProvider {
   name: string;
   createPayment(params: {
@@ -158,17 +156,12 @@ export interface PaymentProvider {
     currency: string;
     paymentMethodToken?: string;
     metadata?: Record<string, unknown>;
-    // Campos opcionais usados por providers de PIX (ex.: NexusPag). Providers
-    // de cartao simplesmente os ignoram.
     description?: string;
     externalId?: string;
     webhookUrl?: string;
     expirationSeconds?: number;
-    /** Subconta Nexus (external_ref). Opcional. */
     shopId?: string;
-    /** Percentual da plataforma (split parent). Opcional. */
     platformFeePercent?: number;
-    /** Regras de split explícitas (avançado). Opcional. */
     splits?: Array<
       | { parent: true; amount?: number; percent?: number }
       | { shop_id: string; amount?: number; percent?: number }
@@ -187,24 +180,10 @@ export interface PaymentProvider {
     status: RefundStatus;
     rawResponse?: unknown;
   }>;
-  /**
-   * Consulta uma cobranca no adquirente.
-   *
-   * `reference` aceita o id do provider, o txid OU o external_id — a doc da
-   * NexusPag diz explicitamente que GET /api/pix/{id} aceita os tres. E o que
-   * permite a reconciliacao automatica encontrar uma cobranca cujo txid nunca
-   * chegou a ser gravado localmente.
-   *
-   * `pix` e `providerPaymentId` sao opcionais: providers que nao fazem PIX
-   * simplesmente nao os preenchem.
-   */
   getPayment(reference: string): Promise<{
     status: PaymentStatus;
     providerPaymentId?: string;
     rawResponse?: unknown;
     pix?: PixDetails;
   }>;
-  // Verificacao de assinatura de webhook NAO fica no provider: o formato
-  // t=<unix>,v1=<hmac_hex> e o mesmo do FluxPay, entao as rotas usam
-  // verifyWebhookSignature de utils/crypto.js diretamente.
 }
