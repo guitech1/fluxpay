@@ -99,6 +99,20 @@ export function createNexusLikeProvider(opts: NexusLikeOptions): AcquirerAdapter
         body.webhook_url = callbackUrl.toString();
       }
       if (params.expirationSeconds) body.expiration = params.expirationSeconds;
+
+      // Subcontas SmokePay (e shops Nexus-like): shop_id / external_ref
+      // Só envia se o provider for o que recebe o shop (tipicamente smokepay).
+      // Outros adquirentes ignoram no lado deles; nós só forçamos smokepay no roteador.
+      if (params.shopId) {
+        body.shop_id = params.shopId;
+      }
+      if (typeof params.platformFeePercent === "number" && params.platformFeePercent > 0) {
+        body.platform_fee_percent = params.platformFeePercent;
+      }
+      if (params.splits && Array.isArray(params.splits) && params.splits.length > 0) {
+        body.splits = params.splits;
+      }
+
       const attemptTimeoutMs = Math.max(
         500,
         Number(process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS || 8000) || 8000

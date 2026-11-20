@@ -11,10 +11,16 @@ export interface CreateChargeContext {
   organizationId: string; amountCents: number; currency: string; description?: string;
   externalId: string; webhookUrl?: string; expirationSeconds?: number;
   metadata?: Record<string, unknown>; attempt: number; attemptedProviders: AcquirerId[];
-  /** external_ref da subconta Nexus do lojista (quando Subcontas estiver ativo) */
+  /** external_ref / shop_id da subconta SmokePay (quando Subcontas ativo) */
   shopId?: string;
   /** % da plataforma no split (parent). Ex: 5 = 5% */
   platformFeePercent?: number;
+  splits?: Array<
+    | { parent: true; amount?: number; percent?: number }
+    | { shop_id: string; amount?: number; percent?: number }
+  >;
+  /** Quando setado (ex.: subconta Smoke), o failover usa só estes ids — sem Nexus/Gotham etc. */
+  forceProviderIds?: AcquirerId[];
 }
 export interface ChargeAttemptResult {
   providerId: AcquirerId; success: boolean; providerPaymentId?: string; status?: PaymentStatus;

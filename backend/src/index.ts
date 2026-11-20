@@ -36,6 +36,7 @@ import digitalAccountDashboardRouter from "./routes/digital-account-dashboard.js
 import nexusCardDashboardRouter from "./routes/nexus-card-dashboard.js";
 import adminWithdrawalApprovalRouter from "./routes/admin-withdrawal-approval.js";
 import cpfLookupDashboardRouter from "./routes/cpf-lookup-dashboard.js";
+import smokeSubaccountsDashboardRouter from "./routes/smoke-subaccounts-dashboard.js";
 
 const app = express();
 
@@ -121,7 +122,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "fluxpay-api",
-    version: "0.6.2-digital-bank",
+    version: "0.6.3-smoke-subaccounts",
     stores: {
       financial: "supabase",
       ranking_participants: label,
@@ -161,6 +162,8 @@ app.use("/dashboard-api", paymentLinksDashboardRouter);
 app.use("/dashboard-api", scoreDashboardRouter);
 app.use("/dashboard-api", profileDashboardRouter);
 app.use("/dashboard-api/push", pushDashboardRouter);
+/** Subcontas exclusivas SmokePay */
+app.use("/dashboard-api", smokeSubaccountsDashboardRouter);
 
 app.use("/admin-api", adminRouter);
 app.use("/admin-api", adminBalanceReleaseRouter);

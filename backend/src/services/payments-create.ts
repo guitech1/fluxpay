@@ -36,6 +36,16 @@ export async function createPayment(
     throw new AppError(400, "invalid_request", "Valor mínimo é R$ 1,00.");
   }
 
+  // Subcontas: só SmokePay. shop_id força provider exclusivo.
+  const shopId = (input.shop_id || "").trim() || undefined;
+  if (shopId && environment === "live" && !process.env.SMOKEPAY_API_KEY) {
+    throw new AppError(
+      503,
+      "provider_unavailable",
+      "Subcontas operam somente na SmokePay. Configure SMOKEPAY_API_KEY."
+    );
+  }
+
   if (input.idempotency_key) {
     const { data: existing } = await supabaseAdmin
       .from("payments")
@@ -52,6 +62,11 @@ export async function createPayment(
     }
   }
 
+  const metadata = {
+    ...(input.metadata || {}),
+    ...(shopId ? { shop_id: shopId, subaccount_provider: "smokepay" } : {}),
+  };
+
   const { data: inserted, error: insertError } = await supabaseAdmin
     .from("payments")
     .insert({
@@ -63,7 +78,7 @@ export async function createPayment(
       status: "pending",
       payment_type: paymentType,
       provider: null,
-      metadata: input.metadata || {},
+      metadata,
       fee_amount: 0,
       net_amount: null,
       idempotency_key: input.idempotency_key || null,
@@ -98,8 +113,9 @@ export async function createPayment(
     .update({ provider_external_id: providerExternalId })
     .eq("id", paymentId);
 
+  // Preferência de taxa: subconta → smokepay; senão nexuspag (histórico).
   const preferredProviderId = (
-    environment === "test" ? "sandbox" : "nexuspag"
+    environment === "test" ? "sandbox" : shopId ? "smokepay" : "nexuspag"
   ) as AcquirerId;
 
   let feeCalc = await calculateFee({
@@ -121,9 +137,14 @@ export async function createPayment(
         externalId: providerExternalId,
         webhookUrl,
         expirationSeconds: paymentType === "pix" ? input.expires_in_seconds || 3600 : undefined,
-        metadata: input.metadata,
+        metadata,
         attempt: 0,
         attemptedProviders: [],
+        shopId,
+        platformFeePercent: input.platform_fee_percent,
+        splits: input.splits,
+        // Subconta = só SmokePay (sem failover para outras adquirentes)
+        forceProviderIds: shopId ? (["smokepay"] as AcquirerId[]) : undefined,
       },
       environment
     );
@@ -132,6 +153,7 @@ export async function createPayment(
       environment,
       organizationId,
       paymentId,
+      shopId: shopId ?? null,
       error: err instanceof Error ? err.message : err,
     });
     const queuedPatch = {

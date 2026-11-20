@@ -34,6 +34,7 @@ export function makeFailoverEngine(deps: {
           amount: ctx.amountCents, currency: ctx.currency, description: ctx.description,
           externalId: ctx.externalId, webhookUrl: ctx.webhookUrl,
           expirationSeconds: ctx.expirationSeconds, metadata: ctx.metadata,
+          shopId: ctx.shopId, platformFeePercent: ctx.platformFeePercent, splits: ctx.splits,
         });
         const latencyMs = Date.now() - t0;
         attemptLog.push({ providerId: "sandbox", attempt: 0, outcome: "success", latencyMs });
@@ -48,12 +49,35 @@ export function makeFailoverEngine(deps: {
         };
       }
 
-      const ordered = await deps.resolveActiveIds();
+      // Subcontas SmokePay: só smokepay, sem failover para Nexus/Gotham/Profanus/Kavro.
+      const ordered: AcquirerId[] =
+        ctx.forceProviderIds && ctx.forceProviderIds.length > 0
+          ? [...ctx.forceProviderIds]
+          : await deps.resolveActiveIds();
+
       const maxAttempts = computeMaxAttempts({ orderedLength: ordered.length, envMax: cfg.maxAttempts });
-      console.info(JSON.stringify({ tag: "acquirer_failover_start", paymentExternalId: ctx.externalId ?? null, ordered, maxAttempts, totalBudgetMs: cfg.totalBudgetMs, perAttemptTimeoutMs: cfg.perAttemptTimeoutMs }));
+      console.info(JSON.stringify({
+        tag: "acquirer_failover_start",
+        paymentExternalId: ctx.externalId ?? null,
+        ordered,
+        forceProviderIds: ctx.forceProviderIds ?? null,
+        shopId: ctx.shopId ?? null,
+        maxAttempts,
+        totalBudgetMs: cfg.totalBudgetMs,
+        perAttemptTimeoutMs: cfg.perAttemptTimeoutMs,
+      }));
 
       if (!ordered.length || maxAttempts === 0) {
-        return { providerId: "sandbox", success: false, errorCode: "provider_unavailable", errorMessage: "Nenhum adquirente ativo no admin com chave configurada (sem fallback).", latencyMs: 0, attemptLog };
+        return {
+          providerId: "sandbox",
+          success: false,
+          errorCode: "provider_unavailable",
+          errorMessage: ctx.forceProviderIds?.length
+            ? "Subconta exige SmokePay configurada e ativa."
+            : "Nenhum adquirente ativo no admin com chave configurada (sem fallback).",
+          latencyMs: 0,
+          attemptLog,
+        };
       }
 
       const attempted: AcquirerId[] = [...ctx.attemptedProviders];
@@ -84,7 +108,7 @@ export function makeFailoverEngine(deps: {
         const a = deps.asA(provider);
         const pid = (a?.id ?? (provider as PaymentProvider).name) as AcquirerId;
         attempted.push(pid);
-        console.info(JSON.stringify({ tag: "acquirer_attempt_started", paymentExternalId: ctx.externalId ?? null, providerId: pid, attempt: i, timeoutMs: sliceMs, ordered }));
+        console.info(JSON.stringify({ tag: "acquirer_attempt_started", paymentExternalId: ctx.externalId ?? null, providerId: pid, attempt: i, timeoutMs: sliceMs, ordered, shopId: ctx.shopId ?? null }));
 
         const prevTimeout = process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS;
         process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS = String(sliceMs);
@@ -98,6 +122,9 @@ export function makeFailoverEngine(deps: {
             webhookUrl: ctx.webhookUrl,
             expirationSeconds: ctx.expirationSeconds,
             metadata: ctx.metadata,
+            shopId: ctx.shopId,
+            platformFeePercent: ctx.platformFeePercent,
+            splits: ctx.splits,
           });
           if (prevTimeout === undefined) delete process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS;
           else process.env.FLUXPAY_ACQUIRER_ATTEMPT_TIMEOUT_MS = prevTimeout;
