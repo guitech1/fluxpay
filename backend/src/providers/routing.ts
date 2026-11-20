@@ -19,9 +19,9 @@ export const DEFAULT_PRIORITY: Record<string, number> = {
  * Regra única de elegibilidade live:
  * - pool = FLUXPAY_ACTIVE_ACQUIRERS (ou default)
  * - precisa isConfigured (chave presente)
- * - se existir QUALQUER linha em acquirer_cost_config, só entram enabled=true
+ * - se existir linha enabled=false no admin → fora
+ * - se NÃO existir linha no admin mas tem chave → entra (não some do pool)
  * - ordenação por priority do admin (menor primeiro)
- * - max: se omitido ou <=0, percorre TODAS as elegíveis (sem teto de 3)
  */
 export function filterActiveAcquirers(params: {
   pool: string[];
@@ -32,7 +32,6 @@ export function filterActiveAcquirers(params: {
   const byId = new Map(
     params.rows.map((r) => [String(r.acquirer_id).toLowerCase(), r])
   );
-  const hasAnyConfig = byId.size > 0;
   const excluded: Array<{ id: string; reason: string }> = [];
   const eligible: string[] = [];
 
@@ -47,15 +46,11 @@ export function filterActiveAcquirers(params: {
       continue;
     }
     const row = byId.get(id);
-    if (hasAnyConfig) {
-      if (!row) {
-        excluded.push({ id, reason: "no_admin_row" });
-        continue;
-      }
-      if (row.enabled !== true) {
-        excluded.push({ id, reason: "disabled_in_admin" });
-        continue;
-      }
+    // Só fica fora se o admin DESLIGOU explicitamente.
+    // Sem linha no admin + com chave = entra no pool.
+    if (row && row.enabled !== true) {
+      excluded.push({ id, reason: "disabled_in_admin" });
+      continue;
     }
     eligible.push(id);
   }
@@ -82,6 +77,5 @@ export function parseActivePool(envValue: string | undefined): string[] {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
   }
-  // Pool completo: admin (acquirer_cost_config.enabled) decide quem entra de fato.
   return ["nexuspag", "profanuspay", "gothampay", "smokepay", "kavropay"];
 }
