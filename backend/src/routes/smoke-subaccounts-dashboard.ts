@@ -11,10 +11,11 @@ import {
   getSubaccountBalance,
   getSubaccountDetail,
   listSubaccountTransactions,
-  withdrawFromSubaccount,
   resolveShopIdForOrg,
   SMOKE_SUBACCOUNTS_PROVIDER,
 } from "../services/smokepay-shops.js";
+import { requestSmokeSubaccountWithdrawal } from "../services/smoke-subaccount-withdrawals.js";
+import { publicWithdrawalView } from "../services/withdrawals.js";
 import { createPayment } from "../services/payments.js";
 
 const router = Router();
@@ -121,13 +122,33 @@ router.post(
         req.params.id
       );
 
-      const data = await withdrawFromSubaccount({
+      const result = await requestSmokeSubaccountWithdrawal({
+        organizationId: req.dashboardAuth!.organizationId,
+        environment: req.dashboardAuth!.environment,
         shopId,
         amountReais: body.amount,
         pixKey: body.pix_key,
         pixKeyType: body.pix_key_type,
+        requestedBy: req.dashboardAuth!.userId,
       });
-      res.status(201).json({ data });
+
+      if (result.mode === "pending_approval" && result.withdrawal) {
+        res.status(201).json({
+          data: {
+            mode: "pending_approval",
+            message: "Saque da subconta aguardando aprovacao manual do administrador.",
+            withdrawal: publicWithdrawalView(result.withdrawal),
+          },
+        });
+        return;
+      }
+
+      res.status(201).json({
+        data: {
+          mode: "executed",
+          smoke: result.smoke,
+        },
+      });
     } catch (err) {
       next(err);
     }
@@ -144,7 +165,6 @@ router.post(
         .object({
           amount: z.number().int().min(100),
           description: z.string().max(200).optional(),
-          /** % da plataforma (parent) no split; opcional */
           platform_fee_percent: z.number().min(0).max(100).optional(),
         })
         .parse(req.body);
