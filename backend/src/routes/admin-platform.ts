@@ -9,6 +9,11 @@ import {
   getMaintenanceSettings,
   invalidateMaintenanceCache,
 } from "../middleware/maintenance.js";
+import {
+  getStopWithdrawalsSettings,
+  setStopWithdrawals,
+  STOP_WITHDRAWALS_MESSAGE,
+} from "../services/payout-controls.js";
 import { retryDeliveryById } from "../services/webhooks.js";
 import {
   getPaymentByProviderReference,
@@ -74,7 +79,7 @@ router.post(
 router.post(
   "/webhooks/provider-events/:id/reprocess",
   requireAdminRole("superadmin", "admin"),
-   async (req, res, next) => {
+  async (req, res, next) => {
     try {
       const body = z.object({ reason: reasonSchema }).parse(req.body);
       const { data: event, error } = await supabaseAdmin
@@ -135,11 +140,6 @@ router.post(
   }
 );
 
-/**
- * Preenche nome do pagador em PIX já pagos:
- * - payloads de webhook em provider_events
- * - consulta GET /api/pix/:ref na adquirente (Nexus, Gotham, Smoke, Profanus)
- */
 router.post(
   "/payments/backfill-payers",
   requireAdminRole("superadmin", "admin"),
@@ -206,8 +206,11 @@ router.get("/audit", async (req, res, next) => {
 
 router.get("/settings", async (_req, res, next) => {
   try {
-    const maintenance = await getMaintenanceSettings(true);
-    res.json({ data: { maintenance } });
+    const [maintenance, stop_withdrawals] = await Promise.all([
+      getMaintenanceSettings(true),
+      getStopWithdrawalsSettings(true),
+    ]);
+    res.json({ data: { maintenance, stop_withdrawals } });
   } catch (err) {
     next(err);
   }
@@ -263,5 +266,42 @@ router.put("/settings/maintenance", requireAdminRole("superadmin"), async (req, 
     next(err);
   }
 });
+
+/** Parar TODOS os saques / PIX out / transferências da carteira digital. */
+router.put(
+  "/settings/stop-withdrawals",
+  requireAdminRole("superadmin", "admin"),
+  async (req, res, next) => {
+    try {
+      const body = z
+        .object({
+          enabled: z.boolean(),
+          message: z.string().max(200).optional(),
+          reason: reasonSchema,
+        })
+        .parse(req.body);
+
+      const before = await getStopWithdrawalsSettings(true);
+      const value = await setStopWithdrawals({
+        enabled: body.enabled,
+        message: body.message || STOP_WITHDRAWALS_MESSAGE,
+      });
+
+      await logAdminAction(req, {
+        action: body.enabled ? "stop_withdrawals.enable" : "stop_withdrawals.disable",
+        targetType: "platform_settings",
+        targetId: "stop_withdrawals",
+        targetLabel: "stop_withdrawals",
+        reason: body.reason,
+        stateBefore: before as unknown as Record<string, unknown>,
+        stateAfter: value as unknown as Record<string, unknown>,
+      });
+
+      res.json({ data: value });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;

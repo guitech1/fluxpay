@@ -10,6 +10,7 @@ import {
   getCardByNumber,
   assertWalletFullyApproved,
 } from "./fluxpay-card.js";
+import { assertWithdrawalsAllowed } from "./payout-controls.js";
 
 const PASSWORD_MAX_FAILS = 5;
 const PASSWORD_LOCK_MINUTES = 15;
@@ -122,6 +123,8 @@ export async function transfer(params: {
   created_at: string;
   already_existed: boolean;
 }> {
+  await assertWithdrawalsAllowed();
+
   if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
     throw new AppError(400, "validation_error", "Informe um valor valido maior que zero.");
   }

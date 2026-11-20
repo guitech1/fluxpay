@@ -4,6 +4,11 @@ import type { Environment } from "../types/index.js";
 import { WITHDRAWAL_FEE_CENTS, WITHDRAWAL_MIN_CENTS } from "./withdrawal-fee.js";
 import { getRequiresManualWithdrawalApproval } from "./withdrawal-approval.js";
 import { createWithdrawalWithFailover } from "./withdrawal-provider-failover.js";
+import { assertWithdrawalsAllowed } from "./payout-controls.js";
+import {
+  executeSmokeSubaccountWithdrawal,
+  isSmokeSubaccountWithdrawal,
+} from "./smoke-subaccount-withdrawals.js";
 
 export type WithdrawalStatus =
   | "pending"
@@ -39,9 +44,12 @@ export interface WithdrawalRequest {
   created_at: string;
   updated_at: string;
   e2e_id?: string | null;
+  provider_response?: unknown;
+  metadata?: unknown;
+  provider?: string | null;
 }
 
-function mapWithdrawalRow(row: any): WithdrawalRequest {
+export function mapWithdrawalRow(row: any): WithdrawalRequest {
   const providerRef = row.provider_reference ?? row.provider_withdrawal_id ?? null;
   let e2e: string | null = row.e2e_id ?? row.gateway_e2eid ?? null;
   if (!e2e && typeof providerRef === "string" && providerRef.includes("|")) {
@@ -56,8 +64,14 @@ function mapWithdrawalRow(row: any): WithdrawalRequest {
     approved_at: row.approved_at ?? row.reviewed_at ?? null,
     provider_reference: providerRef,
     e2e_id: e2e,
+    provider_response: row.provider_response ?? null,
+    metadata: row.metadata ?? null,
+    provider: row.provider ?? null,
   } as WithdrawalRequest;
 }
+
+/** Alias usado pelo módulo de subconta Smoke. */
+export const mapWithdrawalRowForSmoke = mapWithdrawalRow;
 
 const MIN_WITHDRAWAL_CENTS = WITHDRAWAL_MIN_CENTS;
 
@@ -119,10 +133,6 @@ function assertPixKey(type: PixKeyType, key: string): void {
   }
 }
 
-/**
- * Marca saque como failed e devolve o valor reservado à carteira do lojista.
- * Usado quando todas as adquirentes falharam (nada foi pago no PIX out).
- */
 async function failWithdrawalAndRefundBalance(params: {
   withdrawal: WithdrawalRequest;
   reason: string;
@@ -131,21 +141,25 @@ async function failWithdrawalAndRefundBalance(params: {
 }): Promise<WithdrawalRequest> {
   const w = params.withdrawal;
   const now = new Date().toISOString();
+  const smokeSub = isSmokeSubaccountWithdrawal(w);
 
-  const { error: balErr } = await supabaseAdmin.from("balance_transactions").insert({
-    organization_id: w.organization_id,
-    environment: w.environment,
-    type: "adjustment",
-    amount: w.amount,
-    currency: w.currency || "BRL",
-    net: w.amount,
-    fee: 0,
-    description: `ERRO no saque — estorno (${String(w.id).slice(0, 8)})`,
-    available_on: now,
-  });
+  // Subconta Smoke: saldo nunca saiu do ledger FluxPay — não estorna.
+  if (!smokeSub) {
+    const { error: balErr } = await supabaseAdmin.from("balance_transactions").insert({
+      organization_id: w.organization_id,
+      environment: w.environment,
+      type: "adjustment",
+      amount: w.amount,
+      currency: w.currency || "BRL",
+      net: w.amount,
+      fee: 0,
+      description: `ERRO no saque — estorno (${String(w.id).slice(0, 8)})`,
+      available_on: now,
+    });
 
-  if (balErr) {
-    console.error("[withdrawals] refund apos failover falhou:", balErr);
+    if (balErr) {
+      console.error("[withdrawals] refund apos failover falhou:", balErr);
+    }
   }
 
   const { data: updated, error: upErr } = await supabaseAdmin
@@ -155,8 +169,8 @@ async function failWithdrawalAndRefundBalance(params: {
       failure_reason: params.reason.slice(0, 500),
       failed_at: now,
       provider_response: params.attemptLog
-        ? { failover: true, attempts: params.attemptLog }
-        : { failover: true },
+        ? { ...(typeof w.provider_response === "object" && w.provider_response ? w.provider_response : {}), failover: true, attempts: params.attemptLog }
+        : { ...(typeof w.provider_response === "object" && w.provider_response ? w.provider_response : {}), failover: true },
     })
     .eq("id", w.id)
     .in("status", ["processing", "approved"])
@@ -192,6 +206,8 @@ export async function requestWithdrawal(params: {
   requestedBy: string;
   correlationId?: string;
 }): Promise<WithdrawalRequest> {
+  await assertWithdrawalsAllowed();
+
   if (params.environment !== "live") {
     throw new AppError(400, "invalid_request", "Saques so estao disponiveis em producao.");
   }
@@ -261,7 +277,6 @@ export async function requestWithdrawal(params: {
       } catch {
         /* keep */
       }
-      // Se o failover já estornou, propaga mensagem de ERRO pro cliente
       if (withdrawal.status === "failed" && err instanceof AppError) {
         throw err;
       }
@@ -336,7 +351,7 @@ export async function listAllWithdrawals(options: {
     .select("*")
     .order("created_at", { ascending: false })
     .limit(options.limit ?? 50);
-  if (options.status) q = q.eq("status", options.status);
+  if (options.status) q = q.eq("status", status);
   if (options.organizationId) q = q.eq("organization_id", options.organizationId);
   const { data } = await q;
   return (data || []).map(mapWithdrawalRow);
@@ -347,6 +362,34 @@ export async function rejectWithdrawal(params: {
   adminUserId: string;
   reason: string;
 }): Promise<WithdrawalRequest> {
+  const { data: existing } = await supabaseAdmin
+    .from("withdrawal_requests")
+    .select("*")
+    .eq("id", params.withdrawalId)
+    .maybeSingle();
+
+  if (existing && isSmokeSubaccountWithdrawal(mapWithdrawalRow(existing))) {
+    // Sem reserva no ledger FluxPay — só marca rejeitado.
+    const { data, error } = await supabaseAdmin
+      .from("withdrawal_requests")
+      .update({
+        status: "rejected",
+        rejection_reason: params.reason,
+        rejected_at: new Date().toISOString(),
+        reviewed_by: params.adminUserId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", params.withdrawalId)
+      .eq("status", "pending")
+      .select("*")
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new AppError(400, "invalid_request", "Nao foi possivel rejeitar o saque da subconta.");
+    }
+    return mapWithdrawalRow(data);
+  }
+
   const { data, error } = await supabaseAdmin.rpc("fluxpay_reject_withdrawal", {
     p_withdrawal_id: params.withdrawalId,
     p_admin_user_id: params.adminUserId,
@@ -361,16 +404,13 @@ export async function rejectWithdrawal(params: {
   return mapWithdrawalRow(row);
 }
 
-/**
- * Aprova (se pending) e envia ao adquirente com failover:
- * Nexus → Gotham → Smoke → Profanus (só as configuradas).
- * Se nenhuma conseguir: status failed + dinheiro de volta na carteira.
- */
 export async function approveAndExecuteWithdrawal(params: {
   withdrawalId: string;
   adminUserId: string;
   note?: string;
 }): Promise<WithdrawalRequest> {
+  await assertWithdrawalsAllowed();
+
   const { data: row, error } = await supabaseAdmin
     .from("withdrawal_requests")
     .select("*")
@@ -405,6 +445,8 @@ export async function approveAndExecuteWithdrawal(params: {
         status: "approved",
         approved_by: params.adminUserId,
         approved_at: new Date().toISOString(),
+        reviewed_by: params.adminUserId,
+        reviewed_at: new Date().toISOString(),
       })
       .eq("id", w.id)
       .eq("status", "pending")
@@ -419,6 +461,45 @@ export async function approveAndExecuteWithdrawal(params: {
       );
     }
     w = mapWithdrawalRow(approved);
+  }
+
+  // Subconta Smoke: não usa failover de adquirentes do ledger.
+  if (isSmokeSubaccountWithdrawal(w)) {
+    const { data: claimed, error: claimError } = await supabaseAdmin
+      .from("withdrawal_requests")
+      .update({ status: "processing" })
+      .eq("id", w.id)
+      .eq("status", "approved")
+      .select("*")
+      .maybeSingle();
+
+    if (claimError || !claimed) {
+      throw new AppError(409, "conflict", "O pedido de saque já foi assumido por outra operação.");
+    }
+    w = mapWithdrawalRow(claimed);
+
+    await recordWithdrawalDecision({
+      withdrawalId: w.id,
+      organizationId: w.organization_id,
+      action: "approve",
+      actorId: params.adminUserId,
+      reason: params.note ?? null,
+      stateBefore: stateBeforeApprove,
+      stateAfter: "processing",
+    });
+
+    try {
+      return await executeSmokeSubaccountWithdrawal(w);
+    } catch (err) {
+      await failWithdrawalAndRefundBalance({
+        withdrawal: w,
+        reason: err instanceof Error ? err.message : "smoke_subaccount_failed",
+        actorId: params.adminUserId,
+      });
+      throw err instanceof AppError
+        ? err
+        : new AppError(502, "provider_error", "ERRO no saque da subconta Smoke.");
+    }
   }
 
   const { data: claimed, error: claimError } = await supabaseAdmin
@@ -516,6 +597,7 @@ export function publicWithdrawalView(w: WithdrawalRequest) {
     cleanProviderRef = idPart || providerRef;
     if (!e2e && e2ePart) e2e = e2ePart;
   }
+  const smoke = isSmokeSubaccountWithdrawal(w);
   return {
     id: w.id,
     amount: w.amount,
@@ -533,5 +615,6 @@ export function publicWithdrawalView(w: WithdrawalRequest) {
     created_at: w.created_at,
     updated_at: w.updated_at,
     reviewed_at: w.approved_at,
+    source: smoke ? "smoke_subaccount" : "ledger",
   };
 }
