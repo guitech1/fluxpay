@@ -169,8 +169,19 @@ async function failWithdrawalAndRefundBalance(params: {
       failure_reason: params.reason.slice(0, 500),
       failed_at: now,
       provider_response: params.attemptLog
-        ? { ...(typeof w.provider_response === "object" && w.provider_response ? w.provider_response : {}), failover: true, attempts: params.attemptLog }
-        : { ...(typeof w.provider_response === "object" && w.provider_response ? w.provider_response : {}), failover: true },
+        ? {
+            ...(typeof w.provider_response === "object" && w.provider_response
+              ? w.provider_response
+              : {}),
+            failover: true,
+            attempts: params.attemptLog,
+          }
+        : {
+            ...(typeof w.provider_response === "object" && w.provider_response
+              ? w.provider_response
+              : {}),
+            failover: true,
+          },
     })
     .eq("id", w.id)
     .in("status", ["processing", "approved"])
@@ -324,7 +335,7 @@ export async function listWithdrawals(
   options: { status?: string; limit?: number } | number = 30
 ): Promise<{ data: WithdrawalRequest[]; has_more: boolean }> {
   const limit = typeof options === "number" ? options : (options.limit ?? 30);
-  const status = typeof options === "object" ? options.status : undefined;
+  const statusFilter = typeof options === "object" ? options.status : undefined;
 
   let q = supabaseAdmin
     .from("withdrawal_requests")
@@ -334,7 +345,7 @@ export async function listWithdrawals(
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
-  if (status) q = q.eq("status", status);
+  if (statusFilter) q = q.eq("status", statusFilter);
 
   const { data } = await q;
   const rows = (data || []).map(mapWithdrawalRow);
@@ -351,7 +362,7 @@ export async function listAllWithdrawals(options: {
     .select("*")
     .order("created_at", { ascending: false })
     .limit(options.limit ?? 50);
-  if (options.status) q = q.eq("status", status);
+  if (options.status) q = q.eq("status", options.status);
   if (options.organizationId) q = q.eq("organization_id", options.organizationId);
   const { data } = await q;
   return (data || []).map(mapWithdrawalRow);
