@@ -9,6 +9,7 @@ export {
   WebhooksPanel,
   SecurityPanel,
   AuditPanel,
-  SettingsPanel,
 } from "./panels-ops";
+/** Settings com manutenção + parar saques (arquivo dedicado). */
+export { SettingsPanel } from "./settings-panel";
 export { AcquirersPanel, FeesPanel } from "./acquirers-fees-panel";
