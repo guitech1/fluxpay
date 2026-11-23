@@ -14,6 +14,7 @@ import {
   Landmark,
   Banknote,
   Link2,
+  Trophy,
 } from "lucide-react";
 import { FluxMark } from "@/components/brand/FluxLogo";
 import type { Environment } from "@/lib/types";
@@ -24,7 +25,10 @@ const NAV: {
 }[] = [
   {
     label: "Geral",
-    items: [{ href: "/dashboard", label: "Visão geral", icon: LayoutDashboard }],
+    items: [
+      { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
+      { href: "/ranking", label: "Ranking", icon: Trophy },
+    ],
   },
   {
     label: "Receber",
